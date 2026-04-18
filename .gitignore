@@ -42,6 +42,10 @@ env/
 *.sqlite3
 demo_basemem.db
 
+# BaseMem Sessions
+.basemem-*.md
+test-summary.md
+
 # Environment
 .env
 .env.local

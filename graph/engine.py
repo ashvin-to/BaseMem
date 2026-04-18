@@ -185,65 +185,55 @@ class GraphEngine:
         weight = similarity * (1 + usage * 0.1) * recency
         return min(weight, 1.0)  # Cap at 1.0
 
-    def auto_link_nodes(self, new_node_id: str, threshold: float = 0.5) -> List[Edge]:
+    def auto_link_nodes(self, new_node_id: str, threshold: float = 0.5, limit: int = 3) -> List[Edge]:
         """
-        Auto-link a new node to related nodes using semantic similarity and keyword overlap
-        
-        Strategy:
-        1. Keyword overlap detection (60% weight - most important)
-        2. Token overlap in text (40% weight)
-        
-        Returns list of created edges
+        Auto-link a new node to related nodes using vector similarity and keyword overlap.
+        Includes a limit per node to prevent graph spaghetti.
         """
         new_node = self.storage.get_node(new_node_id)
         if not new_node:
             return []
 
+        # 1. Get Semantic Similarities
+        try:
+            from ..retrieval.vector import VectorRetriever
+            vector_engine = VectorRetriever(self.storage)
+            semantic_results = vector_engine.search(new_node.content, top_k=50)
+            semantic_scores = {node_id: score for node_id, score in semantic_results if node_id != new_node_id}
+        except Exception as e:
+            logger.warning(f"Vector search failed: {e}")
+            semantic_scores = {}
+
         existing_nodes = self.storage.get_all_nodes()
         existing_nodes = [n for n in existing_nodes if n.id != new_node_id]
         
-        if not existing_nodes:
-            return []
-
-        created_edges = []
-        
-        # Collect all keywords from new node
+        candidates = []
         new_keywords = set(new_node.keywords)
-        new_text = (new_node.title + " " + new_node.content).lower()
         
         for existing_node in existing_nodes:
-            similarity_score = 0.0
+            semantic_score = semantic_scores.get(existing_node.id, 0.0)
             
-            # Strategy 1: Keyword overlap (60% weight - most meaningful)
+            keyword_score = 0.0
             existing_keywords = set(existing_node.keywords)
             if new_keywords and existing_keywords:
                 overlap = len(new_keywords & existing_keywords)
-                # Use min instead of max to be more strict about overlap
                 union_size = len(new_keywords | existing_keywords)
-                keyword_similarity = overlap / union_size if union_size > 0 else 0
-                similarity_score += keyword_similarity * 0.6
+                keyword_score = overlap / union_size if union_size > 0 else 0
             
-            # Strategy 2: Token overlap in text (40% weight)
-            new_tokens = set(new_text.split())
-            existing_tokens = set((existing_node.title + " " + existing_node.content).lower().split())
+            hybrid_score = (semantic_score * 0.7) + (keyword_score * 0.3)
             
-            if new_tokens and existing_tokens:
-                token_overlap = len(new_tokens & existing_tokens)
-                union_tokens = len(new_tokens | existing_tokens)
-                token_similarity = token_overlap / union_tokens if union_tokens > 0 else 0
-                similarity_score += token_similarity * 0.4
-            
-            # Create edge if threshold is met
-            if similarity_score >= threshold:
-                edge_type = EdgeType.RELATED_TO
-                
-                # Determine edge type based on similarity characteristics
-                if len(new_keywords & existing_keywords) >= 2:
-                    edge_type = EdgeType.RELATED_TO
-                
-                edge = self.link_nodes(new_node_id, existing_node.id, edge_type)
-                created_edges.append(edge)
-                logger.info(f"Auto-linked {new_node_id} -> {existing_node.id} (score: {similarity_score:.2f})")
+            if hybrid_score >= threshold:
+                candidates.append((existing_node.id, hybrid_score))
+        
+        # 2. Sort by score and take only the Top K (Limit)
+        candidates.sort(key=lambda x: x[1], reverse=True)
+        top_candidates = candidates[:limit]
+
+        created_edges = []
+        for target_id, score in top_candidates:
+            edge = self.link_nodes(new_node_id, target_id, EdgeType.RELATED_TO)
+            created_edges.append(edge)
+            logger.info(f"Auto-linked {new_node_id} <-> {target_id} (score: {score:.2f})")
         
         return created_edges
 

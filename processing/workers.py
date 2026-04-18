@@ -163,6 +163,12 @@ class IngestWorker:
         """Calculate cosine similarity between two vectors"""
         import numpy as np
 
+        # Handle torch tensors (ensure they are on CPU)
+        if hasattr(vec1, 'cpu'):
+            vec1 = vec1.cpu().detach().numpy()
+        if hasattr(vec2, 'cpu'):
+            vec2 = vec2.cpu().detach().numpy()
+
         if isinstance(vec1, list):
             vec1 = np.array(vec1)
         if isinstance(vec2, list):

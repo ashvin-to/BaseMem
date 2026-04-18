@@ -15,10 +15,17 @@ logger = logging.getLogger(__name__)
 class StorageManager:
     """Manages persistence of nodes, edges, and metadata in SQLite"""
 
-    def __init__(self, db_path: str = "basemem.db"):
+    def __init__(self, db_path: Optional[str] = None):
         """Initialize storage manager"""
+        # Auto-detect db in current directory if not provided
+        if db_path is None:
+            db_path = "basemem.db"
+            
         self.db_path = Path(db_path)
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        # Ensure we don't accidentally create it in a system folder
+        if not self.db_path.is_absolute() and not (Path.cwd() / self.db_path).parent.exists():
+             self.db_path.parent.mkdir(parents=True, exist_ok=True)
+             
         # Enable thread-safe mode for Flask/multi-threaded use
         self.connection = sqlite3.connect(str(self.db_path), check_same_thread=False)
         self.connection.row_factory = sqlite3.Row

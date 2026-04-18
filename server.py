@@ -5,6 +5,7 @@ from flask_cors import CORS
 import logging
 from pathlib import Path
 import sys
+import os
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -13,6 +14,8 @@ from src.basemem.storage.db import StorageManager
 from src.basemem.retrieval.engine import RetrievalEngine
 from src.basemem.graph.engine import GraphEngine
 from src.basemem.orchestrator.context import ContextOrchestrator
+from src.basemem.storage.sessions import SessionManager
+from src.basemem.processing.summarizer import LocalSummarizer
 
 logging.basicConfig(
     level=logging.INFO,
@@ -28,7 +31,7 @@ CORS(app, resources={r"/api/*": {"origins": "*"}})
 db = StorageManager("basemem.db")
 retrieval = RetrievalEngine(db)
 graph = GraphEngine(db)
-orchestrator = ContextOrchestrator(db)  # Only pass storage, it creates its own retrieval/graph
+orchestrator = ContextOrchestrator(db)
 
 
 @app.route("/api/graph", methods=["GET"])
@@ -190,6 +193,138 @@ def stats():
         })
     except Exception as e:
         logger.error(f"Error getting stats: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/session/turn", methods=["POST"])
+def session_turn():
+    """Execute a complete session turn (log + summarize + export)"""
+    try:
+        data = request.get_json()
+        topic = data.get("topic")
+        message = data.get("message")
+        summary = data.get("summary")
+        sender = data.get("sender", "ai")
+        model = data.get("model", "t5-small")
+
+        if not topic or not message:
+            return jsonify({"error": "Topic and message required"}), 400
+
+        manager = SessionManager(db)
+        manager.log_chat(topic, message, sender=sender)
+
+        if summary:
+            summary_text = summary
+        else:
+            history = manager.get_session_history(topic)
+            summarizer = LocalSummarizer(model_name=model)
+            summary_text = summarizer.summarize_chat_history(history)
+
+        if summary_text:
+            manager.update_summary(topic, summary_text)
+            
+            # Export to file
+            output_file = f".basemem-{topic}-summary.md"
+            with open(output_file, "w") as f:
+                f.write(f"# Session Summary: {topic}\n\n")
+                f.write(summary_text)
+                f.write(f"\n\n---\n*Last Updated: {manager.get_or_create_session(topic).last_accessed.isoformat()}*")
+
+            return jsonify({
+                "status": "success",
+                "summary": summary_text,
+                "file": output_file
+            })
+        else:
+            return jsonify({"error": "Summarization failed"}), 500
+    except Exception as e:
+        logger.error(f"Error in session turn: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/session/bootstrap", methods=["POST"])
+def session_bootstrap():
+    """Bootstrap a new project/topic"""
+    try:
+        data = request.get_json()
+        topic = data.get("topic")
+        target_path = data.get("path", ".") # Allow specifying a folder
+        
+        if not topic:
+            return jsonify({"error": "Topic required"}), 400
+
+        manager = SessionManager(db)
+        manager.get_or_create_session(topic)
+
+        # Create AGENTS.md in the target path
+        agents_file = Path(target_path) / "AGENTS.md"
+        content = f"""# Universal Agent Rules & Memory Protocol
+
+## 🧠 Compact Memory Protocol
+This project uses a 2-node hierarchical memory in BaseMem.
+
+### 1. The Structure
+- **Node A (Summary)**: Concise project status.
+- **Node B (Main History)**: A single large node containing the entire chat history.
+
+### 2. Mandatory Workflow
+After EVERY response you give, you MUST run this command to update the memory:
+```bash
+kb session turn "{topic}" "<Brief log of this turn>" --sender ai
+```
+
+### 3. Start of Session
+1. Read the .basemem-{topic}-summary.md file for context.
+2. For deep technical details, read the Main History node:
+   `kb session read "{topic}"`
+"""
+        with agents_file.open("w") as f:
+            f.write(content)
+
+        return jsonify({"status": "success", "topic": topic, "agents_file": str(agents_file.absolute())})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/session/read/<topic>", methods=["GET"])
+def session_read(topic):
+    """Read the full history for a topic"""
+    try:
+        manager = SessionManager(db)
+        # 1. Try deterministic ID first
+        history_node_id = f"main-history-{topic.lower().replace(' ', '-')}"
+        node = db.get_node(history_node_id)
+        
+        # 2. If not found, find the summary node and look for linked conversation nodes
+        if not node:
+            session_node = manager.get_or_create_session(topic)
+            history = manager.get_session_history(topic)
+            # Find the first node marked as main history
+            node = next((n for n in history if n.metadata.get("is_main_history")), None)
+            
+            # 3. If still not found, just return the summary content as a fallback
+            if not node:
+                node = session_node
+
+        if node:
+            return jsonify({
+                "topic": topic,
+                "title": node.title,
+                "content": node.content,
+                "node_id": node.id
+            })
+        return jsonify({"error": "History not found"}), 404
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/node/<node_id>", methods=["DELETE"])
+def delete_node(node_id):
+    """Delete a specific node"""
+    try:
+        db.delete_node(node_id)
+        return jsonify({"status": "success", "deleted": node_id})
+    except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
