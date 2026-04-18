@@ -6,33 +6,34 @@ BaseMem follows a modular, layered architecture:
 
 ```
 ┌─────────────────────────────────┐
-│      CLI Layer (main.py)        │ ← User interface
+│      Web Hub / API (server.py)  │ ← Obsidian Galaxy UI
+└────────────┬────────────────────┘
+             │
+┌────────────┴────────────────────┐
+│      CLI Layer (main.py)        │ ← User interface & Session cmds
 └────────────┬────────────────────┘
              │
 ┌────────────v────────────────────┐
 │   Context Orchestrator          │ ← Token budgeting & ranking
-│   - Deduplication               │
-│   - Ranking                      │
-│   - Packing                      │
 └────────────┬────────────────────┘
              │
-      ┌──────┴──────┐
-      │             │
-┌─────v──┐    ┌────v──────┐
-│Retrieval│    │  Graph    │
-│ Engine  │    │ Engine    │
-└─────┬──┘    └────┬──────┘
-      │             │
-  ┌───┴───┐    ┌────v──────┐
-  │       │    │ Storage   │
-  │   Storage  │(SQLite)   │
-  │(SQLite)    └───────────┘
-  └───────┘
+      ┌──────┴──────┬───────────────┐
+      │             │               │
+┌─────v──┐    ┌────v──────┐   ┌────v──────┐
+│Retrieval│    │  Graph    │   │Processing │
+│ Engine  │    │ Engine    │   │ (Summarizer)
+└─────┬──┘    └────┬──────┘   └────┬──────┘
+      │             │               │
+  ┌───┴─────────────┴───────────────┴───┐
+  │         Storage (SQLite)            │
+  │     (db.py + sessions.py)           │
+  └─────────────────────────────────────┘
 ```
 
 ## How to Extend
 
 ### 1. Add New Node Type
+...
 
 In `models.py`:
 ```python

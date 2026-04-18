@@ -1,8 +1,8 @@
 # BaseMem Implementation Summary
 
-## ✅ Completed: Phase 1 Implementation
+## ✅ Completed: Phase 1 & 2 Implementation
 
-A fully functional AI knowledge base system with graph-based knowledge management, hybrid retrieval, and token-optimized context packaging.
+A fully functional AI knowledge base system with graph-based knowledge management, hybrid retrieval, and token-optimized context packaging. **Phase 2 brings Hierarchical Session Memory, a Web-based Galaxy Visualizer, and Semantic Gravity.**
 
 ---
 
@@ -12,47 +12,37 @@ A fully functional AI knowledge base system with graph-based knowledge managemen
 BaseMem/
 │
 ├── 📄 kb.py                         # CLI entry point
-├── 📄 demo.py                       # Demo script
 ├── 📄 README.md                     # Documentation
+├── 📄 AGENTS.md                     # Universal AI Agent Rules
+├── 📄 graph_visualization.html      # Interactive Galaxy UI
 ├── 📄 requirements.txt              # Dependencies
-├── 📄 pyproject.toml               # Project config
-├── 📄 IDEA.md                       # Original design spec
-├── 📄 .gitignore                    # Git ignore rules
 │
 ├── 📁 src/basemem/                 # Main package
-│   ├── __init__.py                  # Package exports
-│   ├── models.py                    # Core data classes (Node, Edge, etc)
+│   ├── models.py                    # Core data classes
 │   │
 │   ├── 📁 storage/                  # Persistence layer
-│   │   ├── __init__.py
-│   │   └── db.py                    # SQLite + FTS5 storage manager
+│   │   ├── db.py                    # SQLite storage
+│   │   └── sessions.py              # 2-Node Session Memory
 │   │
 │   ├── 📁 retrieval/                # Search & ranking
-│   │   ├── __init__.py
-│   │   ├── engine.py                # Hybrid retrieval orchestrator
-│   │   ├── bm25.py                  # BM25 keyword search
+│   │   ├── engine.py                # Hybrid orchestrator
+│   │   ├── bm25.py                  # BM25 implementation
 │   │   └── vector.py                # Semantic vector search
 │   │
 │   ├── 📁 graph/                    # Graph operations
-│   │   ├── __init__.py
-│   │   └── engine.py                # Graph traversal & analysis
-│   │
-│   ├── 📁 orchestrator/             # Context optimization
-│   │   ├── __init__.py
-│   │   └── context.py               # Token-budgeted context packing
+│   │   └── engine.py                # Semantic Gravity auto-linking
 │   │
 │   ├── 📁 processing/               # Async ingestion
-│   │   ├── __init__.py
-│   │   ├── pipeline.py              # Main processing pipeline
-│   │   └── workers.py               # Async workers
+│   │   ├── pipeline.py              # Main pipeline
+│   │   ├── workers.py               # Async workers
+│   │   └── summarizer.py            # Local BART/T5 summarizer
+│   │
+│   ├── 📁 mcp/                      # Model Context Protocol
+│   │   └── server.py                # MCP Server
 │   │
 │   └── 📁 cli/                      # User interface
 │       ├── __init__.py
-│       └── main.py                  # Click CLI commands
-│
-└── 📁 tests/                        # Unit tests
-    ├── __init__.py
-    └── test_basemem.py             # Core test suite
+│       └── main.py                  # Click CLI with Session cmds
 ```
 
 ---
@@ -62,80 +52,27 @@ BaseMem/
 ### 1. **Data Models** (`models.py`)
 - ✅ `Node` - Knowledge base unit with metadata
 - ✅ `Edge` - Relationships between nodes
-- ✅ `NodeType` enum (7 types)
-- ✅ `EdgeType` enum (7 types)
-- ✅ `RetrievalResult` - Ranked search results
-- ✅ `ContextPacket` - Formatted context for LLM
+- ✅ `NodeType` - Enhanced with `SUMMARY` and `CONVERSATION`
+- ✅ `EdgeType` - Enhanced with `PART_OF` and `RELATED_TO`
 
-### 2. **Storage Layer** (`storage/db.py`)
-- ✅ SQLite database with FTS5 indexing
-- ✅ Node management (CRUD)
-- ✅ Edge management with foreign keys
-- ✅ Full-text search on node content
-- ✅ Neighbor traversal queries
-- ✅ Usage statistics tracking
-- ✅ Node weight & decay management
-- ✅ Database schema with 5 tables
+### 2. **Session Memory System** (`storage/sessions.py`)
+- ✅ **2-Node Hierarchical Structure**: Single 'Summary' node + single 'Main History' node per project.
+- ✅ **Appending History**: Turns are appended to a single node to prevent graph clutter.
+- ✅ **Deterministic IDs**: Projects are tied to topic names for cross-session continuity.
 
-### 3. **Retrieval Engine** (`retrieval/`)
+### 3. **Semantic Gravity** (`graph/engine.py`)
+- ✅ **Vector-Based Auto-linking**: Automatically connects project islands based on embedding similarity.
+- ✅ **Hybrid Scoring**: Combines vector similarity (70%) and keyword overlap (30%).
+- ✅ **Top-K Limit**: Prevents "spaghetti balls" by limiting edges per node.
 
-#### BM25 Retriever (`bm25.py`)
-- ✅ Keyword-based search using rank-bm25
-- ✅ In-memory inverted index
-- ✅ Top-K ranking
-- ✅ Rebuild on content changes
+### 4. **Web Hub** (`server.py` + `graph_visualization.html`)
+- ✅ **Obsidian Galaxy**: Interactive D3.js visualizer with vibrant color coding.
+- ✅ **Orbit Mode**: Rotating planetary view of the graph.
+- ✅ **Full Node Control**: In-browser Node Deletion, History Reading, and Turn submission.
 
-#### Vector Retriever (`vector.py`)
-- ✅ Semantic search using sentence-transformers
-- ✅ FAISS integration (with numpy fallback)
-- ✅ Cosine similarity ranking
-- ✅ L2 distance normalization
-
-#### Hybrid Engine (`engine.py`)
-- ✅ BM25 + Vector search combination
-- ✅ Result deduplication & merging
-- ✅ Score normalization & weighting (50-50)
-- ✅ Top-K reranking
-
-### 4. **Graph Engine** (`graph/engine.py`)
-- ✅ Node neighbor discovery
-- ✅ Breadth-first subgraph extraction
-- ✅ Shortest path finding (BFS)
-- ✅ Community detection (connected components)
-- ✅ Edge creation with weight calculation
-- ✅ Depth-limited traversal
-
-### 5. **Context Orchestrator** (`orchestrator/context.py`)
-- ✅ Token budget tracking
-- ✅ Result deduplication
-- ✅ Multi-factor ranking (relevance × weight × decay)
-- ✅ Structured context formatting
-- ✅ Source node tracking
-- ✅ Graceful fallback for empty results
-
-### 6. **Processing Pipeline** (`processing/`)
-
-#### Ingestion Worker (`workers.py`)
-- ✅ Semantic chunking (sentence-based)
-- ✅ Keyword extraction
-- ✅ Automatic node creation
-- ✅ Semantic linking via similarity
-- ✅ Async text processing
-
-#### Pipeline (`pipeline.py`)
-- ✅ Async processing orchestration
-- ✅ Multi-worker support framework
-- ✅ Queue-based task management
-
-### 7. **CLI Interface** (`cli/main.py`)
-- ✅ `kb add <text>` - Add knowledge
-- ✅ `kb search <query>` - Hybrid search
-- ✅ `kb ask <question>` - Full RAG pipeline
-- ✅ `kb graph <node-id>` - Explore graph
-- ✅ `kb explain <concept>` - Context + explanation
-- ✅ `kb stats` - Database statistics
-- ✅ `kb clear` - Reset database
-- ✅ Database persistence across sessions
+### 5. **Local Processing** (`processing/summarizer.py`)
+- ✅ **BART/T5 Summarization**: Purely local background summarization using HuggingFace.
+- ✅ **Seq2Seq Architecture**: Uses `AutoModelForSeq2SeqLM` for robust local generation.
 
 ---
 
@@ -150,225 +87,58 @@ Sentences/Chunks
 Keywords
   ↓ (node creation)
 Nodes
-  ↓ (similarity linking)
+  ↓ (Semantic Gravity linking)
 Nodes + Edges
   ↓ (persistence)
 SQLite Database
 ```
 
-### Retrieval Flow
+### Session "Turn" Flow
 ```
-Query
-  ↓ (parallel)
-┌─────────────────┬──────────────────┐
-│                 │                  │
-v                 v                  v
-BM25 (50)      Vector (50)      FTS5 Search
-│                 │                  │
-└─────────────────┴──────────────────┘
-         ↓ (merge + deduplicate)
-    Merged Results
-         ↓ (score normalization)
-    Combined Scores
-         ↓ (top-K)
-    Final Results (10)
-```
-
-### Context Orchestration Flow
-```
-Retrieval Results
-  ↓ (deduplication)
-Unique Results
-  ↓ (ranking: relevance × weight × decay)
-Ranked Results
-  ↓ (token budgeting)
-Selected Nodes
-  ↓ (formatting)
-ContextPacket
-  ↓ (to_prompt_format())
-Structured Output
+AI Response
+  ↓
+Append to "Main History" node
+  ↓
+Local Summarizer (BART/T5) updates "Summary" node
+  ↓
+Semantic Gravity re-links project to Galaxy
+  ↓
+Export context to .basemem-topic-summary.md
 ```
 
 ---
 
 ## 📦 Dependencies
 
-### Core
-- `click` - CLI framework
-- `sqlalchemy` - ORM (optional, using sqlite3 directly)
+### Core & Search
+- `click`, `flask`, `flask-cors`
+- `rank-bm25`, `sentence-transformers`, `faiss-cpu`, `scikit-learn`
+- `transformers`, `torch` (for local summarization)
+- `nltk` (tokenization)
 
-### Search & Ranking
-- `rank-bm25` - BM25 implementation
-- `sentence-transformers` - Embeddings
-- `faiss-cpu` - Vector indexing (optional)
-- `scikit-learn` - ML utilities
-
-### NLP
-- `nltk` - Tokenization
-- `spacy` - NLP (optional)
-
-### Async & Processing
-- `pydantic` - Data validation
-- `aiofiles` - Async file I/O
-
-### Testing
-- `pytest` - Testing framework
-- `pytest-asyncio` - Async test support
-
-### Development
-- `black` - Code formatting
-- `ruff` - Linting
-- `mypy` - Type checking
-
----
-
-## 🚀 Quick Start
-
-### 1. Install
-```bash
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # or on Windows: venv\Scripts\activate
-
-# Install package
-pip install -e .
-# Or install dependencies
-pip install -r requirements.txt
-```
-
-### 2. Run Demo
-```bash
-python demo.py
-```
-
-### 3. Use CLI
-```bash
-# Add knowledge
-kb add "Machine learning is a subset of AI"
-
-# Search
-kb search "what is machine learning"
-
-# Ask question
-kb ask "explain machine learning"
-
-# View stats
-kb stats
-```
-
-### 4. Run Tests
-```bash
-pytest tests/ -v
-```
-
----
-
-## 🔧 Configuration
-
-Environment variables:
-```bash
-BASEMEM_DB_PATH="./basemem.db"          # Database location
-BASEMEM_TOKEN_BUDGET="2000"               # Context token limit
-BASEMEM_VECTOR_MODEL="all-MiniLM-L6-v2"  # Embedding model
-```
-
----
-
-## 📊 Database Schema
-
-### Tables
-
-**Nodes**
-```
-id | title | content | node_type | keywords | embedding | 
-weight | created_at | last_accessed | decay_score | metadata
-```
-
-**Nodes_FTS** (Full-Text Search)
-```
-id | title | content | keywords
-```
-
-**Edges**
-```
-from_id | to_id | edge_type | weight | confidence | 
-created_at | metadata
-```
-
-**Chats**
-```
-chat_id | raw_text | processed_nodes | timestamp
-```
-
-**Node_Usage**
-```
-node_id | query | used_in_answer | timestamp
-```
+### Model Context Protocol
+- `mcp` - FastMCP for direct AI tool access
 
 ---
 
 ## ✨ What Works Now
 
-✅ Complete CLI interface
-✅ Hybrid retrieval (BM25 + Vector)
-✅ Full-text search
-✅ Semantic similarity search
-✅ Graph traversal & analysis
-✅ Token-budgeted context packing
-✅ Async text ingestion
-✅ Automatic node linking
-✅ Persistent storage
-✅ Usage tracking
-✅ Comprehensive testing framework
+✅ Automated project memory (no more manual summaries)
+✅ Cross-session continuity via Markdown hand-off
+✅ Interactive 3D-like graph visualization
+✅ Semantic cross-project linking (Semantic Gravity)
+✅ High-performance hybrid search (BM25 + Vector)
 
 ---
 
-## 🎯 Phase 2 Roadmap
+## 🎯 Phase 3 Roadmap
 
-- [ ] Hierarchical memory (Level 1-3 summaries)
-- [ ] Decay-based forgetting system
-- [ ] Cross-encoder reranking
-- [ ] Vector DB upgrade (Qdrant)
-- [ ] Advanced visualization
-- [ ] API server (FastAPI)
-- [ ] Multi-device sync
+- [ ] Neo4j integration for massive graphs
+- [ ] Decay-based forgetting system (Pruning old history)
+- [ ] Multi-device synchronization
+- [ ] Advanced community detection visualization
 
 ---
 
-## 📝 Notes
-
-- **Embedding Model**: Uses `all-MiniLM-L6-v2` (lightweight, 384 dims)
-- **Vector DB**: FAISS (CPU) with numpy fallback
-- **Storage**: SQLite for accessibility, FTS5 for search
-- **Async**: Python asyncio with async/await
-- **Testing**: Pytest with fixtures and async support
-
----
-
-## 🎓 Example Workflow
-
-```python
-# 1. Initialize
-storage = StorageManager("knowledge.db")
-retrieval = RetrievalEngine(storage)
-orchestrator = ContextOrchestrator(storage, token_budget=2000)
-
-# 2. Add knowledge
-pipeline = ProcessingPipeline(storage)
-nodes = await pipeline.ingest_text("Binary search explanation...")
-
-# 3. Search
-results = retrieval.retrieve("What is binary search?")
-
-# 4. Get optimized context
-context = orchestrator.orchestrate("Explain binary search")
-print(context.to_prompt_format())
-
-# 5. Use with LLM
-response = llm.ask(query + "\n" + context.to_prompt_format())
-```
-
----
-
-**Build Status**: ✅ Phase 1 Complete
-**Last Updated**: 2024
+**Build Status**: ✅ Phase 2 Complete
+**Last Updated**: April 2026

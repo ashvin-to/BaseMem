@@ -63,3 +63,9 @@ build/
 # Logs
 logs/
 *.log
+
+# md files
+AGENTS.md
+.basemem-*.md
+IDEA.md
+IMPLEMENTATION.md
