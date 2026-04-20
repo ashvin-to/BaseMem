@@ -7,6 +7,7 @@ import asyncio
 
 from src.basemem.models import Node, NodeType, Edge, EdgeType
 from src.basemem.storage.db import StorageManager
+from src.basemem.storage.sessions import SessionManager
 from src.basemem.retrieval.engine import RetrievalEngine
 from src.basemem.graph.engine import GraphEngine
 from src.basemem.processing.pipeline import ProcessingPipeline
@@ -127,6 +128,64 @@ class TestProcessing:
         assert len(nodes) > 0
         assert all(isinstance(n, Node) for n in nodes)
         assert all(n.content for n in nodes)
+
+
+class TestSessions:
+    """Test shared agent memory hierarchy"""
+
+    def test_structured_planet_update_and_read(self, temp_db):
+        manager = SessionManager(temp_db)
+
+        planet = manager.update_planet(
+            "home-dashboard",
+            "BaseMem Integration!",
+            status="active",
+            goal="Make agent memory clear.",
+            current_state="Structured planets are canonical handoff state.",
+            next_step="Add CLI commands.",
+            file_path="/mnt/Storage/BaseMem/src/basemem/storage/sessions.py",
+            command="kb planet read basemem-integration",
+        )
+
+        assert planet.id == "planet-basemem-integration"
+        assert planet.metadata["topic"] == "basemem-integration"
+        assert planet.metadata["status"] == "active"
+        assert "## Goal" in planet.content
+        assert "Make agent memory clear." in planet.content
+        assert "Add CLI commands." in planet.content
+
+        same_planet = manager.get_planet("basemem_integration")
+        assert same_planet is not None
+        assert same_planet.id == planet.id
+
+    def test_note_links_to_planet_and_updates_summary(self, temp_db):
+        manager = SessionManager(temp_db)
+
+        note = manager.add_note(
+            "home-dashboard",
+            "basemem-integration",
+            "decision",
+            "Planets store canonical state; moons store transcript archives.",
+            agent_id="codex",
+        )
+        planet = manager.get_planet("basemem-integration")
+
+        assert note.node_type == NodeType.FACT
+        assert note.metadata["kind"] == "decision"
+        assert planet is not None
+        assert "Planets store canonical state" in planet.content
+        assert note.id in temp_db.get_neighbors(planet.id)
+
+    def test_moon_archives_are_unique(self, temp_db):
+        manager = SessionManager(temp_db)
+        manager.log_chat_to_planet("home-dashboard", "basemem-integration", "Started work.", "codex")
+
+        moon_a = manager.ingest_archive_moon("home-dashboard", "basemem-integration", "Transcript A", "codex")
+        moon_b = manager.ingest_archive_moon("home-dashboard", "basemem-integration", "Transcript B", "codex")
+
+        assert moon_a.id != moon_b.id
+        assert moon_a.metadata["is_private_moon"] is True
+        assert moon_b.metadata["is_private_moon"] is True
 
 
 if __name__ == "__main__":

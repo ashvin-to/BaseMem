@@ -125,8 +125,13 @@ def context(ctx):
             n = ctx.obj['storage'].get_node(nid)
             if n and n.metadata.get("is_task_planet"):
                 click.echo(f"\n--- 🌏 Planet: {n.title} (ID: {n.id}) ---")
-                preview = n.content[:300].replace("\n", " ").strip()
-                click.echo(f"  📜 Content: {preview}...")
+                click.echo(f"  Status: {n.metadata.get('status', 'active')}")
+                goal = n.metadata.get("goal") or n.metadata.get("current_state") or n.content
+                preview = goal[:300].replace("\n", " ").strip()
+                click.echo(f"  📜 Context: {preview}...")
+                next_steps = n.metadata.get("next_steps") or []
+                if next_steps:
+                    click.echo(f"  Next: {next_steps[-1]}")
                 moons = manager.get_neighbors(n.id)
                 if moons: click.echo(f"  🌑 Moons (Histories): {len(moons)} available.")
     else: click.echo("  No active tasks.")
@@ -215,12 +220,100 @@ def sync(ctx, agent_id, topic, chat_file):
     except Exception as e: click.echo(f"Sync failed: {e}")
 
 @session.command()
-@click.argument('node_id')
+@click.argument('node_id', required=False)
+@click.option('--topic', '-t', help='Read a planet by topic instead of node id')
 @click.pass_context
-def read(ctx, node_id):
-    node = ctx.obj['storage'].get_node(node_id)
+def read(ctx, node_id, topic):
+    from storage.sessions import SessionManager
+    manager = SessionManager(ctx.obj['storage'])
+    node = manager.get_planet(topic) if topic else ctx.obj['storage'].get_node(node_id)
     if node: click.echo(f"\n📖 {node.title}:\n\n{node.content}")
     else: click.echo("Node not found.")
+
+@cli.group()
+def planet():
+    """Manage shared task planets."""
+    pass
+
+@planet.command("create")
+@click.argument('topic')
+@click.option('--goal')
+@click.option('--status', default='active')
+@click.option('--state', 'current_state')
+@click.pass_context
+def planet_create(ctx, topic, goal, status, current_state):
+    root_name = get_project_root()
+    from storage.sessions import SessionManager
+    manager = SessionManager(ctx.obj['storage'])
+    node = manager.get_or_create_task_planet(root_name, topic)
+    node = manager.update_planet(root_name, topic, status=status, goal=goal, current_state=current_state)
+    click.echo(f"✓ Planet ready: {node.title} ({node.id})")
+
+@planet.command("read")
+@click.argument('topic')
+@click.pass_context
+def planet_read(ctx, topic):
+    from storage.sessions import SessionManager
+    manager = SessionManager(ctx.obj['storage'])
+    node = manager.get_planet(topic)
+    if not node:
+        click.echo("Planet not found.")
+        return
+    click.echo(f"\n📖 {node.title}:\n\n{node.content}")
+
+@planet.command("set")
+@click.argument('topic')
+@click.option('--status')
+@click.option('--goal')
+@click.option('--state', 'current_state')
+@click.option('--next', 'next_step')
+@click.option('--file', 'file_path')
+@click.option('--command')
+@click.option('--handoff')
+@click.pass_context
+def planet_set(ctx, topic, status, goal, current_state, next_step, file_path, command, handoff):
+    root_name = get_project_root()
+    from storage.sessions import SessionManager
+    manager = SessionManager(ctx.obj['storage'])
+    node = manager.update_planet(
+        root_name,
+        topic,
+        status=status,
+        goal=goal,
+        current_state=current_state,
+        next_step=next_step,
+        file_path=file_path,
+        command=command,
+        handoff=handoff,
+    )
+    click.echo(f"✓ Planet updated: {node.title}")
+
+@planet.command("compact")
+@click.argument('topic')
+@click.option('--agent-id', default='default')
+@click.pass_context
+def planet_compact(ctx, topic, agent_id):
+    root_name = get_project_root()
+    from storage.sessions import SessionManager
+    manager = SessionManager(ctx.obj['storage'])
+    node = manager.compact_planet(root_name, topic, agent_id=agent_id)
+    click.echo(f"✓ Planet compacted: {node.title}")
+
+@cli.command()
+@click.argument('topic')
+@click.option('--type', 'kind', default='fact', help='decision, fact, task, issue, question, concept, example')
+@click.option('--message', '-m', required=True)
+@click.option('--title')
+@click.option('--status', default='open')
+@click.option('--agent-id', default='default')
+@click.pass_context
+def note(ctx, topic, kind, message, title, status, agent_id):
+    """Add a typed collaboration note linked to a planet."""
+    root_name = get_project_root()
+    from storage.sessions import SessionManager
+    manager = SessionManager(ctx.obj['storage'])
+    node = manager.add_note(root_name, topic, kind, message, agent_id=agent_id, title=title, status=status)
+    click.echo(f"✓ Note added: {node.title} ({node.id})")
 
 @cli.command()
 @click.argument('doc_name', required=False)

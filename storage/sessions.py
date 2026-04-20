@@ -1,11 +1,10 @@
 """Session management for 3-Tier Galaxy (Unified Planet, Private Moons)"""
 
 import logging
-from typing import List, Optional, Tuple
+import re
+from typing import List, Optional, Dict, Any
 from datetime import datetime
-from pathlib import Path
 import uuid
-import hashlib
 
 from modelsimport Node, Edge, NodeType, EdgeType
 from .db import StorageManager
@@ -22,6 +21,77 @@ class SessionManager:
 
     def __init__(self, storage: StorageManager):
         self.storage = storage
+
+    @staticmethod
+    def normalize_topic(topic: str) -> str:
+        """Normalize human topic names into stable planet slugs."""
+        slug = re.sub(r"[^a-z0-9]+", "-", topic.lower()).strip("-")
+        return slug or "general"
+
+    @staticmethod
+    def _now() -> str:
+        return datetime.utcnow().isoformat()
+
+    @staticmethod
+    def _append_recent(items: List[Dict[str, Any]], item: Dict[str, Any], limit: int = 12) -> List[Dict[str, Any]]:
+        items.append(item)
+        return items[-limit:]
+
+    @staticmethod
+    def _list_section(items: List[str], empty: str = "- None") -> str:
+        if not items:
+            return empty
+        return "\n".join(f"- {item}" for item in items)
+
+    def _render_planet_content(self, topic: str, metadata: Dict[str, Any]) -> str:
+        activity = metadata.get("recent_activity", [])
+        notes = metadata.get("notes", [])
+        files = metadata.get("files", [])
+        commands = metadata.get("commands", [])
+        next_steps = metadata.get("next_steps", [])
+        decisions = [n for n in notes if n.get("kind") == "decision"]
+        issues = [n for n in notes if n.get("kind") in {"issue", "question"} and n.get("status") != "done"]
+
+        activity_lines = [
+            f"- {item.get('timestamp', '')} {item.get('agent_id', 'unknown')}: {item.get('message', '')}"
+            for item in activity[-8:]
+        ]
+        decision_lines = [f"- {n.get('content') or n.get('title')}" for n in decisions[-8:]]
+        issue_lines = [f"- {n.get('content') or n.get('title')}" for n in issues[-8:]]
+
+        return "\n".join([
+            f"# Topic: {topic}",
+            "",
+            "## Goal",
+            metadata.get("goal") or "Not set.",
+            "",
+            "## Status",
+            metadata.get("status") or "active",
+            "",
+            "## Current State",
+            metadata.get("current_state") or "No current state recorded.",
+            "",
+            "## Decisions",
+            "\n".join(decision_lines) if decision_lines else "- None",
+            "",
+            "## Open Issues",
+            "\n".join(issue_lines) if issue_lines else "- None",
+            "",
+            "## Next Steps",
+            self._list_section(next_steps),
+            "",
+            "## Important Files",
+            self._list_section(files),
+            "",
+            "## Commands",
+            self._list_section(commands),
+            "",
+            "## Recent Activity",
+            "\n".join(activity_lines) if activity_lines else "- None",
+            "",
+            "## Agent Handoff",
+            metadata.get("handoff") or "Read this planet first. Open moons only when detailed transcript history is needed.",
+        ])
 
     def get_or_create_folder_hub(self, folder_name: str) -> Node:
         """Get/Create the Sun (Folder Hub)"""
@@ -44,34 +114,209 @@ class SessionManager:
         """Get/Create the Planet (Shared Task) linked to Sun"""
         sun_node = self.get_or_create_folder_hub(folder_name)
         
-        planet_id = f"planet-{topic.lower().replace(' ', '-')}"
+        topic_slug = self.normalize_topic(topic)
+        planet_id = f"planet-{topic_slug}"
         planet_node = self.storage.get_node(planet_id)
         
         if not planet_node:
+            metadata = {
+                "topic": topic_slug,
+                "display_topic": topic,
+                "aliases": sorted({topic, topic_slug}),
+                "is_task_planet": True,
+                "scope": "planet",
+                "status": "active",
+                "goal": "",
+                "current_state": f"Unified task context for: {topic}",
+                "next_steps": [],
+                "files": [],
+                "commands": [],
+                "notes": [],
+                "recent_activity": [],
+                "created_at": self._now(),
+                "updated_at": self._now(),
+            }
             planet_node = Node(
                 id=planet_id,
-                title=f"{topic}",
-                content=f"Unified task context for: {topic}",
+                title=f"{topic_slug}",
+                content=self._render_planet_content(topic_slug, metadata),
                 node_type=NodeType.CONVERSATION,
-                metadata={"topic": topic, "is_task_planet": True}
+                keywords=[topic_slug, "planet", "task"],
+                metadata=metadata,
             )
             self.storage.add_node(planet_node)
             self.storage.add_edge(Edge(from_id=planet_id, to_id=sun_node.id, edge_type=EdgeType.PART_OF, weight=1.0, confidence=1.0))
+        else:
+            metadata = planet_node.metadata
+            aliases = set(metadata.get("aliases", []))
+            aliases.update({topic, topic_slug})
+            metadata.update({
+                "topic": metadata.get("topic") or topic_slug,
+                "display_topic": metadata.get("display_topic") or topic,
+                "aliases": sorted(aliases),
+                "is_task_planet": True,
+                "scope": "planet",
+                "updated_at": self._now(),
+            })
+            for key, default in {
+                "status": "active",
+                "goal": "",
+                "current_state": planet_node.content or f"Unified task context for: {topic}",
+                "next_steps": [],
+                "files": [],
+                "commands": [],
+                "notes": [],
+                "recent_activity": [],
+            }.items():
+                metadata.setdefault(key, default)
+            planet_node.title = topic_slug
+            planet_node.content = self._render_planet_content(topic_slug, metadata)
+            planet_node.keywords = sorted(set(planet_node.keywords + [topic_slug, "planet", "task"]))
+            planet_node.metadata = metadata
+            self.storage.add_node(planet_node)
             
         return planet_node
 
     def log_chat_to_planet(self, folder_name: str, topic: str, content: str, agent_id: str, sender: str = "ai") -> Node:
         """Log turn to the Shared Planet"""
         planet_node = self.get_or_create_task_planet(folder_name, topic)
-        timestamp = datetime.utcnow().isoformat()
-        planet_node.content += f"\n\n--- [{timestamp}] {agent_id.upper()} ---\n{content}"
+        timestamp = self._now()
+        metadata = planet_node.metadata
+        metadata["recent_activity"] = self._append_recent(
+            metadata.get("recent_activity", []),
+            {"timestamp": timestamp, "agent_id": agent_id, "sender": sender, "message": content},
+        )
+        metadata["updated_at"] = timestamp
+        planet_node.metadata = metadata
+        planet_node.content = self._render_planet_content(metadata["topic"], metadata)
+        self.storage.add_node(planet_node)
+        return planet_node
+
+    def update_planet(
+        self,
+        folder_name: str,
+        topic: str,
+        status: Optional[str] = None,
+        goal: Optional[str] = None,
+        current_state: Optional[str] = None,
+        next_step: Optional[str] = None,
+        file_path: Optional[str] = None,
+        command: Optional[str] = None,
+        handoff: Optional[str] = None,
+    ) -> Node:
+        """Update structured planet fields."""
+        planet_node = self.get_or_create_task_planet(folder_name, topic)
+        metadata = planet_node.metadata
+        if status:
+            metadata["status"] = status
+        if goal:
+            metadata["goal"] = goal
+        if current_state:
+            metadata["current_state"] = current_state
+        if next_step:
+            steps = metadata.get("next_steps", [])
+            if next_step not in steps:
+                steps.append(next_step)
+            metadata["next_steps"] = steps
+        if file_path:
+            files = metadata.get("files", [])
+            if file_path not in files:
+                files.append(file_path)
+            metadata["files"] = files
+        if command:
+            commands = metadata.get("commands", [])
+            if command not in commands:
+                commands.append(command)
+            metadata["commands"] = commands
+        if handoff:
+            metadata["handoff"] = handoff
+        metadata["updated_at"] = self._now()
+        planet_node.metadata = metadata
+        planet_node.content = self._render_planet_content(metadata["topic"], metadata)
+        self.storage.add_node(planet_node)
+        return planet_node
+
+    def add_note(
+        self,
+        folder_name: str,
+        topic: str,
+        kind: str,
+        content: str,
+        agent_id: str = "default",
+        title: Optional[str] = None,
+        status: str = "open",
+    ) -> Node:
+        """Create a typed collaboration node and link it to the planet."""
+        planet_node = self.get_or_create_task_planet(folder_name, topic)
+        topic_slug = planet_node.metadata["topic"]
+        kind = kind.lower().strip() or "fact"
+        node_type = {
+            "decision": NodeType.FACT,
+            "fact": NodeType.FACT,
+            "task": NodeType.TASK,
+            "issue": NodeType.QUESTION,
+            "question": NodeType.QUESTION,
+            "concept": NodeType.CONCEPT,
+            "example": NodeType.EXAMPLE,
+        }.get(kind, NodeType.FACT)
+        note_id = f"{kind}-{topic_slug}-{uuid.uuid4().hex[:8]}"
+        note = Node(
+            id=note_id,
+            title=title or content[:80],
+            content=content,
+            node_type=node_type,
+            keywords=[topic_slug, kind, status],
+            metadata={
+                "project": folder_name,
+                "topic": topic_slug,
+                "scope": kind,
+                "kind": kind,
+                "status": status,
+                "agent_id": agent_id,
+                "source": "note",
+                "created_by": agent_id,
+                "updated_by": agent_id,
+                "created_at": self._now(),
+                "updated_at": self._now(),
+            },
+        )
+        self.storage.add_node(note)
+        self.storage.add_edge(Edge(from_id=note.id, to_id=planet_node.id, edge_type=EdgeType.PART_OF, weight=1.0, confidence=1.0))
+
+        metadata = planet_node.metadata
+        metadata["notes"] = self._append_recent(
+            metadata.get("notes", []),
+            {"id": note.id, "kind": kind, "title": note.title, "content": content, "status": status, "agent_id": agent_id},
+            limit=30,
+        )
+        metadata["updated_at"] = self._now()
+        planet_node.metadata = metadata
+        planet_node.content = self._render_planet_content(topic_slug, metadata)
+        self.storage.add_node(planet_node)
+        return note
+
+    def get_planet(self, topic: str) -> Optional[Node]:
+        """Read a planet by normalized topic."""
+        return self.storage.get_node(f"planet-{self.normalize_topic(topic)}")
+
+    def compact_planet(self, folder_name: str, topic: str, agent_id: str = "default") -> Node:
+        """Re-render a planet from metadata and trim recent activity to compact size."""
+        planet_node = self.get_or_create_task_planet(folder_name, topic)
+        metadata = planet_node.metadata
+        metadata["recent_activity"] = metadata.get("recent_activity", [])[-8:]
+        metadata["notes"] = metadata.get("notes", [])[-30:]
+        metadata["updated_at"] = self._now()
+        metadata["compacted_by"] = agent_id
+        planet_node.metadata = metadata
+        planet_node.content = self._render_planet_content(metadata["topic"], metadata)
         self.storage.add_node(planet_node)
         return planet_node
 
     def ingest_archive_moon(self, folder_name: str, topic: str, full_transcript: str, agent_id: str) -> Node:
         """Create a UNIQUE Tier 3 Moon for this specific agent/session (Strict Mode)"""
         # Search for existing planet
-        planet_id = f"planet-{topic.lower().replace(' ', '-')}"
+        topic_slug = self.normalize_topic(topic)
+        planet_id = f"planet-{topic_slug}"
         planet_node = self.storage.get_node(planet_id)
         
         # REFUSE to create a ghost planet if it does not exist
@@ -79,20 +324,37 @@ class SessionManager:
             logger.warning(f"Archive rejected: No existing task planet found for topic '{topic}'. Start a turn first.")
             return None
         
-        # Unique ID per Agent + Topic to prevent merging
-        moon_id = f"archive-{agent_id}-{topic.lower().replace(' ', '-')}"
+        timestamp = self._now()
+        moon_id = f"archive-{agent_id}-{topic_slug}-{uuid.uuid4().hex[:8]}"
         
         moon_node = Node(
             id=moon_id,
-            title=f"History ({agent_id}): {topic}",
+            title=f"History ({agent_id}): {topic_slug}",
             content=full_transcript,
             node_type=NodeType.CONVERSATION,
-            metadata={"topic": topic, "agent_id": agent_id, "is_private_moon": True}
+            keywords=[topic_slug, agent_id, "archive", "moon"],
+            metadata={
+                "topic": topic_slug,
+                "agent_id": agent_id,
+                "is_private_moon": True,
+                "scope": "moon",
+                "synced_at": timestamp,
+            },
         )
         self.storage.add_node(moon_node)
         
         # LINK Private Moon to Shared Planet
         self.storage.add_edge(Edge(from_id=moon_id, to_id=planet_node.id, edge_type=EdgeType.PART_OF, weight=1.0, confidence=1.0))
+        metadata = planet_node.metadata
+        metadata["last_moon_id"] = moon_id
+        metadata["updated_at"] = timestamp
+        metadata["recent_activity"] = self._append_recent(
+            metadata.get("recent_activity", []),
+            {"timestamp": timestamp, "agent_id": agent_id, "sender": "sync", "message": f"Archived moon {moon_id}."},
+        )
+        planet_node.metadata = metadata
+        planet_node.content = self._render_planet_content(topic_slug, metadata)
+        self.storage.add_node(planet_node)
         
         return moon_node
     

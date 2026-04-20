@@ -1,12 +1,14 @@
 #!/bin/bash
-# 🌌 UNIVERSAL AI MEMORY PROXY (Stability Fix)
+# Universal AI memory proxy for BaseMem planets and moons.
 TOPIC=$(basename "$PWD")
 ANCHOR=$(date +%s)
 
-# 1. RUN THE AI
 "$@"
+STATUS=$?
+case "$STATUS" in
+    ''|*[!0-9]*) STATUS=0 ;;
+esac
 
-# 2. DISCOVER IDENTITY
 # Any AI can integrate by setting BASEMEM_SESSION_FILE and optionally
 # BASEMEM_AGENT_ID / BASEMEM_TOPIC. The fallback discovery covers common CLIs.
 TOPIC="${BASEMEM_TOPIC:-$TOPIC}"
@@ -24,6 +26,10 @@ if [ -z "$NEWEST_FILE" ]; then
     NEWEST_FILE=$(find "${SEARCH_DIRS[@]}" \( -name "*.json" -o -name "*.jsonl" \) -newermt "@$ANCHOR" -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n 1 | cut -d' ' -f2-)
 fi
 
+if [ ! -f "$NEWEST_FILE" ]; then
+    NEWEST_FILE=""
+fi
+
 if [ ! -z "$NEWEST_FILE" ]; then
     FILE_NAME=$(basename "$NEWEST_FILE")
     if [ ! -z "$BASEMEM_AGENT_ID" ]; then
@@ -34,9 +40,7 @@ if [ ! -z "$NEWEST_FILE" ]; then
         AGENT_ID=$(echo "$FILE_NAME" | rev | cut -d'-' -f1 | cut -d'.' -f2 | rev)
     fi
     
-    # 3. CLEAN TOPIC EXTRACTION
-    # Using a simpler grep/sed combo that won't confuse the shell
-    EXTRACTED_TOPIC=$(grep -oP '(-t|--topic)\s+\K(\\")?[^\\"]+(\\")?' "$NEWEST_FILE" | tail -n 1 | sed 's/\\"//g; s/\"//g')
+    EXTRACTED_TOPIC=$(grep -aoP '(kb (session turn|session sync|planet (read|set|create|compact)|note) .*?(-t|--topic)\s+|kb (planet|note)\s+)\K(\\")?[^\\"]+(\\")?' "$NEWEST_FILE" | tail -n 1 | sed 's/\\"//g; s/"//g')
     
     if [ ! -z "$EXTRACTED_TOPIC" ]; then
         TOPIC="$EXTRACTED_TOPIC"
@@ -47,7 +51,10 @@ if [ ! -z "$NEWEST_FILE" ]; then
         AGENT_ID=$(basename "$1")
     fi
 
-    echo "💾 BaseMem: Archiving Technical Moon for [$TOPIC] (Agent: $AGENT_ID)..."
+    echo "🪐 BaseMem: Compacting planet [$TOPIC]..."
+    kb planet compact "$TOPIC" --agent-id "$AGENT_ID" >/dev/null 2>&1 || true
+    echo "💾 BaseMem: Archiving moon for [$TOPIC] (Agent: $AGENT_ID)..."
     kb session sync --topic "$TOPIC" --agent-id "$AGENT_ID" --file "$NEWEST_FILE"
 fi
 echo "✅ Galaxy Updated."
+exit "$STATUS"

@@ -1,11 +1,21 @@
-# 🌌 BaseMem Global Executive Protocol
-## 📥 START OF SESSION (MANDATORY)
-Run these commands before anything else:
-1. `activate_skill basemem-memory` (if available)
-2. `kb session context` (to load project history)
+# BaseMem Global Executive Protocol
 
-## 📤 DURING SESSION
-Run `kb session turn --topic "<Project>" --message "<Log>" --agent-id "<id>"` after every turn.
+## Start Of Session
+Run these commands before doing project work:
 
-## 💾 END OF SESSION
-Run `kb session sync --topic "<Project>" --agent-id "<id>"` before exiting.
+1. `kb session context`
+2. `kb planet read "<topic>"` when the active topic is known
+
+## During Session
+Use planets as canonical task state and moons as transcript archives.
+
+- `kb session turn --topic "<topic>" --message "<short activity>" --agent-id "<id>"`
+- `kb planet set "<topic>" --state "<current state>" --next "<next step>"`
+- `kb note "<topic>" --type decision|fact|task|issue --message "<durable note>" --agent-id "<id>"`
+
+## End Of Session
+Run these before exiting:
+
+1. `kb planet compact "<topic>" --agent-id "<id>"`
+2. `kb session sync --topic "<topic>" --agent-id "<id>"`
+

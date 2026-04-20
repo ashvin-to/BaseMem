@@ -1,9 +1,9 @@
 #!/bin/bash
 
-# 🌌 BaseMem Galaxy: Production Setup v4
+# BaseMem Galaxy: Production Setup v5
 # UNIVERSAL AI SUPPORT: Gemini, Codex, Claude, etc.
 
-echo "✨ Initializing your Universal Knowledge Galaxy..."
+echo "Initializing your Universal Knowledge Galaxy..."
 
 # 1. PATH RESOLUTION
 BASE_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
@@ -12,16 +12,16 @@ mkdir -p "$DATA_DIR/sessions"
 
 # 2. VIRTUAL ENVIRONMENT
 if [ ! -d "$BASE_DIR/venv" ]; then
-    echo "⏳ Creating virtual environment..."
+    echo "Creating virtual environment..."
     python3 -m venv "$BASE_DIR/venv"
 fi
 
 # 3. INSTALLATION
-echo "⏳ Installing core engine (Zero-RAM mode)..."
+echo "Installing core engine (Zero-RAM mode)..."
 "$BASE_DIR/venv/bin/pip" install -q -r "$BASE_DIR/requirements.txt"
 
 # 4. GLOBAL CLI (kb)
-echo "⏳ Linking 'kb' command to /usr/local/bin..."
+echo "Linking 'kb' command to /usr/local/bin..."
 WRAPPER_CONTENT="#!/bin/bash
 $BASE_DIR/venv/bin/python3 $BASE_DIR/kb.py --db $DATA_DIR/basemem.db \"\$@\""
 echo "$WRAPPER_CONTENT" | sudo tee /usr/local/bin/kb > /dev/null
@@ -30,13 +30,22 @@ sudo chmod +x /usr/local/bin/kb
 # 5. UNIVERSAL AI PROXY (ai-wrapper.sh)
 cat <<'EOF' > "$BASE_DIR/ai-wrapper.sh"
 #!/bin/bash
+# Universal AI memory proxy for BaseMem planets and moons.
 TOPIC=$(basename "$PWD")
+ANCHOR=$(date +%s)
 "$@"
+STATUS=$?
+case "$STATUS" in
+    ''|*[!0-9]*) STATUS=0 ;;
+esac
 TOPIC="${BASEMEM_TOPIC:-$TOPIC}"
 NEWEST_FILE="${BASEMEM_SESSION_FILE:-}"
 if [ -z "$NEWEST_FILE" ]; then
     SEARCH_DIRS=("$HOME/.gemini/tmp" "$HOME/.codex/sessions" "$HOME/.claude" "$HOME/.config" "/tmp/ai-chats" "/tmp")
-    NEWEST_FILE=$(find "${SEARCH_DIRS[@]}" \( -name "*.json" -o -name "*.jsonl" \) -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n 1 | cut -d' ' -f2-)
+    NEWEST_FILE=$(find "${SEARCH_DIRS[@]}" \( -name "*.json" -o -name "*.jsonl" \) -newermt "@$ANCHOR" -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n 1 | cut -d' ' -f2-)
+fi
+if [ ! -f "$NEWEST_FILE" ]; then
+    NEWEST_FILE=""
 fi
 if [ ! -z "$NEWEST_FILE" ]; then
     FILE_NAME=$(basename "$NEWEST_FILE")
@@ -47,29 +56,36 @@ if [ ! -z "$NEWEST_FILE" ]; then
     else
         AGENT_ID=$(echo "$FILE_NAME" | rev | cut -d'-' -f1 | cut -d'.' -f2 | rev)
     fi
-    EXTRACTED_TOPIC=$(grep -oP 'kb session turn .*?--topic "[^"]+"' "$NEWEST_FILE" | tail -n 1 | cut -d'"' -f2)
+    EXTRACTED_TOPIC=$(grep -aoP '(kb (session turn|session sync|planet (read|set|create|compact)|note) .*?(-t|--topic)\s+|kb (planet|note)\s+)\K(\\")?[^\\"]+(\\")?' "$NEWEST_FILE" | tail -n 1 | sed 's/\\"//g; s/"//g')
     [ ! -z "$EXTRACTED_TOPIC" ] && TOPIC="$EXTRACTED_TOPIC"
     [ -z "$AGENT_ID" ] && AGENT_ID=$(basename "$1")
-    echo "💾 BaseMem: Syncing technical Moon for [$TOPIC]..."
+    echo "BaseMem: Compacting planet [$TOPIC]..."
+    kb planet compact "$TOPIC" --agent-id "$AGENT_ID" >/dev/null 2>&1 || true
+    echo "BaseMem: Syncing moon for [$TOPIC]..."
     kb session sync --topic "$TOPIC" --agent-id "$AGENT_ID" --file "$NEWEST_FILE"
 fi
+exit "$STATUS"
 EOF
 chmod +x "$BASE_DIR/ai-wrapper.sh"
 
 # 6. UNIVERSAL INSTRUCTION INJECTION
-echo "⏳ Injecting Global Protocols (Gemini, Codex, Claude)..."
+echo "Injecting Global Protocols (Gemini, Codex, Claude)..."
 
-PROTOCOL='# 🌌 BaseMem Global Executive Protocol
-## 📥 START OF SESSION (MANDATORY)
+PROTOCOL='# BaseMem Global Executive Protocol
+## Start Of Session
 Run these commands before anything else:
 1. `activate_skill basemem-memory` (if available)
-2. `kb session context` (to load project history)
+2. `kb session context`
+3. `kb planet read "<topic>"` when the active topic is known
 
-## 📤 DURING SESSION
-Run `kb session turn --topic "<Project>" --message "<Log>" --agent-id "<id>"` after every turn.
+## During Session
+Use planets as canonical task state and moons as transcript archives.
+- `kb session turn --topic "<topic>" --message "<short activity>" --agent-id "<id>"`
+- `kb planet set "<topic>" --state "<current state>" --next "<next step>"`
+- `kb note "<topic>" --type decision|fact|task|issue --message "<durable note>" --agent-id "<id>"`
 
-## 💾 END OF SESSION
-Run `kb session sync --topic "<Project>" --agent-id "<id>"` before exiting.'
+## End Of Session
+Run `kb planet compact "<topic>" --agent-id "<id>"`, then `kb session sync --topic "<topic>" --agent-id "<id>"` before exiting.'
 
 # Gemini
 mkdir -p "$HOME/.gemini"
@@ -88,10 +104,10 @@ echo "$PROTOCOL" > "$BASE_DIR/AGENTS.md"
 # 7. SKILL INSTALLATION (For Superpowers-enabled agents)
 SKILL_DIR="$HOME/.gemini/extensions/superpowers/skills/basemem-memory"
 mkdir -p "$SKILL_DIR"
-printf "# 🌌 BaseMem 3-Tier Memory Skill\n## 📡 MISSION: Sun (Folder) -> Planet (Task) -> Moon (Archive).\n## 📥 START: Run \`kb session context\`.\n## 📤 TURN: Run \`kb session turn --topic \"<Project>\" --message \"<Log>\" --agent-id \"<id>\"\`." > "$SKILL_DIR/SKILL.md"
+printf "# BaseMem 3-Tier Memory Skill\n## Mission\nSun (folder) -> Planet (canonical task state) -> Moon (full transcript archive).\n## Start\nRun \`kb session context\`, then \`kb planet read \"<topic>\"\` when the topic is known.\n## During\nUse \`kb note \"<topic>\" --type decision|fact|task|issue --message \"<durable note>\" --agent-id \"<id>\"\` and \`kb planet set \"<topic>\" --next \"<next step>\"\`.\n## End\nRun \`kb planet compact \"<topic>\" --agent-id \"<id>\"\`, then \`kb session sync --topic \"<topic>\" --agent-id \"<id>\"\`." > "$SKILL_DIR/SKILL.md"
 
 # 8. AUTO-SHELL ALIASING
-echo "⏳ Configuring shell aliases..."
+echo "Configuring shell aliases..."
 CURRENT_SHELL=$(basename "$SHELL")
 CONF_FILE=""
 case "$CURRENT_SHELL" in
