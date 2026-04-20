@@ -187,6 +187,38 @@ class TestSessions:
         assert moon_a.metadata["is_private_moon"] is True
         assert moon_b.metadata["is_private_moon"] is True
 
+    def test_build_agent_context_includes_structured_memory(self, temp_db):
+        manager = SessionManager(temp_db)
+        manager.update_planet(
+            "home-dashboard",
+            "basemem-integration",
+            status="active",
+            goal="Keep agent handoff memory small and durable.",
+            current_state="Wrapper should read KB first.",
+            next_step="Expose a pre-answer context command.",
+            handoff="Check the KB before making new decisions.",
+        )
+        manager.add_note(
+            "home-dashboard",
+            "basemem-integration",
+            "decision",
+            "Use kb agent-context as the canonical entrypoint.",
+            agent_id="codex",
+        )
+        manager.log_chat_to_planet(
+            "home-dashboard",
+            "basemem-integration",
+            "Patched the wrapper to export context.",
+            "codex",
+        )
+
+        context = manager.build_agent_context("basemem integration", query="wrapper")
+
+        assert "# Knowledge Base Context" in context
+        assert "Keep agent handoff memory small and durable." in context
+        assert "Use kb agent-context as the canonical entrypoint." in context
+        assert "Patched the wrapper to export context." in context
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

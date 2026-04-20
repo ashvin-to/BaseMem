@@ -61,6 +61,27 @@ def search(ctx, query):
         click.echo(f"    snippet: {preview}...")
     click.echo("")
 
+@cli.command("agent-context")
+@click.option('--topic', '-t', help='Topic to load. Defaults to the active planet or current folder.')
+@click.option('--query', '-q', help='Optional query to pull extra relevant notes.')
+@click.pass_context
+def agent_context(ctx, topic, query):
+    """Emit a compact prompt block for an agent to read before answering."""
+    from storage.sessions import SessionManager
+
+    root_name = get_project_root()
+    manager = SessionManager(ctx.obj['storage'])
+    resolved_topic = topic
+
+    if not resolved_topic:
+        active = manager.get_active_planet()
+        if active:
+            resolved_topic = active.metadata.get("display_topic") or active.metadata.get("topic") or active.title
+        else:
+            resolved_topic = root_name
+
+    click.echo(manager.build_agent_context(resolved_topic, query=query))
+
 @cli.command()
 @click.pass_context
 def stats(ctx):
@@ -106,6 +127,16 @@ def last_topic(ctx):
                 if newest is None or n.created_at > newest:
                     newest, best_topic = n.created_at, n.metadata.get("topic")
     if best_topic: click.echo(best_topic)
+
+@session.command()
+@click.pass_context
+def active(ctx):
+    """Return the name of the most recently updated planet."""
+    from storage.sessions import SessionManager
+    manager = SessionManager(ctx.obj['storage'])
+    node = manager.get_active_planet()
+    if node:
+        click.echo(node.title)
 
 @session.command()
 @click.pass_context
@@ -298,6 +329,20 @@ def planet_compact(ctx, topic, agent_id):
     manager = SessionManager(ctx.obj['storage'])
     node = manager.compact_planet(root_name, topic, agent_id=agent_id)
     click.echo(f"✓ Planet compacted: {node.title}")
+
+@planet.command("delete")
+@click.argument('topic')
+@click.pass_context
+def planet_delete(ctx, topic):
+    from storage.sessions import SessionManager
+    manager = SessionManager(ctx.obj['storage'])
+    node = manager.get_planet(topic)
+    if not node:
+        click.echo("Planet not found.")
+        return
+    if click.confirm(f"Are you sure you want to delete planet '{topic}'?"):
+        ctx.obj['storage'].delete_node(node.id)
+        click.echo(f"✓ Planet deleted: {topic}")
 
 @cli.command()
 @click.argument('topic')
