@@ -109,6 +109,16 @@ def last_topic(ctx):
 
 @session.command()
 @click.pass_context
+def active(ctx):
+    """Return the name of the most recently updated planet."""
+    from storage.sessions import SessionManager
+    manager = SessionManager(ctx.obj['storage'])
+    node = manager.get_active_planet()
+    if node:
+        click.echo(node.title)
+
+@session.command()
+@click.pass_context
 def context(ctx):
     """Tier 1 Discovery: High-Fidelity Knowledge Briefing"""
     root_name = get_project_root()
@@ -298,6 +308,20 @@ def planet_compact(ctx, topic, agent_id):
     manager = SessionManager(ctx.obj['storage'])
     node = manager.compact_planet(root_name, topic, agent_id=agent_id)
     click.echo(f"✓ Planet compacted: {node.title}")
+
+@planet.command("delete")
+@click.argument('topic')
+@click.pass_context
+def planet_delete(ctx, topic):
+    from storage.sessions import SessionManager
+    manager = SessionManager(ctx.obj['storage'])
+    node = manager.get_planet(topic)
+    if not node:
+        click.echo("Planet not found.")
+        return
+    if click.confirm(f"Are you sure you want to delete planet '{topic}'?"):
+        ctx.obj['storage'].delete_node(node.id)
+        click.echo(f"✓ Planet deleted: {topic}")
 
 @cli.command()
 @click.argument('topic')

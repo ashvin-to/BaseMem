@@ -299,6 +299,13 @@ class SessionManager:
         """Read a planet by normalized topic."""
         return self.storage.get_node(f"planet-{self.normalize_topic(topic)}")
 
+    def get_active_planet(self) -> Optional[Node]:
+        """Return the most recently updated planet node."""
+        planets = [n for n in self.storage.get_all_nodes() if n.metadata.get("is_task_planet")]
+        if not planets:
+            return None
+        return max(planets, key=lambda n: n.metadata.get("updated_at", ""))
+
     def compact_planet(self, folder_name: str, topic: str, agent_id: str = "default") -> Node:
         """Re-render a planet from metadata and trim recent activity to compact size."""
         planet_node = self.get_or_create_task_planet(folder_name, topic)
