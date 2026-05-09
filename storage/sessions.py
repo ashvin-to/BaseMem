@@ -93,6 +93,14 @@ class SessionManager:
             metadata.get("handoff") or "Read this planet first. Open moons only when detailed transcript history is needed.",
         ])
 
+    @staticmethod
+    def _trim_text(value: str, limit: int = 600) -> str:
+        """Normalize whitespace and cap long sections for prompt use."""
+        compact = " ".join((value or "").split())
+        if len(compact) <= limit:
+            return compact
+        return compact[: limit - 3].rstrip() + "..."
+
     def get_or_create_folder_hub(self, folder_name: str) -> Node:
         """Get/Create the Sun (Folder Hub)"""
         title = f"Session: {folder_name}"
@@ -305,6 +313,104 @@ class SessionManager:
         if not planets:
             return None
         return max(planets, key=lambda n: n.metadata.get("updated_at", ""))
+
+    def build_agent_context(self, topic: str, query: Optional[str] = None, result_limit: int = 5) -> str:
+        """Build a compact prompt block for agents to read before answering."""
+        planet = self.get_planet(topic)
+        topic_slug = self.normalize_topic(topic)
+
+        if not planet:
+            return "\n".join([
+                "# Knowledge Base Context",
+                f"Topic: {topic_slug}",
+                "",
+                "No stored context found for this topic yet.",
+                "If you make durable decisions, create notes or log a turn after responding.",
+            ])
+
+        metadata = planet.metadata
+        lines = [
+            "# Knowledge Base Context",
+            f"Topic: {metadata.get('display_topic') or topic_slug}",
+            f"Status: {metadata.get('status', 'active')}",
+            "",
+            "## Goal",
+            self._trim_text(metadata.get("goal") or "Not set.", 300),
+            "",
+            "## Current State",
+            self._trim_text(metadata.get("current_state") or "No current state recorded.", 500),
+        ]
+
+        if metadata.get("next_steps"):
+            lines.extend([
+                "",
+                "## Next Steps",
+                *[f"- {self._trim_text(step, 180)}" for step in metadata["next_steps"][-5:]],
+            ])
+
+        notes = metadata.get("notes", [])
+        if notes:
+            lines.extend([
+                "",
+                "## Key Notes",
+                *[
+                    f"- [{note.get('kind', 'note')}] {self._trim_text(note.get('content') or note.get('title') or '', 220)}"
+                    for note in notes[-8:]
+                ],
+            ])
+
+        activity = metadata.get("recent_activity", [])
+        if activity:
+            lines.extend([
+                "",
+                "## Recent Activity",
+                *[
+                    f"- {item.get('agent_id', 'unknown')} ({item.get('sender', 'ai')}): {self._trim_text(item.get('message', ''), 220)}"
+                    for item in activity[-6:]
+                ],
+            ])
+
+        if query:
+            related_ids = self.storage.search_nodes_fts(f"{topic_slug} {query}", limit=result_limit * 3)
+            related_nodes = []
+            for node_id in related_ids:
+                node = self.storage.get_node(node_id)
+                if not node or node.id == planet.id:
+                    continue
+                node_topic = node.metadata.get("topic")
+                if node_topic and node_topic != topic_slug:
+                    continue
+                related_nodes.append(node)
+                if len(related_nodes) >= result_limit:
+                    break
+
+            if related_nodes:
+                lines.extend([
+                    "",
+                    "## Query-Relevant Memories",
+                    *[
+                        f"- [{node.node_type.value}] {node.title}: {self._trim_text(node.content, 220)}"
+                        for node in related_nodes
+                    ],
+                ])
+
+        handoff = metadata.get("handoff")
+        if handoff:
+            lines.extend([
+                "",
+                "## Handoff",
+                self._trim_text(handoff, 400),
+            ])
+
+        lines.extend([
+            "",
+            "## Instructions",
+            "- Use this memory before answering.",
+            "- Prefer existing decisions unless the user asks to revisit them.",
+            "- After answering, log durable updates back into the knowledge base.",
+        ])
+
+        return "\n".join(lines)
 
     def compact_planet(self, folder_name: str, topic: str, agent_id: str = "default") -> Node:
         """Re-render a planet from metadata and trim recent activity to compact size."""

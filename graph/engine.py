@@ -1,4 +1,27 @@
-"""Graph traversal and relationship management"""
+"""Graph traversal and relationship management
+
+This module implements core graph operations:
+- Node/edge linking with explicit relationship types
+- Neighbor traversal up to N hops
+- Shortest path finding (BFS)
+- Cluster detection (connected components)
+- Automatic node linking using "Semantic Gravity" (keyword overlap)
+- Node importance calculation (centrality + weight + recency)
+
+Semantic Gravity Algorithm:
+    Auto-links new nodes to existing nodes without ML models (zero-RAM):
+    1. For each existing node, compute two similarity scores:
+       - Keyword overlap: shared tags / total tags (Jaccard similarity)
+       - Text overlap: shared tokens / total tokens (set similarity)
+    2. Hybrid score = (keyword_score × 0.8) + (text_score × 0.2)
+       - Keywords weighted higher because they're human/AI-curated
+       - Text is secondary signal (can have common English words)
+    3. Filter: Keep only candidates above threshold (default 0.3)
+    4. Top-K: Limit to top 3 connections to avoid "spaghetti graph"
+    5. Create RELATED_TO edges with the computed scores
+
+Complexity: O(n) for new node auto-linking where n = existing nodes
+"""
 
 from typing import List, Dict, Set, Tuple, Optional
 from collections import deque
@@ -123,8 +146,63 @@ class GraphEngine:
 
     def auto_link_nodes(self, new_node_id: str, threshold: float = 0.3, limit: int = 3) -> List[Edge]:
         """
-        Auto-link a new node using Keyword Gravity (Pure SQLite).
-        This method uses NO local models and 0MB extra RAM.
+        Auto-link a new node to existing nodes using Semantic Gravity (keyword-based).
+        
+        Algorithm (Zero-RAM, No Models):
+        1. Extract keywords from new node
+        2. For each existing node:
+           a. Compute keyword Jaccard similarity: overlap / union
+           b. Compute text token similarity: shared tokens / total tokens
+           c. Combine: score = (keyword × 0.8) + (text × 0.2)
+        3. Filter by threshold (default 0.3)
+        4. Sort by score and take top `limit` (default 3)
+        5. Create RELATED_TO edges to top candidates
+        
+        Rationale for Weights:
+        - Keywords 0.8: AI-curated tags, high signal-to-noise
+        - Text 0.2: Fallback signal, catches common English overlap
+        - This prevents over-linking while catching semantic relationships
+        
+        Why Top-K = 3:
+        - Prevents "spaghetti ball" dense graphs
+        - 3 connections per new node is sufficient for discoverability
+        - Maintains sparsity and query performance
+        
+        Args:
+            new_node_id: ID of the node to link
+            threshold: Minimum similarity score to create a link (0-1, default 0.3)
+                      Increase to 0.5+ for stricter links
+                      Decrease to 0.1 for aggressive linking
+            limit: Maximum number of edges to create per node (default 3)
+                  Increase to allow denser graphs (slower queries)
+                  Decrease to maintain sparsity
+        
+        Returns:
+            List[Edge]: Edges created, empty if new_node not found or no matches
+        
+        Raises:
+            None (logs errors internally)
+        
+        Side effects:
+            - Creates edges in storage (committed to DB)
+            - Logs each auto-link with score for debugging
+        
+        Examples:
+            # Auto-link with defaults (0.3 threshold, top 3)
+            edges = graph_engine.auto_link_nodes("node-123")
+            print(f"Created {len(edges)} auto-links")
+            
+            # Stricter linking (higher threshold, fewer connections)
+            edges = graph_engine.auto_link_nodes("node-123", threshold=0.5, limit=2)
+            
+            # Aggressive linking (lower threshold, more connections)
+            edges = graph_engine.auto_link_nodes("node-123", threshold=0.2, limit=5)
+        
+        Notes:
+            - Keywords treated as ground truth (weighted 0.8)
+            - If new node has no keywords, only text similarity used
+            - Existing node's weight and decay_score not used in linking decision
+            - Linking is directional (new → existing only)
         """
         new_node = self.storage.get_node(new_node_id)
         if not new_node:

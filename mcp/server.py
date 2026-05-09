@@ -1,74 +1,125 @@
-"""MCP Server for BaseMem Session Memory"""
+"""MCP server for BaseMem shared agent memory."""
+
+import logging
+import os
+from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
+
 from storage.db import StorageManager
 from storage.sessions import SessionManager
-import os
-import logging
 
-# Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Initialize FastMCP server
 mcp = FastMCP("BaseMem")
 
-# Database path from environment or default
-DB_PATH = os.getenv("BASEMEM_DB_PATH", "basemem.db")
+
+def _db_path() -> str:
+    """Resolve the database path using the same default as the CLI."""
+    return os.getenv("BASEMEM_DB_PATH", str(Path.home() / ".basemem" / "basemem.db"))
+
+
+def _with_manager():
+    storage = StorageManager(_db_path())
+    return storage, SessionManager(storage)
+
 
 @mcp.tool()
-def get_session_summary(topic: str) -> str:
-    """Get the current summary for a specific topic/session."""
-    logger.info(f"MCP: Getting summary for {topic}")
-    storage = StorageManager(DB_PATH)
-    manager = SessionManager(storage)
+def get_agent_context(topic: str, query: str = "") -> str:
+    """Return the compact pre-answer memory block for a topic."""
+    logger.info("MCP: get_agent_context topic=%s query=%s", topic, query)
+    storage, manager = _with_manager()
     try:
-        session_node = manager.get_or_create_session(topic)
-        return session_node.content
+        return manager.build_agent_context(topic, query=query or None)
     finally:
         storage.close()
 
+
 @mcp.tool()
-def update_session_summary(topic: str, new_summary: str) -> str:
-    """Update the summary for a specific topic/session."""
-    logger.info(f"MCP: Updating summary for {topic}")
-    storage = StorageManager(DB_PATH)
-    manager = SessionManager(storage)
+def read_planet(topic: str) -> str:
+    """Read the canonical shared task state for a topic."""
+    logger.info("MCP: read_planet topic=%s", topic)
+    storage, manager = _with_manager()
     try:
-        manager.update_summary(topic, new_summary)
-        return f"Successfully updated summary for '{topic}'"
+        node = manager.get_planet(topic)
+        return node.content if node else f"Planet not found for topic '{topic}'."
     finally:
         storage.close()
 
+
 @mcp.tool()
-def log_chat_message(topic: str, content: str, sender: str = "ai") -> str:
-    """Log a chat message to the session history and link it to the summary."""
-    logger.info(f"MCP: Logging {sender} message for {topic}")
-    storage = StorageManager(DB_PATH)
-    manager = SessionManager(storage)
+def log_turn(topic: str, content: str, agent_id: str = "default", sender: str = "ai") -> str:
+    """Append a turn to the shared planet activity log."""
+    logger.info("MCP: log_turn topic=%s agent_id=%s sender=%s", topic, agent_id, sender)
+    storage, manager = _with_manager()
     try:
-        chat_node = manager.log_chat(topic, content, sender=sender)
-        return f"Logged {sender} message (Node: {chat_node.id[:8]})"
+        folder_name = Path.cwd().name
+        node = manager.log_chat_to_planet(folder_name, topic, content, agent_id, sender=sender)
+        return f"Logged turn to {node.id}"
     finally:
         storage.close()
 
+
 @mcp.tool()
-def get_session_history(topic: str, limit: int = 10) -> str:
-    """Retrieve the recent chat history for a specific topic."""
-    logger.info(f"MCP: Getting history for {topic} (limit {limit})")
-    storage = StorageManager(DB_PATH)
-    manager = SessionManager(storage)
+def update_planet(
+    topic: str,
+    status: str = "",
+    goal: str = "",
+    current_state: str = "",
+    next_step: str = "",
+    file_path: str = "",
+    command: str = "",
+    handoff: str = "",
+) -> str:
+    """Update the structured shared memory for a topic."""
+    logger.info("MCP: update_planet topic=%s", topic)
+    storage, manager = _with_manager()
     try:
-        history = manager.get_session_history(topic)
-        
-        formatted_history = []
-        for chat in history[-limit:]:
-            sender = chat.metadata.get("sender", "unknown").upper()
-            formatted_history.append(f"[{sender}] {chat.content}")
-            
-        return "\n".join(formatted_history) if formatted_history else "No history found."
+        folder_name = Path.cwd().name
+        node = manager.update_planet(
+            folder_name,
+            topic,
+            status=status or None,
+            goal=goal or None,
+            current_state=current_state or None,
+            next_step=next_step or None,
+            file_path=file_path or None,
+            command=command or None,
+            handoff=handoff or None,
+        )
+        return f"Updated planet {node.id}"
     finally:
         storage.close()
+
+
+@mcp.tool()
+def add_note(
+    topic: str,
+    kind: str,
+    content: str,
+    agent_id: str = "default",
+    title: str = "",
+    status: str = "open",
+) -> str:
+    """Add a typed durable note linked to a topic."""
+    logger.info("MCP: add_note topic=%s kind=%s agent_id=%s", topic, kind, agent_id)
+    storage, manager = _with_manager()
+    try:
+        folder_name = Path.cwd().name
+        node = manager.add_note(
+            folder_name,
+            topic,
+            kind,
+            content,
+            agent_id=agent_id,
+            title=title or None,
+            status=status,
+        )
+        return f"Added note {node.id}"
+    finally:
+        storage.close()
+
 
 if __name__ == "__main__":
     mcp.run()
