@@ -1,19 +1,12 @@
 """Main CLI interface using Click (Full Search Version)"""
 
 import click
-import asyncio
-import json
 from pathlib import Path
 import logging
 import os
 import sys
 
 from storage.db import StorageManager
-from graph.engine import GraphEngine
-from orchestrator.context import ContextOrchestrator
-from processing.pipeline import ProcessingPipeline
-from visualization.terminal import TerminalGraphVisualizer
-from modelsimport NodeType, EdgeType
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -84,14 +77,15 @@ def search(ctx, query):
         preview = (r["current_state"] or r["goal"] or "")[:150].replace("\n", " ").strip()
         results.append(("planet", name, f"planet-{r['topic']}", preview))
 
-    # Notes
+    # Notes (select id explicitly to avoid KeyError)
     for r in conn.execute(
-        "SELECT topic, kind, content, created_at FROM notes WHERE content LIKE ? OR title LIKE ?",
+        "SELECT id, topic, kind, content, created_at FROM notes WHERE content LIKE ? OR title LIKE ?",
         (like, like),
     ):
         preview = r["content"][:150].replace("\n", " ").strip()
         label = f"{r['topic']} / {r['kind']}"
         results.append(("note", label, f"note-{r['id']}", preview))
+    conn.close()
 
     # Old nodes (FTS fallback)
     storage = ctx.obj['storage']
@@ -232,10 +226,11 @@ def sync(ctx, agent_id, topic, chat_file):
     root_name = get_project_root()
     import json, glob
     if not chat_file:
+        home = str(Path.home())
         patterns = [
-            f"/home/zoro/.gemini/tmp/*/chats/session-*-{agent_id}.json",
-            f"/home/zoro/.codex/sessions/**/rollout-*-{agent_id}.jsonl",
-            f"/home/zoro/.claude/**/*.json*",
+            f"{home}/.gemini/tmp/*/chats/session-*-{agent_id}.json",
+            f"{home}/.codex/sessions/**/rollout-*-{agent_id}.jsonl",
+            f"{home}/.claude/**/*.json*",
             f"/tmp/ai-chats/**/*{agent_id}*.json*",
             f"/tmp/**/*{agent_id}*.json*",
         ]
@@ -366,13 +361,34 @@ def planet_set(ctx, topic, status, goal, current_state, next_step, file_path, co
 @planet.command("compact")
 @click.argument('topic')
 @click.option('--agent-id', default='default')
+@click.option('--summarize/--no-summarize', default=True, help='Generate a summary note before trimming')
 @click.pass_context
-def planet_compact(ctx, topic, agent_id):
+def planet_compact(ctx, topic, agent_id, summarize):
     root_name = get_project_root()
     from storage.sessions import SessionManager
     manager = SessionManager(ctx.obj['storage'])
+    count_before = manager.get_note_count(topic)
+    if summarize and count_before > manager.SUMMARIZE_THRESHOLD:
+        summary_text = manager.summarize_planet(topic)
+        click.echo(summary_text)
+        click.echo("")
+        if click.confirm("Write a summary for this planet before trimming?"):
+            summary = click.prompt("Summary content", default="")
+            if summary.strip():
+                manager.add_note(root_name, topic, "summary", summary, agent_id=agent_id)
+                click.echo("[ok] Summary note added.")
     node = manager.compact_planet(root_name, topic, agent_id=agent_id)
-    click.echo(f"[ok] Planet compacted: {node.title}")
+    click.echo(f"[ok] Planet compacted: {node.title} ({count_before} -> {manager.get_note_count(topic)} notes)")
+
+@planet.command("summarize")
+@click.argument('topic')
+@click.option('--limit', default=50, help='Max notes to include (default 50). Excludes existing summaries.')
+@click.pass_context
+def planet_summarize(ctx, topic, limit):
+    """Print notes formatted for an agent to write a summary. Skips old summaries, truncates long notes."""
+    from storage.sessions import SessionManager
+    manager = SessionManager(ctx.obj['storage'])
+    click.echo(manager.summarize_planet(topic, limit=limit))
 
 @planet.command("delete")
 @click.argument('topic')
@@ -387,7 +403,13 @@ def planet_delete(ctx, topic):
         manager.delete_planet(topic)
         click.echo(f"[ok] Planet deleted: {topic}")
 
-@cli.command()
+@cli.group()
+def note():
+    """Manage notes on a planet. Use `kb note add` to create notes, `kb note link` to connect them."""
+    pass
+
+
+@note.command("add")
 @click.argument('topic')
 @click.option('--type', 'kind', default='fact', help='decision, fact, task, issue, question, concept, example')
 @click.option('--message', '-m', required=True)
@@ -395,13 +417,50 @@ def planet_delete(ctx, topic):
 @click.option('--status', default='open')
 @click.option('--agent-id', default='default')
 @click.pass_context
-def note(ctx, topic, kind, message, title, status, agent_id):
+def note_add(ctx, topic, kind, message, title, status, agent_id):
     """Add a typed collaboration note linked to a planet."""
     root_name = get_project_root()
     from storage.sessions import SessionManager
     manager = SessionManager(ctx.obj['storage'])
     node = manager.add_note(root_name, topic, kind, message, agent_id=agent_id, title=title, status=status)
-    click.echo(f"[ok] Note added: {node['title']} ({node['id']})")
+    msg = f"[ok] Note added: {node['title']} ({node['id']})"
+    if node.get("_suggest"):
+        msg += f"\n  [!] {node['_suggest']}"
+    click.echo(msg)
+
+
+@note.command("link")
+@click.argument('from_id')
+@click.argument('to_id')
+@click.option('--type', 'link_type', default='related', help='Link type: related, depends, implements')
+@click.pass_context
+def note_link(ctx, from_id, to_id, link_type):
+    """Create a link between two notes. IDs are the note-<number> format."""
+    from storage.sessions import SessionManager
+    manager = SessionManager(ctx.obj['storage'])
+    ok, msg = manager.link_notes(from_id, to_id, link_type)
+    if ok:
+        click.echo(f"[ok] {msg}")
+    else:
+        click.echo(f"[!] {msg}")
+
+
+@note.command("neighbors")
+@click.argument('note_id')
+@click.option('--link-type', help='Filter by link type')
+@click.pass_context
+def note_neighbors(ctx, note_id, link_type):
+    """Show notes connected to the given note via links."""
+    from storage.sessions import SessionManager
+    manager = SessionManager(ctx.obj['storage'])
+    neighbors = manager.get_note_neighbors(note_id, link_type=link_type)
+    if not neighbors:
+        click.echo("No linked notes found.")
+        return
+    click.echo(f"Neighbors of {note_id} ({len(neighbors)}):\n")
+    for n in neighbors:
+        name = n["title"] or n["content"][:80]
+        click.echo(f"  note-{n['id']} [{n['link_type']}] (w={n['weight']}) {name}")
 
 @cli.command()
 @click.argument('doc_name', required=False)
@@ -411,7 +470,7 @@ def docs(ctx, doc_name):
     m = {"readme": "README.md", "implementation": "IMPLEMENTATION.md", "development": "DEVELOPMENT.md", "agents": "AGENTS.md"}
     if not doc_name: click.echo("Available: " + ", ".join(m.keys())); return
     path = base / m.get(doc_name.lower(), "")
-    if path.exists(): click.echo(open(path).read())
+    if path.exists(): click.echo(path.read_text())
 
 if __name__ == '__main__':
     from basemem.cli import cli

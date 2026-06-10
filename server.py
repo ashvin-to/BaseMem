@@ -2,18 +2,14 @@
 
 import json
 import logging
-import os
-import sys
 from pathlib import Path
 
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-
-from src.basemem.storage.db import StorageManager
-from src.basemem.graph.engine import GraphEngine
-from src.basemem.storage.sessions import SessionManager
+from .storage.db import StorageManager
+from .graph.engine import GraphEngine
+from .storage.sessions import SessionManager
 
 logging.basicConfig(
     level=logging.INFO,
@@ -176,10 +172,9 @@ def create_node():
         return jsonify({"status": "success", "node_id": node.id})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
 @app.route("/api/session/turn", methods=["POST"])
 def session_turn():
-    """Log a complete turn and update summary"""
+    """Log a turn and optionally add a summary note"""
     try:
         data = request.get_json()
         topic = data.get("topic")
@@ -193,36 +188,19 @@ def session_turn():
 
         db_instance = get_db()
         manager = SessionManager(db_instance)
-        manager.log_chat(topic, message, sender=sender, agent_id=agent_id)
+        hint = manager.log_chat_to_planet("web", topic, message, agent_id, sender)
+        result = {"status": "success", "logged": True}
 
         if summary:
-            session_node = manager.update_summary(topic, summary)
-            return jsonify({"status": "success", "summary": summary})
-        
-        return jsonify({"status": "success", "logged": True})
+            manager.add_note("web", topic, "summary", summary, agent_id=agent_id)
+            result["summary"] = summary
+
+        if hint:
+            result["_suggest"] = hint
+
+        return jsonify(result)
     except Exception as e:
         logger.error(f"Error in session turn: {e}")
-        return jsonify({"error": str(e)}), 500
-
-@app.route("/api/session/bootstrap", methods=["POST"])
-def session_bootstrap():
-    """Bootstrap a new project/topic"""
-    try:
-        data = request.get_json()
-        topic = data.get("topic")
-        target_path = data.get("path", ".")
-        if not topic: return jsonify({"error": "Topic required"}), 400
-
-        db_instance = get_db()
-        manager = SessionManager(db_instance)
-        manager.get_or_create_session(topic)
-
-        agents_file = Path(target_path) / "AGENTS.md"
-        content = f"# AI Memory Protocol: {topic}\n\nStart: `kb session context` | Turn: `kb session turn` | Sync: `kb session sync`"
-        with agents_file.open("w") as f: f.write(content)
-
-        return jsonify({"status": "success", "topic": topic})
-    except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 @app.route("/api/session/read/<topic>", methods=["GET"])
@@ -230,7 +208,8 @@ def session_read(topic):
     """Read planet details for a topic"""
     try:
         conn = get_db().connection
-        slug = topic.strip().lower().replace(" ", "-")
+        mgr = get_session()
+        slug = mgr.normalize_topic(topic)
         row = conn.execute(
             "SELECT * FROM planets WHERE topic = ?", (slug,)
         ).fetchone()
@@ -332,14 +311,14 @@ def api_get_planet(topic):
 def api_upsert_planet():
     try:
         data = request.get_json()
-        topic = data.get("topic", "").strip().lower().replace(" ", "-")
-        if not topic:
+        raw_topic = data.get("topic", "").strip()
+        if not raw_topic:
             return jsonify({"error": "topic required"}), 400
 
         mgr = get_session()
         mgr.update_planet(
             "web",
-            topic,
+            raw_topic,
             status=data.get("status"),
             goal=data.get("goal"),
             current_state=data.get("current_state"),
@@ -365,15 +344,15 @@ def api_delete_planet(topic):
 def api_add_note():
     try:
         data = request.get_json()
-        topic = data.get("topic", "").strip().lower().replace(" ", "-")
+        raw_topic = data.get("topic", "").strip()
         kind = data.get("kind", "fact")
         content = data.get("content", "")
-        if not topic or not content:
+        if not raw_topic or not content:
             return jsonify({"error": "topic and content required"}), 400
 
         mgr = get_session()
         result = mgr.add_note(
-            "web", topic, kind, content,
+            "web", raw_topic, kind, content,
             agent_id=data.get("agent_id", "web-ui"),
             title=data.get("title"),
         )

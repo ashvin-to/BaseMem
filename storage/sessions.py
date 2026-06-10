@@ -293,11 +293,29 @@ class SessionManager:
         row = _get_planet_row(self.storage.connection, topic_slug)
         if not row:
             self.get_or_create_task_planet(topic, topic)
+
         cursor = self.storage.connection.cursor()
-        cursor.execute(
-            "DELETE FROM notes WHERE topic = ? AND id NOT IN (SELECT id FROM notes WHERE topic = ? ORDER BY created_at DESC LIMIT 30)",
-            (topic_slug, topic_slug),
-        )
+        summary_ids = cursor.execute(
+            "SELECT id FROM notes WHERE topic = ? AND kind = 'summary'", (topic_slug,)
+        ).fetchall()
+        summary_ids = {r["id"] for r in summary_ids}
+
+        ids_to_keep = set(summary_ids)
+        recent = cursor.execute(
+            "SELECT id FROM notes WHERE topic = ? AND kind != 'summary' ORDER BY created_at DESC LIMIT 30",
+            (topic_slug,),
+        ).fetchall()
+        ids_to_keep.update(r["id"] for r in recent)
+
+        if ids_to_keep:
+            placeholders = ",".join("?" for _ in ids_to_keep)
+            cursor.execute(
+                f"DELETE FROM notes WHERE topic = ? AND id NOT IN ({placeholders})",
+                (topic_slug, *ids_to_keep),
+            )
+        else:
+            cursor.execute("DELETE FROM notes WHERE topic = ?", (topic_slug,))
+
         _exec(
             self.storage.connection,
             "UPDATE planets SET updated_at = ? WHERE topic = ?",
@@ -344,11 +362,22 @@ class SessionManager:
         ).fetchone()
 
         note_id = f"note-{note_row['id']}" if note_row else f"note-{topic_slug}-{uuid.uuid4().hex[:8]}"
-        return {"id": note_id, "title": title or content[:80], "content": content}
+
+        if note_row and kind not in ("turn", "summary"):
+            self._auto_link_note(note_row["id"], topic_slug)
+
+        count = self.get_note_count(topic)
+        result = {"id": note_id, "title": title or content[:80], "content": content}
+        if count >= self.SUMMARIZE_THRESHOLD:
+            result["_suggest"] = (
+                f"This planet has {count} notes. Consider summarizing via "
+                f"`kb planet summarize {topic}` or the summarize_planet MCP tool."
+            )
+        return result
 
     def log_chat_to_planet(
         self, folder_name: str, topic: str, content: str, agent_id: str, sender: str = "ai"
-    ) -> None:
+    ) -> Optional[str]:
         topic_slug = self.normalize_topic(topic)
         row = _get_planet_row(self.storage.connection, topic_slug)
         if not row:
@@ -364,6 +393,189 @@ class SessionManager:
             "UPDATE planets SET updated_at = ? WHERE topic = ?",
             (now, topic_slug),
         )
+        count = self.get_note_count(topic)
+        if count >= self.SUMMARIZE_THRESHOLD:
+            hint = (
+                f"This planet has {count} notes. Consider summarizing via "
+                f"`kb planet summarize {topic}` or the summarize_planet MCP tool."
+            )
+            logger.warning(hint)
+            return hint
+        return None
+
+    # ── Note linking ─────────────────────────────────────────
+
+    STOPWORDS = {
+        "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
+        "have", "has", "had", "do", "does", "did", "will", "would", "could",
+        "should", "may", "might", "shall", "can", "need", "dare", "ought",
+        "used", "to", "of", "in", "for", "on", "with", "at", "by", "from",
+        "as", "into", "through", "during", "before", "after", "above", "below",
+        "between", "out", "off", "over", "under", "again", "further", "then",
+        "once", "here", "there", "when", "where", "why", "how", "all", "each",
+        "every", "both", "few", "more", "most", "other", "some", "such", "no",
+        "nor", "not", "only", "own", "same", "so", "than", "too", "very",
+        "just", "because", "but", "and", "or", "if", "while", "that", "this",
+        "it", "its", "you", "your", "we", "our", "they", "them", "their",
+        "i", "me", "my", "he", "him", "his", "she", "her", "who", "whom",
+        "which", "what", "about", "up", "down",
+        "let", "get", "got", "also", "make", "made",
+    }
+
+    @staticmethod
+    def _parse_note_id(note_id):
+        if isinstance(note_id, int):
+            return note_id
+        if isinstance(note_id, str):
+            if note_id.startswith("note-"):
+                try:
+                    return int(note_id[5:])
+                except ValueError:
+                    return None
+            try:
+                return int(note_id)
+            except ValueError:
+                return None
+        return None
+
+    @staticmethod
+    def _tokenize(text):
+        import re
+        words = re.findall(r"[a-zA-Z]{3,}", text.lower())
+        return {w for w in words if w not in SessionManager.STOPWORDS}
+
+    def link_notes(self, from_note_id, to_note_id, link_type="related", weight=1.0):
+        from_id = self._parse_note_id(from_note_id)
+        to_id = self._parse_note_id(to_note_id)
+        if from_id is None or to_id is None:
+            return False, "Invalid note ID"
+        if from_id == to_id:
+            return False, "Cannot link a note to itself"
+        from_id, to_id = sorted([from_id, to_id])
+        _exec(
+            self.storage.connection,
+            "INSERT OR IGNORE INTO note_links (from_note_id, to_note_id, link_type, weight) VALUES (?, ?, ?, ?)",
+            (from_id, to_id, link_type, weight),
+        )
+        return True, f"Linked note-{from_id} -> note-{to_id} ({link_type})"
+
+    def get_note_neighbors(self, note_id, link_type=None):
+        nid = self._parse_note_id(note_id)
+        if nid is None:
+            return []
+        cursor = self.storage.connection.cursor()
+        if link_type:
+            rows = cursor.execute(
+                """SELECT n.id, n.topic, n.kind, n.content, n.title, nl.link_type, nl.weight
+                   FROM notes n
+                   JOIN note_links nl ON (nl.from_note_id = n.id OR nl.to_note_id = n.id)
+                   WHERE (nl.from_note_id = ? OR nl.to_note_id = ?) AND n.id != ?
+                   AND nl.link_type = ?""",
+                (nid, nid, nid, link_type),
+            ).fetchall()
+        else:
+            rows = cursor.execute(
+                """SELECT n.id, n.topic, n.kind, n.content, n.title, nl.link_type, nl.weight
+                   FROM notes n
+                   JOIN note_links nl ON (nl.from_note_id = n.id OR nl.to_note_id = n.id)
+                   WHERE (nl.from_note_id = ? OR nl.to_note_id = ?) AND n.id != ?""",
+                (nid, nid, nid),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def _auto_link_note(self, note_id, topic_slug):
+        cursor = self.storage.connection.cursor()
+        new_row = cursor.execute(
+            "SELECT id, content FROM notes WHERE id = ?", (note_id,)
+        ).fetchone()
+        if not new_row:
+            return
+        new_words = self._tokenize(new_row["content"])
+        if len(new_words) < 3:
+            return
+        existing = cursor.execute(
+            "SELECT id, content FROM notes WHERE topic = ? AND id != ?",
+            (topic_slug, note_id),
+        ).fetchall()
+        for row in existing:
+            existing_words = self._tokenize(row["content"])
+            if len(existing_words) < 3:
+                continue
+            intersection = new_words & existing_words
+            union = new_words | existing_words
+            score = len(intersection) / len(union) if union else 0
+            if score >= 0.1:
+                from_id, to_id = sorted([note_id, row["id"]])
+                _exec(
+                    self.storage.connection,
+                    "INSERT OR IGNORE INTO note_links (from_note_id, to_note_id, link_type, weight) VALUES (?, ?, 'auto', ?)",
+                    (from_id, to_id, round(score, 3)),
+                )
+
+    # ── Agent summarization ──────────────────────────────────
+
+    SUMMARIZE_THRESHOLD = 50
+
+    def get_note_count(self, topic: str) -> int:
+        topic_slug = self.normalize_topic(topic)
+        cursor = self.storage.connection.cursor()
+        row = cursor.execute(
+            "SELECT COUNT(*) AS cnt FROM notes WHERE topic = ?", (topic_slug,)
+        ).fetchone()
+        return row["cnt"] if row else 0
+
+    def summarize_planet(self, topic: str, limit: int = 50) -> str:
+        """Return planet data + notes formatted for an agent to summarize.
+        
+        Skips existing summary notes to avoid circular summarization.
+        Truncates each note to a preview to keep context manageable.
+        """
+        topic_slug = self.normalize_topic(topic)
+        row = _get_planet_row(self.storage.connection, topic_slug)
+        if not row:
+            return f"No planet found for '{topic}'."
+
+        all_notes = _get_notes(self.storage.connection, topic_slug)
+
+        # exclude old summaries, limit to N most recent non-summary notes
+        source_notes = [n for n in all_notes if n.get("kind") != "summary"]
+        source_notes = source_notes[:limit]
+
+        lines = [
+            f"# Planet: {row.get('display_topic') or topic_slug}",
+            f"Status: {row.get('status', 'active')}",
+            f"Goal: {row.get('goal', '')}",
+            f"Current State: {row.get('current_state', '')}",
+            f"Notes (showing {len(source_notes)} of {len(all_notes)} total, skipping old summaries):",
+            "",
+            "--- NOTES (oldest first) ---",
+        ]
+
+        for n in reversed(source_notes):
+            kind = n.get("kind", "note")
+            title = n.get("title") or ""
+            content = n.get("content", "")
+            created = n.get("created_at", "")
+            agent = n.get("agent_id", "default")
+            preview = self._trim_text(content, 400)
+            lines.append("")
+            lines.append(f"[{kind}] {title} ({agent}, {created})")
+            if preview != content:
+                lines.append(f"{preview} [...truncated]")
+            else:
+                lines.append(preview)
+
+        lines.extend([
+            "",
+            "--- END OF NOTES ---",
+            "",
+            "Write a comprehensive summary of this planet as a single note with kind='summary'.",
+            "Cover: goal progress, key decisions, open issues, and next steps.",
+            "Call add_note(topic, 'summary', '<your summary>') to save it.",
+            f"After saving, call compact_planet(topic) to trim old notes.",
+        ])
+
+        return "\n".join(lines)
 
     # ── Context builder ──────────────────────────────────────
 
@@ -556,6 +768,14 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             turn_index INTEGER DEFAULT 0,
             created_at TEXT DEFAULT (datetime('now')),
             updated_at TEXT DEFAULT (datetime('now'))
+        );
+        CREATE TABLE IF NOT EXISTS note_links (
+            from_note_id INTEGER NOT NULL,
+            to_note_id INTEGER NOT NULL,
+            link_type TEXT NOT NULL DEFAULT 'related',
+            weight REAL DEFAULT 1.0,
+            created_at TEXT DEFAULT (datetime('now')),
+            PRIMARY KEY (from_note_id, to_note_id, link_type)
         );
     """)
     conn.commit()

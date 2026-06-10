@@ -21,14 +21,22 @@ def _resolve_db_path() -> str:
     return from_env or str(BASE_DIR / "basemem" / "basemem.db")
 
 
-def _env_path() -> str | None:
+def _env_path() -> "str | None":
     import os
 
     raw = os.environ.get("BASEMEM_DB_PATH")
     if raw:
         return raw
+
+    home = os.environ.get("HOME", "/tmp")
+
+    # Match CLI/Flask default location
+    legacy = os.path.join(home, ".basemem", "basemem.db")
+    if os.path.isfile(legacy):
+        return legacy
+
     data_dir = os.environ.get("XDG_DATA_HOME") or os.path.join(
-        os.environ.get("HOME", "/tmp"), ".local", "share"
+        home, ".local", "share"
     )
     candidate = os.path.join(data_dir, "basemem", "basemem.db")
     if os.path.isfile(candidate):
@@ -36,7 +44,7 @@ def _env_path() -> str | None:
     return None
 
 
-def _get_note(topic: str, kind: str, content: str) -> list | None:
+def _get_note(topic: str, kind: str, content: str) -> "dict | None":
     """Query notes by topic, kind, and content."""
     import sqlite3
 
@@ -56,7 +64,7 @@ def _get_note(topic: str, kind: str, content: str) -> list | None:
         conn.close()
 
 
-def _serialize_nodes(rows: list) -> list[dict]:
+def _serialize_nodes(rows) -> "list[dict]":
     """Convert node rows to dicts."""
     return [
         {
@@ -409,7 +417,7 @@ def add_note(topic: str, kind: str, content: str) -> str:
     if not os.path.isfile(db_path):
         return f"No knowledge base found at {db_path}."
 
-    valid_kinds = {"decision", "fact", "issue", "turn"}
+    valid_kinds = {"decision", "fact", "issue", "turn", "summary"}
     if kind not in valid_kinds:
         return f"Invalid kind '{kind}'. Must be one of: {', '.join(sorted(valid_kinds))}"
 
@@ -427,6 +435,41 @@ def add_note(topic: str, kind: str, content: str) -> str:
         return f"Note added to '{topic}' as a {kind}."
     finally:
         conn.close()
+
+
+@server.tool(
+    description=(
+        "Return all raw notes for a planet, formatted for an agent to synthesize into a summary. "
+        "After reading the output, call add_note(topic, 'summary', '<your summary>') to save the summary, "
+        "then call compact_planet to trim old notes."
+    )
+)
+def summarize_planet(topic: str, limit: int = 50) -> str:
+    """Return all notes for a planet formatted for agent summarization."""
+    from storage.sessions import SessionManager
+    from storage.db import StorageManager
+    storage = StorageManager(get_db_path())
+    manager = SessionManager(storage)
+    return manager.summarize_planet(topic, limit=limit)
+
+
+@server.tool(
+    description=(
+        "Trim old notes from a planet, keeping only summary notes and the 30 most recent non-summary notes. "
+        "Call this after summarize_planet + add_note to keep the planet manageable. "
+        "Only call this when the planet has a summary note (kind='summary') to preserve context."
+    )
+)
+def compact_planet(topic: str) -> str:
+    """Compact a planet - keep summaries + 30 recent notes, delete the rest."""
+    from storage.sessions import SessionManager
+    from storage.db import StorageManager
+    storage = StorageManager(get_db_path())
+    manager = SessionManager(storage)
+    count_before = manager.get_note_count(topic)
+    proxy = manager.compact_planet("default", topic)
+    count_after = manager.get_note_count(topic)
+    return f"Compacted '{topic}': {count_before} notes -> {count_after} notes kept."
 
 
 @server.tool(
@@ -623,6 +666,46 @@ def get_node(node_id: str) -> str:
         )
     finally:
         conn.close()
+
+
+@server.tool(
+    description=(
+        "Create an explicit link between two notes. "
+        "Note IDs are returned by add_note and search_notes (format: note-<number>). "
+        "Use link_type='related' for general connections, 'depends' for dependencies."
+    )
+)
+def link_notes(from_note_id: str, to_note_id: str, link_type: str = "related") -> str:
+    """Link two notes together."""
+    from storage.sessions import SessionManager
+    from storage.db import StorageManager
+    storage = StorageManager(get_db_path())
+    manager = SessionManager(storage)
+    ok, msg = manager.link_notes(from_note_id, to_note_id, link_type)
+    return msg
+
+
+@server.tool(
+    description=(
+        "Find all notes connected to a given note via links. "
+        "Returns the linked notes with their link type and weight. "
+        "Note IDs are in format note-<number>."
+    )
+)
+def get_note_neighbors(note_id: str) -> str:
+    """Get neighbors of a note."""
+    from storage.sessions import SessionManager
+    from storage.db import StorageManager
+    storage = StorageManager(get_db_path())
+    manager = SessionManager(storage)
+    neighbors = manager.get_note_neighbors(note_id)
+    if not neighbors:
+        return "No linked notes found."
+    lines = [f"Neighbors of {note_id}:\n"]
+    for n in neighbors:
+        name = n["title"] or n["content"][:80]
+        lines.append(f"- note-{n['id']} [{n['link_type']}] (w={n['weight']}) {name}")
+    return "\n".join(lines)
 
 
 def main():
