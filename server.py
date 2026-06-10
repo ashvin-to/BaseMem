@@ -92,6 +92,101 @@ def get_graph_data():
         logger.error(f"Error getting graph: {e}")
         return jsonify({"error": str(e)}), 500
 
+
+@app.route("/api/notes/graph", methods=["GET"])
+def notes_graph():
+    """Get all notes + links as D3 graph data, grouped by planet."""
+    try:
+        conn = get_db().connection
+        planets = conn.execute(
+            "SELECT topic, display_topic, status FROM planets ORDER BY updated_at DESC"
+        ).fetchall()
+
+        nodes = []
+        edges = []
+
+        for p in planets:
+            slug = p["topic"]
+            pid = f"planet-{slug}"
+            nodes.append({
+                "id": pid, "title": p["display_topic"] or slug,
+                "type": "planet", "group": 0, "weight": 2,
+                "color": _get_node_color("summary"),
+            })
+
+            note_rows = conn.execute(
+                "SELECT id, kind, content, title, agent_id FROM notes WHERE topic = ? ORDER BY created_at DESC",
+                (slug,),
+            ).fetchall()
+
+            for n in note_rows:
+                nid = f"note-{n['id']}"
+                label = n["title"] or n["content"][:60]
+                nodes.append({
+                    "id": nid, "title": label, "type": n["kind"],
+                    "group": slug, "weight": 1,
+                    "color": _get_note_color(n["kind"]),
+                    "planet": slug,
+                })
+                edges.append({
+                    "source": pid, "target": nid,
+                    "type": "contains", "weight": 0.5,
+                })
+
+            links = conn.execute(
+                """SELECT from_note_id, to_note_id, link_type, weight
+                   FROM note_links
+                   WHERE from_note_id IN (SELECT id FROM notes WHERE topic = ?)
+                      OR to_note_id IN (SELECT id FROM notes WHERE topic = ?)""",
+                (slug, slug),
+            ).fetchall()
+
+            for l in links:
+                edges.append({
+                    "source": f"note-{l['from_note_id']}",
+                    "target": f"note-{l['to_note_id']}",
+                    "type": l["link_type"],
+                    "weight": l["weight"] or 1,
+                })
+
+        return jsonify({"nodes": nodes, "edges": edges, "stats": {"planets": len(planets), "notes": len(nodes) - len(planets)}})
+    except Exception as e:
+        logger.error(f"Error getting notes graph: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/notes/<int:note_id>", methods=["GET"])
+def get_note_detail(note_id):
+    """Get a single note with its linked neighbors."""
+    try:
+        conn = get_db().connection
+        row = conn.execute(
+            "SELECT * FROM notes WHERE id = ?", (note_id,)
+        ).fetchone()
+        if not row:
+            return jsonify({"error": "Note not found"}), 404
+
+        mgr = get_session()
+        neighbors = mgr.get_note_neighbors(note_id)
+
+        return jsonify({
+            "note": {
+                "id": f"note-{row['id']}",
+                "topic": row["topic"],
+                "kind": row["kind"],
+                "content": row["content"],
+                "title": row["title"] or row["content"][:80],
+                "agent_id": row["agent_id"],
+                "status": row["status"],
+                "created_at": row["created_at"],
+            },
+            "neighbors": neighbors,
+        })
+    except Exception as e:
+        logger.error(f"Error getting note: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/node/<node_id>", methods=["GET"])
 def get_node(node_id):
     """Get single node with neighbors"""
@@ -359,6 +454,20 @@ def api_add_note():
         return jsonify({"status": "success", "note": result})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+def _get_note_color(kind: str) -> str:
+    colors = {
+        "decision": "#8aa2ff",
+        "fact": "#2196F3",
+        "issue": "#f44336",
+        "question": "#FFC107",
+        "summary": "#f97316",
+        "turn": "#06b6d4",
+        "concept": "#7c3aed",
+        "example": "#00BCD4",
+    }
+    return colors.get(kind, "#757575")
 
 
 def _get_node_color(node_type: str) -> str:
