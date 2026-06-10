@@ -403,6 +403,66 @@ def planet_delete(ctx, topic):
         manager.delete_planet(topic)
         click.echo(f"[ok] Planet deleted: {topic}")
 
+@planet.command("link")
+@click.argument('from_topic')
+@click.argument('to_topic')
+@click.option('--relation', default='related', help='Relation type: related, depends, implements')
+@click.option('--weight', default=1.0, type=float)
+@click.pass_context
+def planet_link(ctx, from_topic, to_topic, relation, weight):
+    """Link two planets together."""
+    from storage.sessions import SessionManager
+    manager = SessionManager(ctx.obj['storage'])
+    ok, msg = manager.link_planets(from_topic, to_topic, relation, weight)
+    if ok:
+        click.echo(f"[ok] {msg}")
+    else:
+        click.echo(f"[!] {msg}")
+
+@planet.command("linked")
+@click.argument('topic')
+@click.pass_context
+def planet_linked(ctx, topic):
+    """Show planets linked to the given planet."""
+    from storage.sessions import SessionManager
+    manager = SessionManager(ctx.obj['storage'])
+    links = manager.get_planet_links(topic)
+    if not links:
+        click.echo("No planet links found.")
+        return
+    click.echo(f"Planets linked to '{topic}':\n")
+    for l in links:
+        click.echo(f"  {l['planet']} [{l['relation']}] (w={l['weight']})")
+
+@planet.command("set-state")
+@click.argument('topic')
+@click.argument('state', type=click.Choice(['hot', 'warm', 'compacted']))
+@click.pass_context
+def planet_set_state(ctx, topic, state):
+    """Set memory state: hot, warm, or compacted."""
+    from storage.sessions import SessionManager
+    manager = SessionManager(ctx.obj['storage'])
+    ok, msg = manager.set_memory_state(topic, state)
+    if ok:
+        click.echo(f"[ok] {msg}")
+    else:
+        click.echo(f"[!] {msg}")
+
+@cli.command()
+@click.option('--topic', help='Recompute only within a specific planet')
+@click.option('--threshold', default=0.1, type=float, help='Jaccard threshold for new links')
+@click.option('--min-weight', default=0.05, type=float, help='Remove auto-links below this weight')
+@click.pass_context
+def recompute_links(ctx, topic, threshold, min_weight):
+    """Recompute Jaccard similarity for all notes. Updates weights, creates new links, prunes weak ones."""
+    from storage.sessions import SessionManager
+    manager = SessionManager(ctx.obj['storage'])
+    click.echo("Recomputing note links (this may take a moment)...")
+    result = manager.recompute_links(topic=topic, threshold=threshold, min_weight=min_weight)
+    click.echo(f"  Created: {result['created']} new links")
+    click.echo(f"  Removed: {result['removed']} weak links")
+    click.echo(f"  Evaluated: {result['total_pairs']} note pairs")
+
 @cli.group()
 def note():
     """Manage notes on a planet. Use `kb note add` to create notes, `kb note link` to connect them."""

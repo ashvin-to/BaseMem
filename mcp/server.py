@@ -675,13 +675,13 @@ def get_node(node_id: str) -> str:
         "Use link_type='related' for general connections, 'depends' for dependencies."
     )
 )
-def link_notes(from_note_id: str, to_note_id: str, link_type: str = "related") -> str:
+def link_notes(from_note_id: str, to_note_id: str, link_type: str = "related", weight: float = 1.0) -> str:
     """Link two notes together."""
     from storage.sessions import SessionManager
     from storage.db import StorageManager
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
-    ok, msg = manager.link_notes(from_note_id, to_note_id, link_type)
+    ok, msg = manager.link_notes(from_note_id, to_note_id, link_type, weight)
     return msg
 
 
@@ -705,6 +705,140 @@ def get_note_neighbors(note_id: str) -> str:
     for n in neighbors:
         name = n["title"] or n["content"][:80]
         lines.append(f"- note-{n['id']} [{n['link_type']}] (w={n['weight']}) {name}")
+    return "\n".join(lines)
+
+
+# ── Planet links ─────────────────────────────────────────────
+
+
+@server.tool(
+    description=(
+        "Link two planets with a relation type. "
+        "Planets are high-level topics/workspaces. "
+        "Use relation='depends' for dependencies, 'related' for general connections."
+    )
+)
+def link_planets(from_planet: str, to_planet: str, relation: str = "related", weight: float = 1.0) -> str:
+    """Link two planets together."""
+    from storage.sessions import SessionManager
+    from storage.db import StorageManager
+    storage = StorageManager(get_db_path())
+    manager = SessionManager(storage)
+    ok, msg = manager.link_planets(from_planet, to_planet, relation, weight)
+    return msg
+
+
+@server.tool(
+    description=(
+        "Get all planets linked to a given planet. "
+        "Returns the linked planet names, relation types, and weights."
+    )
+)
+def get_planet_links(planet: str) -> str:
+    """Get planets linked to the given planet."""
+    from storage.sessions import SessionManager
+    from storage.db import StorageManager
+    storage = StorageManager(get_db_path())
+    manager = SessionManager(storage)
+    links = manager.get_planet_links(planet)
+    if not links:
+        return f"No planet links found for '{planet}'."
+    lines = [f"Planets linked to '{planet}':\n"]
+    for l in links:
+        lines.append(f"- {l['planet']} [{l['relation']}] (w={l['weight']})")
+    return "\n".join(lines)
+
+
+# ── Memory tiers ──────────────────────────────────────────────
+
+
+@server.tool(
+    description=(
+        "Set the memory state of a planet: 'hot' (active working notes), "
+        "'warm' (stable knowledge), or 'compacted' (summarized and compressed)."
+    )
+)
+def set_memory_state(topic: str, state: str) -> str:
+    """Set memory tier for a planet."""
+    from storage.sessions import SessionManager
+    from storage.db import StorageManager
+    storage = StorageManager(get_db_path())
+    manager = SessionManager(storage)
+    ok, msg = manager.set_memory_state(topic, state)
+    return msg
+
+
+# ── Graph-aware retrieval ─────────────────────────────────────
+
+
+@server.tool(
+    description=(
+        "Get neighbors of a note up to a given depth. "
+        "Performs weighted traversal returning all connected notes. "
+        "Use depth=1 for direct neighbors, depth=2 for neighbors-of-neighbors. "
+        "min_weight filters by minimum edge weight."
+    )
+)
+def get_neighbors_weighted(note_id: str, depth: int = 1, min_weight: float = 0.0) -> str:
+    """Weighted neighbor traversal with configurable depth."""
+    from storage.sessions import SessionManager
+    from storage.db import StorageManager
+    storage = StorageManager(get_db_path())
+    manager = SessionManager(storage)
+    nid = manager._parse_note_id(note_id)
+    if nid is None:
+        return f"Invalid note ID: {note_id}"
+    results = manager.get_neighbors_weighted(nid, depth=depth, min_weight=min_weight)
+    if not results:
+        return "No neighbors found at this depth."
+    lines = [f"Neighbors (depth={depth}, min_weight={min_weight}):\n"]
+    for r in results:
+        lines.append(f"  note-{r['id']} [{r['link_type']}] (w={r['weight']}, d={r['_depth']}) {r['title'] or r['content'][:60]}")
+    return "\n".join(lines)
+
+
+@server.tool(
+    description=(
+        "Extract a weighted subgraph around a note. "
+        "Returns structured JSON with nodes and edges for LLM summarization. "
+        "Use depth=2 for k-hop exploration, min_weight=0.2 to filter weak links."
+    )
+)
+def get_subgraph(note_id: str, depth: int = 2, min_weight: float = 0.2) -> str:
+    """Extract weighted subgraph around a note."""
+    import json
+    from storage.sessions import SessionManager
+    from storage.db import StorageManager
+    storage = StorageManager(get_db_path())
+    manager = SessionManager(storage)
+    nid = manager._parse_note_id(note_id)
+    if nid is None:
+        return f"Invalid note ID: {note_id}"
+    result = manager.get_subgraph(nid, depth=depth, min_weight=min_weight)
+    return json.dumps(result, indent=2)
+
+
+@server.tool(
+    description=(
+        "Rank neighbors of a note by weight or confidence. "
+        "Returns neighbors sorted descending by the selected metric."
+    )
+)
+def rank_neighbors(note_id: str, by: str = "weight") -> str:
+    """Rank neighbors by weight or confidence."""
+    from storage.sessions import SessionManager
+    from storage.db import StorageManager
+    storage = StorageManager(get_db_path())
+    manager = SessionManager(storage)
+    nid = manager._parse_note_id(note_id)
+    if nid is None:
+        return f"Invalid note ID: {note_id}"
+    ranked = manager.rank_neighbors(nid, by=by)
+    if not ranked:
+        return "No neighbors found."
+    lines = [f"Neighbors ranked by {by}:\n"]
+    for i, r in enumerate(ranked, 1):
+        lines.append(f"  {i}. note-{r['id']} (w={r['weight']}, c={r.get('confidence','?')}) {r['title'] or r['content'][:60]}")
     return "\n".join(lines)
 
 
