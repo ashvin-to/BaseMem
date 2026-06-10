@@ -1,6 +1,6 @@
 # BaseMem: AI Knowledge Base System
 
-A lightweight knowledge graph plugin/middleware with token-optimized memory, hybrid retrieval (BM25 + Vector), and intelligent context packaging. **Designed as a plugin for existing chat interfaces** (Claude Code, Codex, Gemini CLI, etc.) rather than a standalone chat system.
+A lightweight knowledge base that survives between AI sessions. Planets hold your task context, notes persist your decisions, and MCP tools let any agent read and write the same data. **Designed as a plugin for existing chat interfaces** (Claude Code, Codex, Gemini CLI, etc.) rather than a standalone chat system.
 
 The critical integration rule is simple:
 
@@ -8,7 +8,7 @@ The critical integration rule is simple:
 2. Pass that retrieved context into the agent prompt or expose it as a tool.
 3. Write durable updates back after the answer.
 
-BaseMem now exposes a canonical pre-answer context command for that workflow:
+BaseMem exposes a canonical pre-answer context command for that workflow:
 
 ```bash
 kb agent-context --topic "project-name" --query "what am I working on?"
@@ -24,139 +24,71 @@ Simply run the setup script to make the `kb` command available globally:
 chmod +x setup.sh && ./setup.sh
 ```
 
-### Basic Usage (Global)
-
-Now you can go to **any folder** and start a new project memory:
+### Basic Usage
 
 ```bash
-cd ~/my-project
-kb session bootstrap "project-name"
+# Create a planet (a topic/workspace with goals and state)
+kb planet create "my-project" --goal "Build feature X" --state "Research phase"
+
+# Update its status and next steps
+kb planet set "my-project" --status active --next "Read the docs"
+
+# Add a decision or fact
+kb note "my-project" --type decision -m "Use SQLite for persistence"
+
+# Get agent-ready context before answering
+kb agent-context --topic "my-project" --query "what did we decide?"
+
+# Read the full planet details
+kb planet read "my-project"
+
+# Log a turn (lightweight activity record)
+kb session turn --topic "my-project" --message "Reviewed the PR" --agent-id "codex"
 ```
 
-### Add a large file (like a technical manual or PDF transcript)
-```bash
-kb add --file path/to/document.txt --source "manual"
-```
+### Search
 
-### Log an AI turn (Log + Summarize + Link)
-```bash 
-kb session turn "my-topic" "Technical response content..." --sender ai
-```
-
-### Get agent-ready context before answering
-```bash
-kb agent-context --topic "my-topic" --query "current bug and next step"
-```
-
-### Read full project history
-```bash
-kb session read "my-topic"
-```
-
-### Search for information
 ```bash
 kb search "what is machine learning"
 ```
 
-### Ask a question (full RAG pipeline)
+### View your planets
+
 ```bash
-kb ask "explain machine learning"
+kb session context
 ```
 
-### Explore the knowledge graph
-```
-kb graph <node-id>
-```
+### Ingest AI chat history
 
-### View statistics
-```
-kb stats
-```
-```
-
-## Ingesting AI Chat History
-
-BaseMem is optimized to store and link your previous AI conversations. 
-
-### Multi-Agent Autonomous Sync
-To automatically find your current Gemini CLI session file and sync the **entire high-detail transcript** into your private agent history node:
 ```bash
 kb session sync "topic-name" --agent-id "your-unique-suffix"
 ```
 
-### Manual Ingestion
-To manually bring a full Gemini session into your graph from a specific file:
-```bash
-kb session ingest "topic-name" --file "/home/zoro/.gemini/tmp/basemem/chats/session-timestamp.json"
-```
+All CLI commands write to the same `planets` and `notes` tables that the MCP tools use — no sync needed.
 
 ## Universal Agent Integration
 
 The agent does not automatically know your knowledge base. Your launcher and host instructions must make the agent check memory after the first user prompt and before the first answer.
 
-### Shell Wrapper
+### Installed CLI
 
-Use `ai-wrapper.sh` as the universal adapter:
+Running `./setup.sh` installs `kb`:
 
-```bash
-./ai-wrapper.sh context my-topic
-./ai-wrapper.sh run my-agent-command
-./ai-wrapper.sh my-agent-command
-```
-
-During `run`, the wrapper:
-
-- calls `kb agent-context`
-- exports `BASEMEM_CONTEXT`
-- writes the same content to `BASEMEM_CONTEXT_FILE`
-- optionally injects the context via `BASEMEM_PROMPT_FLAG`
-- optionally pipes the context via stdin when `BASEMEM_USE_STDIN=1`
-- compacts and syncs transcript history after the agent exits
-
-Examples:
-
-```bash
-BASEMEM_TOPIC=my-topic BASEMEM_PROMPT_FLAG=--prompt ./ai-wrapper.sh my-agent
-BASEMEM_TOPIC=my-topic BASEMEM_USE_STDIN=1 ./ai-wrapper.sh my-agent
-cat "$BASEMEM_CONTEXT_FILE"
-```
-
-### Default Launch Style
-
-`setup.sh` configures shell aliases for the real command names:
-
-- `codex`
-- `claude`
-- `gemini`
-
-So the intended launch is:
-
-```bash
-BASEMEM_TOPIC=my-topic codex
-BASEMEM_TOPIC=my-topic claude
-BASEMEM_TOPIC=my-topic gemini
-```
-
-Those aliases route the process through `ai-wrapper.sh`, export the BaseMem context, and install host guidance so the agent checks the KB after the first prompt and before the first answer.
-
-### Installed Helpers
-
-Running `./setup.sh` installs:
-
-- `kb`
-- `basemem-ai`
-
-`setup.sh` also installs a local Codex skill at `~/.codex/skills/basemem-memory` and a Gemini extension skill at `~/.gemini/extensions/00-basemem/skills/basemem-memory`.
+`setup.sh` also installs MCP configurations for Claude Code, Codex, Cursor, Windsurf, and Gemini, plus hooks and plugins for automatic memory retrieval.
 
 ### MCP Tools
 
-If your host supports MCP tools, use the server in `src/basemem/mcp/server.py`. The important tools are:
+If your host supports MCP, the server at `src/basemem/mcp/server.py` exposes these tools:
 
-- `get_agent_context(topic, query="")`
-- `read_planet(topic)`
-- `log_turn(topic, content, agent_id="default", sender="ai")`
-- `update_planet(...)`
-- `add_note(...)`
+- `get_agent_context(topic, query="")` — compact pre-answer memory block
+- `read_planet(topic)` — full planet details with all notes
+- `log_turn(topic, content)` — lightweight activity record
+- `update_planet(topic, current_state, next_step, status, goal, ...)` — update or create a planet
+- `add_note(topic, kind, content)` — persist a decision, fact, or issue
+- `list_planets()` — discover what topics exist
+- `search_nodes(query)` — full-text search across all content
+- `search_notes(topic, kind, query)` — filtered note search
+- `get_node(node_id)` — read any node by ID
 
 Recommended host policy:
 
@@ -168,12 +100,17 @@ Recommended host policy:
 
 BaseMem has been optimized into a **Zero-RAM "Dumb Storage" Layer** by default. Heavy AI models (like Torch, Transformers, FAISS) have been stripped from the core execution path to ensure it uses ~35MB RAM. All "intelligence" (summaries, keywords) is provided by the connected AI Agent, and Semantic Gravity uses fast Keyword Overlap instead of Vector Math.
 
+### Unified Data Layer
+
+The CLI (`kb`) and MCP tools share the same `planets` and `notes` SQLite tables. A planet tracks a topic's state, goal, status, files, commands, and next steps. Notes record decisions, facts, issues, and activity turns. Both interfaces read and write the same data — no sync, no drift.
+
 ### Core Components
 
 1. **Storage Layer** (`storage/`)
    - SQLite + FTS5 for full-text search
-   - Persistent node and edge storage
-   - **Session Management**: Evolving rolling summaries and linked history.
+   - `planets` and `notes` tables for agent-accessible memory
+   - `nodes` and `edges` tables for graph traversal
+   - **Session Management**: Planet-based summaries and linked history.
 
 2. **Retrieval Engine** (`retrieval/`)
    - BM25 for keyword matching
@@ -262,8 +199,8 @@ BaseMem/
 ├── src/basemem/
 │   ├── models.py              # Core data classes
 │   ├── storage/
-│   │   ├── db.py              # SQLite storage manager
-│   │   └── sessions.py        # Session & history logic
+│   │   ├── db.py              # SQLite storage manager (nodes/edges)
+│   │   └── sessions.py        # Planet/note session logic (shared with MCP)
 │   ├── retrieval/
 │   │   ├── engine.py          # Hybrid retrieval
 │   │   ├── bm25.py            # BM25 implementation
@@ -277,9 +214,9 @@ BaseMem/
 │   │   ├── workers.py         # Async workers
 │   │   └── summarizer.py      # Local BART/T5 summarizer
 │   ├── mcp/
-│   │   └── server.py          # Model Context Protocol server
+│   │   └── server.py          # Model Context Protocol server (same planets/notes tables)
 │   └── cli/
-│       └── main.py            # CLI commands
+│       └── main.py            # CLI commands (same planets/notes tables)
 ├── tests/
 │   └── test_basemem.py       # Unit tests
 ├── kb.py                       # Entry point

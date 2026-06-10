@@ -436,12 +436,7 @@ class StorageManager:
     def rebuild_fts_index(self) -> None:
         """Rebuild the FTS5 index from the canonical nodes table."""
         cursor = self.connection.cursor()
-        cursor.execute("DELETE FROM nodes_fts")
-        cursor.execute("""
-            INSERT INTO nodes_fts(rowid, id, title, content, keywords)
-            SELECT rowid, id, title, content, COALESCE(keywords, '')
-            FROM nodes
-        """)
+        cursor.execute("INSERT INTO nodes_fts(nodes_fts) VALUES('rebuild')")
         self.connection.commit()
         logger.info("Rebuilt FTS index from nodes table")
 

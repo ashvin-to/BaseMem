@@ -70,79 +70,40 @@ KB_WRAPPER="#!/bin/bash
 $BASE_DIR/venv/bin/python3 $BASE_DIR/kb.py --db $DATA_DIR/basemem.db \"\$@\""
 write_executable "$KB_BIN_DIR/kb" "$KB_WRAPPER"
 
-echo "Installing wrapper launcher..."
-cp "$BASE_DIR/ai-wrapper.sh" "$KB_BIN_DIR/basemem-ai"
-chmod 755 "$KB_BIN_DIR/basemem-ai"
+echo "Installing MCP server entry point..."
+cat <<'PYEOF' >"$BASE_DIR/mcp-server.py"
+#!/usr/bin/env python3
+"""MCP server entry point for BaseMem agent memory."""
+import sys
+from pathlib import Path
+BASE_DIR = Path(__file__).parent.absolute()
+sys.path.insert(0, str(BASE_DIR / "src"))
+from basemem.mcp.server import server
+if __name__ == "__main__":
+    server.run()
+PYEOF
+chmod 755 "$BASE_DIR/mcp-server.py"
 
-PROTOCOL_TEXT='BaseMem Startup Contract
+echo "Installing basemem package in venv..."
+"$BASE_DIR/venv/bin/pip" install -q -e "$BASE_DIR"
 
-After the first user prompt and before the first answer:
-1. Determine the topic from BASEMEM_TOPIC, the current task, or the current folder.
-2. Read shared memory with `kb agent-context --topic "<topic>" --query "<user request>"`.
-3. Use that returned context before answering.
 
-After answering:
-1. Log durable activity with `kb session turn --topic "<topic>" --message "<short update>" --agent-id "<id>"`.
-2. Store important decisions/tasks with `kb note "<topic>" --type decision|fact|task|issue --message "<durable note>" --agent-id "<id>"`.
-3. Update canonical shared state with `kb planet set "<topic>" --state "<current state>" --next "<next step>"`.
-4. Compact and sync transcript history when available.'
+MCP_PYTHON="$BASE_DIR/venv/bin/python3"
+MCP_SCRIPT="$BASE_DIR/mcp-server.py"
+BASEMEM_DB_PATH="$DATA_DIR/basemem.db"
 
-echo "Installing Codex skill payload..."
-CODEX_SKILL_DIR="$HOME/.codex/skills/basemem-memory"
-mkdir -p "$CODEX_SKILL_DIR"
-cat <<EOF >"$CODEX_SKILL_DIR/SKILL.md"
----
-name: "basemem-memory"
-description: "Use when an agent should read shared BaseMem memory after the first user prompt and write durable updates back after answering."
----
-
-# BaseMem Memory
-
-Use this skill when an agent should read or update shared project memory across sessions or across different agents.
-
-## Startup
-- Resolve the topic from \`BASEMEM_TOPIC\`, the active task, or the current folder.
-- After reading the first user prompt, run \`kb agent-context --topic "<topic>" --query "<user request>"\` before answering.
-- Use the returned context as the starting memory for the session.
-
-## Write-Back
-- Log short progress with \`kb session turn --topic "<topic>" --message "<short update>" --agent-id "<id>"\`.
-- Store durable notes with \`kb note "<topic>" --type decision|fact|task|issue --message "<durable note>" --agent-id "<id>"\`.
-- Update canonical state with \`kb planet set "<topic>" --state "<current state>" --next "<next step>"\`.
-- Run \`kb planet compact "<topic>" --agent-id "<id>"\` before transcript sync or handoff.
-EOF
-
-echo "Installing Gemini extension skill..."
+echo "Installing Gemini extension..."
 BASEMEM_EXT_DIR="$HOME/.gemini/extensions/00-basemem"
-mkdir -p "$BASEMEM_EXT_DIR/skills/basemem-memory"
-cat <<EOF >"$BASEMEM_EXT_DIR/GEMINI.md"
-# BaseMem Startup Contract
-
-$PROTOCOL_TEXT
-EOF
-
-cat <<'EOF' >"$BASEMEM_EXT_DIR/gemini-extension.json"
-{
-  "name": "00-basemem",
-  "description": "BaseMem startup contract and shared memory skill",
-  "version": "1.1.0",
-  "contextFileName": "GEMINI.md"
-}
-EOF
-
-cat <<EOF >"$BASEMEM_EXT_DIR/skills/basemem-memory/SKILL.md"
-# BaseMem Memory
-
-$PROTOCOL_TEXT
-EOF
+rm -rf "$BASEMEM_EXT_DIR"
+cp -r "$BASE_DIR/extensions/gemini/." "$BASEMEM_EXT_DIR"
 
 ENABLEMENT_FILE="$HOME/.gemini/extensions/extension-enablement.json"
 mkdir -p "$(dirname "$ENABLEMENT_FILE")"
 python3 - "$ENABLEMENT_FILE" <<'PY'
+import os
 from pathlib import Path
 import json
 import sys
-
 path = Path(sys.argv[1])
 if path.exists():
     try:
@@ -151,48 +112,165 @@ if path.exists():
         data = {}
 else:
     data = {}
-data["00-basemem"] = {"overrides": ["/home/zoro/*"]}
+data["00-basemem"] = {"overrides": [os.environ.get("HOME", "~") + "/*"]}
 path.write_text(json.dumps(data, indent=2) + "\n")
 PY
 
-mkdir -p "$HOME/.gemini/policies"
-cat <<'EOF' >"$HOME/.gemini/policies/basemem.json"
-{
-  "name": "BaseMem Startup Contract",
-  "description": "Prompt the host to use BaseMem memory before answering.",
-  "priority": "MANDATORY",
-  "tier": 4,
-  "rules": [
-    {
-      "condition": "session_start",
-      "action": "require_skill",
-      "params": {
-        "skill": "basemem-memory"
-      }
-    }
-  ]
-}
-EOF
+echo "Configuring MCP for Gemini CLI..."
+gemini mcp add basemem-memory "$MCP_PYTHON" "$MCP_SCRIPT" --scope user --trust -e "BASEMEM_DB_PATH=$BASEMEM_DB_PATH" 2>/dev/null || true
+# If already exists, update with trust
+python3 - "$HOME/.gemini/settings.json" "$BASEMEM_DB_PATH" <<'PY'
+import json, sys
+from pathlib import Path
+path = Path(sys.argv[1])
+db_path = sys.argv[2]
+if not path.exists():
+    exit(0)
+config = json.loads(path.read_text())
+mcp = config.setdefault("mcpServers", {}).get("basemem-memory")
+if mcp:
+    mcp.setdefault("env", {})["BASEMEM_DB_PATH"] = db_path
+    path.write_text(json.dumps(config, indent=2) + "\n")
+PY
 
 echo "Installing host guidance files..."
 mkdir -p "$HOME/.codex" "$HOME/.claude"
-cat <<EOF >"$HOME/.codex/CODEX.md"
-# BaseMem Startup Contract
+cat >"$HOME/.codex/CODEX.md" <<'CODEX'
+# BaseMem Memory Protocol
 
-$PROTOCOL_TEXT
-EOF
+<EXTREMELY-IMPORTANT>
+**FAILURE MODE:** Without this protocol, every session starts from zero. You will repeat past work, forget prior decisions, and waste context on what was already resolved.
 
-cat <<EOF >"$HOME/.claude/CLAUDE.md"
-# BaseMem Startup Contract
+IF A MEMORY CHECK COULD BE RELEVANT TO WHAT THE USER IS ASKING, YOU DO NOT HAVE A CHOICE. YOU MUST CHECK MEMORY FIRST. This is not negotiable. This is not optional.
+</EXTREMELY-IMPORTANT>
 
-$PROTOCOL_TEXT
-EOF
+## Mandatory Startup (BEFORE answering)
 
-cat <<EOF >"$HOME/GEMINI.md"
-# BaseMem Startup Contract
+BaseMem MCP tools are available. Use them in this order:
 
-$PROTOCOL_TEXT
-EOF
+1. `list_planets` — discover what topics exist
+2. `get_agent_context(topic, query="<user request>")` — ALWAYS call this before your first answer
+3. Review the returned context. Prefer existing decisions. Do NOT re-ask what's already recorded.
+
+## Mandatory Write-Back (AFTER completing work)
+
+1. `add_note(topic, kind="decision", content="...")` for every architectural choice, fact learned, or issue found
+2. `update_planet(topic, current_state="...", next_step="...")` to persist progress
+3. `log_turn(topic, content="what I did")` for lightweight activity tracking
+
+## Red Flags
+
+If you think any of these, STOP and check memory instead:
+- "I don't need to check memory yet" → Check before answering anything
+- "I can check later" → Later means after starting without context
+- "The topic is obvious" → You don't know what prior decisions exist
+- "I already know about this" → You only know what's in this session
+- "Checking memory wastes tokens" → Wasting work because you ignored prior decisions wastes more
+- "The user would have told me if there was context" → Users forget; that's why memory exists
+CODEX
+
+cp "$HOME/.codex/CODEX.md" "$HOME/.claude/CLAUDE.md"
+
+echo "Configuring MCP for Claude Code..."
+mkdir -p "$HOME/.claude"
+python3 - "$HOME/.claude/settings.json" "$MCP_PYTHON" "$MCP_SCRIPT" "$BASEMEM_DB_PATH" <<'PY'
+import json, sys
+path = Path(sys.argv[1]) if False else None
+from pathlib import Path
+path = Path(sys.argv[1])
+config = json.loads(path.read_text()) if path.exists() else {}
+config["mcpServers"] = config.get("mcpServers", {})
+config["mcpServers"]["basemem-memory"] = {
+    "command": sys.argv[2],
+    "args": [sys.argv[3]],
+    "env": {"BASEMEM_DB_PATH": sys.argv[4]}
+}
+path.write_text(json.dumps(config, indent=2) + "\n")
+PY
+
+echo "Configuring MCP for opencode..."
+mkdir -p "$HOME/.config/opencode"
+python3 - "$HOME/.config/opencode/opencode.jsonc" "$MCP_PYTHON" "$MCP_SCRIPT" "$BASEMEM_DB_PATH" <<'PY'
+import json, sys
+from pathlib import Path
+path = Path(sys.argv[1])
+config = json.loads(path.read_text()) if path.exists() else {"$schema": "https://opencode.ai/config.json"}
+config["mcp"] = config.get("mcp", {})
+config["mcp"]["basemem-memory"] = {
+    "type": "local",
+    "command": [sys.argv[2], sys.argv[3]],
+    "enabled": True,
+    "environment": {"BASEMEM_DB_PATH": sys.argv[4]}
+}
+path.write_text(json.dumps(config, indent=2) + "\n")
+PY
+
+echo "Installing opencode global rules..."
+cat >"$HOME/.config/opencode/AGENTS.md" <<'AGENTS'
+BaseMem Memory Protocol
+
+<EXTREMELY-IMPORTANT>
+**FAILURE MODE:** Without this protocol, every session starts from zero. You will repeat past work, forget prior decisions, and waste context on what was already resolved.
+
+IF A MEMORY CHECK COULD BE RELEVANT TO WHAT THE USER IS ASKING, YOU DO NOT HAVE A CHOICE. YOU MUST CHECK MEMORY FIRST. This is not negotiable. This is not optional.
+</EXTREMELY-IMPORTANT>
+
+## Mandatory Startup (BEFORE answering)
+
+BaseMem MCP tools are available. Use them in this order:
+
+1. `list_planets` — discover what topics exist
+2. `get_agent_context(topic, query="<user request>")` — ALWAYS call this before your first answer
+3. Review the returned context. Prefer existing decisions. Do NOT re-ask what's already recorded.
+
+## Mandatory Write-Back (AFTER completing work)
+
+1. `add_note(topic, kind="decision", content="...")` for every architectural choice, fact learned, or issue found
+2. `update_planet(topic, current_state="...", next_step="...")` to persist progress
+3. `log_turn(topic, content="what I did")` for lightweight activity tracking
+
+## Red Flags
+
+If you think any of these, STOP and check memory instead:
+- "I don't need to check memory yet" → Check before answering anything
+- "I can check later" → Later means after starting without context
+- "The topic is obvious" → You don't know what prior decisions exist
+- "I already know about this" → You only know what's in this session
+- "Checking memory wastes tokens" → Wasting work because you ignored prior decisions wastes more
+- "The user would have told me if there was context" → Users forget; that's why memory exists
+AGENTS
+
+echo "Configuring MCP for Cursor..."
+mkdir -p "$HOME/.cursor"
+python3 - "$HOME/.cursor/mcp.json" "$MCP_PYTHON" "$MCP_SCRIPT" "$BASEMEM_DB_PATH" <<'PY'
+import json, sys
+from pathlib import Path
+path = Path(sys.argv[1])
+config = json.loads(path.read_text()) if path.exists() else {}
+config["mcpServers"] = config.get("mcpServers", {})
+config["mcpServers"]["basemem-memory"] = {
+    "command": sys.argv[2],
+    "args": [sys.argv[3]],
+    "env": {"BASEMEM_DB_PATH": sys.argv[4]}
+}
+path.write_text(json.dumps(config, indent=2) + "\n")
+PY
+
+echo "Configuring MCP for Windsurf..."
+mkdir -p "$HOME/.windsurf"
+python3 - "$HOME/.windsurf/mcp_config.json" "$MCP_PYTHON" "$MCP_SCRIPT" "$BASEMEM_DB_PATH" <<'PY'
+import json, sys
+from pathlib import Path
+path = Path(sys.argv[1])
+config = json.loads(path.read_text()) if path.exists() else {}
+config["mcpServers"] = config.get("mcpServers", {})
+config["mcpServers"]["basemem-memory"] = {
+    "command": sys.argv[2],
+    "args": [sys.argv[3]],
+    "env": {"BASEMEM_DB_PATH": sys.argv[4]}
+}
+path.write_text(json.dumps(config, indent=2) + "\n")
+PY
 
 echo "Configuring shell aliases..."
 CURRENT_SHELL="$(basename "${SHELL:-bash}")"
@@ -203,27 +281,27 @@ case "$CURRENT_SHELL" in
   *) CONF_FILE="" ;;
 esac
 
-if [ -n "${CONF_FILE}" ]; then
-  if [ "$CURRENT_SHELL" = "fish" ]; then
-    ALIAS_BLOCK="alias codex '$BASE_DIR/ai-wrapper.sh codex'
-alias claude '$BASE_DIR/ai-wrapper.sh claude'
-alias gemini '$BASE_DIR/ai-wrapper.sh gemini'"
-  else
-    ALIAS_BLOCK="alias codex='$BASE_DIR/ai-wrapper.sh codex'
-alias claude='$BASE_DIR/ai-wrapper.sh claude'
-alias gemini='$BASE_DIR/ai-wrapper.sh gemini'"
-  fi
-  append_managed_block "$CONF_FILE" "BaseMem aliases" "$ALIAS_BLOCK"
-fi
-
 echo "------------------------------------------------"
 echo "UNIVERSAL GALAXY READY"
-echo "Installed commands:"
-echo "  kb"
-echo "  basemem-ai"
-echo
-echo "Primary launch style:"
-echo "  BASEMEM_TOPIC=my-topic codex"
-echo "  BASEMEM_TOPIC=my-topic claude"
-echo "  BASEMEM_TOPIC=my-topic gemini"
+echo ""
+echo "Installed:"
+echo "  MCP server            basemem-mcp (via venv)"
+echo "  kb                    CLI for BaseMem"
+echo ""
+echo "MCP configured for:"
+echo "  Gemini CLI      ~/.gemini/settings.json"
+echo "  Claude Code     ~/.claude/settings.json"
+echo "  opencode        ~/.config/opencode/opencode.jsonc"
+echo "  Cursor          ~/.cursor/mcp.json"
+echo "  Windsurf        ~/.windsurf/mcp_config.json"
+echo ""
+echo "Extensions & guidance:"
+echo "  Gemini          ~/.gemini/extensions/00-basemem/ (skills/ + hooks/)"
+echo "  Claude Code     ~/.claude/CLAUDE.md"
+echo "  Codex CLI       ~/.codex/CODEX.md"
+echo "  opencode        ~/.config/opencode/AGENTS.md"
+echo ""
+echo "Usage:"
+echo "  Agents with MCP auto-discovery will connect automatically."
+echo "  Gemini CLI loads BaseMem memory protocol via extension bootstrap."
 echo "------------------------------------------------"

@@ -86,7 +86,41 @@ done
 
 echo "Uninstalling BaseMem Galaxy components..."
 
-for bin in "$HOME/.local/bin/kb" "$HOME/.local/bin/basemem-ai" "/usr/local/bin/kb" "/usr/local/bin/basemem-ai"; do
+remove_mcp_entry() {
+  local file="$1"
+  local key="$2"
+  [ -f "$file" ] || return 0
+  python3 - "$file" "$key" <<'PY'
+import json, sys
+from pathlib import Path
+path = Path(sys.argv[1])
+key = sys.argv[2]
+try:
+    data = json.loads(path.read_text() or "{}")
+except (json.JSONDecodeError, ValueError):
+    sys.exit(0)
+changed = False
+# Claude/Cursor/Windsurf format: mcpServers
+if "mcpServers" in data and key in data["mcpServers"]:
+    del data["mcpServers"][key]
+    changed = True
+    if not data["mcpServers"]:
+        del data["mcpServers"]
+# opencode format: mcp
+if "mcp" in data and key in data["mcp"]:
+    del data["mcp"][key]
+    changed = True
+    if not data["mcp"]:
+        del data["mcp"]
+if changed:
+    if data:
+        path.write_text(json.dumps(data, indent=2) + "\n")
+    else:
+        path.write_text("{}\n")
+PY
+}
+
+for bin in "$HOME/.local/bin/kb" "/usr/local/bin/kb"; do
   [ -f "$bin" ] || continue
   if grep -q "$BASE_DIR" "$bin"; then
     if confirm "Remove $bin?"; then
@@ -100,13 +134,23 @@ for bin in "$HOME/.local/bin/kb" "$HOME/.local/bin/basemem-ai" "/usr/local/bin/k
   fi
 done
 
-remove_if_contains_marker "$HOME/.codex/CODEX.md" "BaseMem Startup Contract"
-remove_if_contains_marker "$HOME/.claude/CLAUDE.md" "BaseMem Startup Contract"
-remove_if_contains_marker "$HOME/GEMINI.md" "BaseMem Startup Contract"
+echo "Removing MCP server entry point..."
+rm -f "$BASE_DIR/mcp-server.py"
 
-rm -rf "$HOME/.codex/skills/basemem-memory"
+echo "Removing MCP config entries from agent settings..."
+remove_mcp_entry "$HOME/.gemini/settings.json" "basemem-memory"
+remove_mcp_entry "$HOME/.claude/settings.json" "basemem-memory"
+remove_mcp_entry "$HOME/.config/opencode/opencode.jsonc" "basemem-memory"
+remove_mcp_entry "$HOME/.cursor/mcp.json" "basemem-memory"
+remove_mcp_entry "$HOME/.windsurf/mcp_config.json" "basemem-memory"
+
+echo "Removing host guidance files..."
+remove_if_contains_marker "$HOME/.codex/CODEX.md" "BaseMem"
+remove_if_contains_marker "$HOME/.claude/CLAUDE.md" "BaseMem"
+remove_if_contains_marker "$HOME/.config/opencode/AGENTS.md" "BaseMem"
+
+echo "Removing Gemini extension..."
 rm -rf "$HOME/.gemini/extensions/00-basemem"
-rm -f "$HOME/.gemini/policies/basemem.json"
 
 ENABLEMENT_FILE="$HOME/.gemini/extensions/extension-enablement.json"
 if [ -f "$ENABLEMENT_FILE" ]; then
@@ -114,14 +158,16 @@ if [ -f "$ENABLEMENT_FILE" ]; then
 from pathlib import Path
 import json
 import sys
-
 path = Path(sys.argv[1])
 try:
     data = json.loads(path.read_text() or "{}")
 except json.JSONDecodeError:
     data = {}
 data.pop("00-basemem", None)
-path.write_text(json.dumps(data, indent=2) + "\n")
+if data:
+    path.write_text(json.dumps(data, indent=2) + "\n")
+else:
+    path.write_text("{}\n")
 PY
 fi
 
@@ -145,5 +191,6 @@ fi
 
 echo "------------------------------------------------"
 echo "BaseMem uninstall complete."
+echo "MCP configs cleaned from Claude Code, opencode, Cursor, Windsurf."
 echo "Open a new shell session to refresh aliases."
 echo "------------------------------------------------"

@@ -1,0 +1,6 @@
+{
+  "name": "00-basemem",
+  "description": "BaseMem memory protocol — persistent knowledge base for AI agents",
+  "version": "3.0.0",
+  "contextFileName": "GEMINI.md"
+}

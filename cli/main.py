@@ -111,22 +111,12 @@ def session():
 @session.command()
 @click.pass_context
 def last_topic(ctx):
-    root_name = get_project_root()
     storage = ctx.obj['storage']
-    title = f"Session: {root_name}"
-    sun_node = next((n for n in storage.get_all_nodes() if n.title == title), None)
-    if not sun_node: return
     from storage.sessions import SessionManager
     manager = SessionManager(storage)
-    neighbors = manager.get_neighbors(sun_node.id)
-    best_topic, newest = None, None
-    if neighbors:
-        for nid in neighbors:
-            n = storage.get_node(nid)
-            if n and n.metadata.get("is_task_planet"):
-                if newest is None or n.created_at > newest:
-                    newest, best_topic = n.created_at, n.metadata.get("topic")
-    if best_topic: click.echo(best_topic)
+    planet = manager.get_active_planet()
+    if planet:
+        click.echo(planet.title)
 
 @session.command()
 @click.pass_context
@@ -145,27 +135,28 @@ def context(ctx):
     root_name = get_project_root()
     from storage.sessions import SessionManager
     manager = SessionManager(ctx.obj['storage'])
-    
+
     sun_node = manager.get_or_create_folder_hub(root_name)
     click.echo(f"\n☀️  ROOT HUB: {sun_node.title}")
-    
-    neighbors = manager.get_neighbors(sun_node.id)
+
+    cursor = ctx.obj['storage'].connection.cursor()
+    rows = cursor.execute(
+        "SELECT topic, display_topic, status, goal, current_state, next_steps, updated_at FROM planets ORDER BY updated_at DESC"
+    ).fetchall()
     click.echo(f"\n🪐 ACTIVE PLANETS (TASKS):")
-    if neighbors:
-        for nid in neighbors:
-            n = ctx.obj['storage'].get_node(nid)
-            if n and n.metadata.get("is_task_planet"):
-                click.echo(f"\n--- 🌏 Planet: {n.title} (ID: {n.id}) ---")
-                click.echo(f"  Status: {n.metadata.get('status', 'active')}")
-                goal = n.metadata.get("goal") or n.metadata.get("current_state") or n.content
-                preview = goal[:300].replace("\n", " ").strip()
+    if rows:
+        for row in rows:
+            topic = row["display_topic"] or row["topic"]
+            click.echo(f"\n--- 🌏 Planet: {topic} (ID: planet-{row['topic']}) ---")
+            click.echo(f"  Status: {row['status'] or 'active'}")
+            preview = (row['goal'] or row['current_state'] or "")[:300].replace("\n", " ").strip()
+            if preview:
                 click.echo(f"  📜 Context: {preview}...")
-                next_steps = n.metadata.get("next_steps") or []
-                if next_steps:
-                    click.echo(f"  Next: {next_steps[-1]}")
-                moons = manager.get_neighbors(n.id)
-                if moons: click.echo(f"  🌑 Moons (Histories): {len(moons)} available.")
-    else: click.echo("  No active tasks.")
+            next_steps = json.loads(row['next_steps'] or "[]")
+            if next_steps:
+                click.echo(f"  Next: {next_steps[-1]}")
+    else:
+        click.echo("  No active tasks.")
 
 @session.command()
 @click.option('--message', '-m', required=True)
@@ -336,12 +327,11 @@ def planet_compact(ctx, topic, agent_id):
 def planet_delete(ctx, topic):
     from storage.sessions import SessionManager
     manager = SessionManager(ctx.obj['storage'])
-    node = manager.get_planet(topic)
-    if not node:
+    if not manager.get_planet(topic):
         click.echo("Planet not found.")
         return
     if click.confirm(f"Are you sure you want to delete planet '{topic}'?"):
-        ctx.obj['storage'].delete_node(node.id)
+        manager.delete_planet(topic)
         click.echo(f"✓ Planet deleted: {topic}")
 
 @cli.command()
@@ -358,7 +348,7 @@ def note(ctx, topic, kind, message, title, status, agent_id):
     from storage.sessions import SessionManager
     manager = SessionManager(ctx.obj['storage'])
     node = manager.add_note(root_name, topic, kind, message, agent_id=agent_id, title=title, status=status)
-    click.echo(f"✓ Note added: {node.title} ({node.id})")
+    click.echo(f"✓ Note added: {node['title']} ({node['id']})")
 
 @cli.command()
 @click.argument('doc_name', required=False)
