@@ -318,7 +318,7 @@ class SessionManager:
 
         _exec(
             self.storage.connection,
-            "UPDATE planets SET updated_at = ? WHERE topic = ?",
+            "UPDATE planets SET memory_state = 'compacted', updated_at = ? WHERE topic = ?",
             (self._now(), topic_slug),
         )
         row = _get_planet_row(self.storage.connection, topic_slug)
@@ -454,7 +454,7 @@ class SessionManager:
         from_id, to_id = sorted([from_id, to_id])
         _exec(
             self.storage.connection,
-            "INSERT OR IGNORE INTO note_links (from_note_id, to_note_id, link_type, weight) VALUES (?, ?, ?, ?)",
+            "INSERT OR IGNORE INTO note_links (from_note_id, to_note_id, link_type, weight, confidence, source) VALUES (?, ?, ?, ?, 1.0, 'explicit')",
             (from_id, to_id, link_type, weight),
         )
         return True, f"Linked note-{from_id} -> note-{to_id} ({link_type})"
@@ -466,7 +466,8 @@ class SessionManager:
         cursor = self.storage.connection.cursor()
         if link_type:
             rows = cursor.execute(
-                """SELECT n.id, n.topic, n.kind, n.content, n.title, nl.link_type, nl.weight
+                """SELECT n.id, n.topic, n.kind, n.content, n.title,
+                          nl.link_type, nl.weight, nl.confidence, nl.source
                    FROM notes n
                    JOIN note_links nl ON (nl.from_note_id = n.id OR nl.to_note_id = n.id)
                    WHERE (nl.from_note_id = ? OR nl.to_note_id = ?) AND n.id != ?
@@ -475,12 +476,17 @@ class SessionManager:
             ).fetchall()
         else:
             rows = cursor.execute(
-                """SELECT n.id, n.topic, n.kind, n.content, n.title, nl.link_type, nl.weight
+                """SELECT n.id, n.topic, n.kind, n.content, n.title,
+                          nl.link_type, nl.weight, nl.confidence, nl.source
                    FROM notes n
                    JOIN note_links nl ON (nl.from_note_id = n.id OR nl.to_note_id = n.id)
                    WHERE (nl.from_note_id = ? OR nl.to_note_id = ?) AND n.id != ?""",
                 (nid, nid, nid),
             ).fetchall()
+        # Reinforce: increment weight for each auto-link returned (co-access)
+        for nb in rows:
+            if nb.get("source") == "auto" and nb.get("link_type") == "auto":
+                self.reinforce_link(nid, nb["id"])
         return [dict(r) for r in rows]
 
     def _auto_link_note(self, note_id, topic_slug):
@@ -504,12 +510,14 @@ class SessionManager:
             intersection = new_words & existing_words
             union = new_words | existing_words
             score = len(intersection) / len(union) if union else 0
-            if score >= 0.1:
+            if score >= 0.2:
                 from_id, to_id = sorted([note_id, row["id"]])
+                weight = round(score, 3)
+                confidence = round(min(1.0, score * 1.5), 3)
                 _exec(
                     self.storage.connection,
-                    "INSERT OR IGNORE INTO note_links (from_note_id, to_note_id, link_type, weight) VALUES (?, ?, 'auto', ?)",
-                    (from_id, to_id, round(score, 3)),
+                    "INSERT OR IGNORE INTO note_links (from_note_id, to_note_id, link_type, weight, confidence, source) VALUES (?, ?, 'auto', ?, ?, 'auto')",
+                    (from_id, to_id, weight, confidence),
                 )
 
     # ── Agent summarization ──────────────────────────────────
@@ -544,6 +552,7 @@ class SessionManager:
         lines = [
             f"# Planet: {row.get('display_topic') or topic_slug}",
             f"Status: {row.get('status', 'active')}",
+            f"Memory: {row.get('memory_state', 'hot')}",
             f"Goal: {row.get('goal', '')}",
             f"Current State: {row.get('current_state', '')}",
             f"Notes (showing {len(source_notes)} of {len(all_notes)} total, skipping old summaries):",
@@ -730,6 +739,189 @@ class SessionManager:
     def get_neighbors(self, node_id: str):
         return self.storage.get_neighbors(node_id)
 
+    # ── Planet links ──────────────────────────────────────────
+
+    def link_planets(self, from_topic: str, to_topic: str, relation: str = "related", weight: float = 1.0):
+        from_slug = self.normalize_topic(from_topic)
+        to_slug = self.normalize_topic(to_topic)
+        if from_slug == to_slug:
+            return False, "Cannot link a planet to itself"
+        from_row = _get_planet_row(self.storage.connection, from_slug)
+        to_row = _get_planet_row(self.storage.connection, to_slug)
+        if not from_row:
+            return False, f"Planet '{from_topic}' not found"
+        if not to_row:
+            return False, f"Planet '{to_topic}' not found"
+        from_id, to_id = sorted([from_row["id"], to_row["id"]])
+        _exec(
+            self.storage.connection,
+            "INSERT OR IGNORE INTO planet_links (from_planet_id, to_planet_id, relation, weight) VALUES (?, ?, ?, ?)",
+            (from_id, to_id, relation, weight),
+        )
+        return True, f"Linked planet '{from_slug}' -> '{to_slug}' ({relation})"
+
+    def get_planet_links(self, topic: str):
+        slug = self.normalize_topic(topic)
+        row = _get_planet_row(self.storage.connection, slug)
+        if not row:
+            return []
+        pid = row["id"]
+        cursor = self.storage.connection.cursor()
+        rows = cursor.execute(
+            """SELECT pl.id, pl.from_planet_id, pl.to_planet_id, pl.relation, pl.weight,
+                      p1.topic AS from_topic, p2.topic AS to_topic
+               FROM planet_links pl
+               JOIN planets p1 ON p1.id = pl.from_planet_id
+               JOIN planets p2 ON p2.id = pl.to_planet_id
+               WHERE pl.from_planet_id = ? OR pl.to_planet_id = ?""",
+            (pid, pid),
+        ).fetchall()
+        result = []
+        for r in rows:
+            other = r["to_topic"] if r["from_planet_id"] == pid else r["from_topic"]
+            result.append({
+                "id": r["id"],
+                "planet": other,
+                "relation": r["relation"],
+                "weight": r["weight"],
+            })
+        return result
+
+    def remove_planet_link(self, link_id: int):
+        _exec(self.storage.connection, "DELETE FROM planet_links WHERE id = ?", (link_id,))
+
+    # ── Edge reinforcement ────────────────────────────────────
+
+    def reinforce_link(self, from_note_id: int, to_note_id: int, increment: float = 0.05):
+        from_id, to_id = sorted([from_note_id, to_note_id])
+        cursor = self.storage.connection.cursor()
+        row = cursor.execute(
+            "SELECT weight FROM note_links WHERE from_note_id = ? AND to_note_id = ? AND link_type = 'auto'",
+            (from_id, to_id),
+        ).fetchone()
+        if row:
+            new_weight = round(min(1.0, row["weight"] + increment), 3)
+            _exec(
+                self.storage.connection,
+                "UPDATE note_links SET weight = ?, updated_at = ? WHERE from_note_id = ? AND to_note_id = ? AND link_type = 'auto'",
+                (new_weight, self._now(), from_id, to_id),
+            )
+
+    # ── Background similarity recomputation ────────────────────
+
+    def recompute_links(self, topic: str = None, threshold: float = 0.1, min_weight: float = 0.05):
+        cursor = self.storage.connection.cursor()
+        if topic:
+            notes = cursor.execute(
+                "SELECT id, content FROM notes WHERE topic = ?", (self.normalize_topic(topic),)
+            ).fetchall()
+        else:
+            notes = cursor.execute("SELECT id, content FROM notes").fetchall()
+        created = 0
+        removed = 0
+        for i in range(len(notes)):
+            for j in range(i + 1, len(notes)):
+                wa = self._tokenize(notes[i]["content"])
+                wb = self._tokenize(notes[j]["content"])
+                if len(wa) < 3 or len(wb) < 3:
+                    continue
+                intersection = wa & wb
+                union = wa | wb
+                score = len(intersection) / len(union) if union else 0
+                from_id, to_id = sorted([notes[i]["id"], notes[j]["id"]])
+                existing = cursor.execute(
+                    "SELECT weight FROM note_links WHERE from_note_id = ? AND to_note_id = ? AND link_type = 'auto'",
+                    (from_id, to_id),
+                ).fetchone()
+                if score >= threshold:
+                    confidence = round(min(1.0, score * 1.5), 3)
+                    if existing:
+                        new_weight = round((existing["weight"] + score) / 2, 3)
+                        _exec(
+                            self.storage.connection,
+                            "UPDATE note_links SET weight = ?, confidence = ?, updated_at = ? WHERE from_note_id = ? AND to_note_id = ? AND link_type = 'auto'",
+                            (new_weight, confidence, self._now(), from_id, to_id),
+                        )
+                    else:
+                        _exec(
+                            self.storage.connection,
+                            "INSERT INTO note_links (from_note_id, to_note_id, link_type, weight, confidence, source) VALUES (?, ?, 'auto', ?, ?, 'auto')",
+                            (from_id, to_id, round(score, 3), confidence),
+                        )
+                        created += 1
+                elif existing and score < min_weight:
+                    _exec(
+                        self.storage.connection,
+                        "DELETE FROM note_links WHERE from_note_id = ? AND to_note_id = ? AND link_type = 'auto'",
+                        (from_id, to_id),
+                    )
+                    removed += 1
+        return {"created": created, "removed": removed, "total_pairs": len(notes) * (len(notes) - 1) // 2}
+
+    # ── Memory tiers ──────────────────────────────────────────
+
+    def set_memory_state(self, topic: str, state: str):
+        if state not in ("hot", "warm", "compacted"):
+            return False, "State must be hot, warm, or compacted"
+        slug = self.normalize_topic(topic)
+        _exec(
+            self.storage.connection,
+            "UPDATE planets SET memory_state = ?, updated_at = ? WHERE topic = ?",
+            (state, self._now(), slug),
+        )
+        return True, f"Planet '{slug}' set to {state}"
+
+    # ── Graph-aware retrieval ─────────────────────────────────
+
+    def get_neighbors_weighted(self, note_id: int, depth: int = 1, min_weight: float = 0.0):
+        visited = set()
+        results = []
+        def traverse(nid, current_depth):
+            if nid in visited or current_depth > depth:
+                return
+            visited.add(nid)
+            for nb in self.get_note_neighbors(nid):
+                if nb["weight"] and nb["weight"] >= min_weight:
+                    nb["_depth"] = current_depth
+                    results.append(nb)
+                    traverse(nb["id"], current_depth + 1)
+        traverse(note_id, 1)
+        return results
+
+    def get_subgraph(self, note_id: int, depth: int = 2, min_weight: float = 0.2):
+        cursor = self.storage.connection.cursor()
+        nid = self._parse_note_id(note_id)
+        if nid is None:
+            return {"nodes": [], "edges": []}
+        node_ids = {nid}
+        edges = []
+        def traverse(nid, current_depth):
+            if current_depth > depth:
+                return
+            for nb in self.get_note_neighbors(nid):
+                if nb["weight"] and nb["weight"] >= min_weight:
+                    pair = (nid, nb["id"])
+                    if pair not in {(e["source"], e["target"]) for e in edges}:
+                        edges.append({"source": nid, "target": nb["id"], "weight": nb["weight"]})
+                    if nb["id"] not in node_ids:
+                        node_ids.add(nb["id"])
+                        traverse(nb["id"], current_depth + 1)
+        traverse(nid, 1)
+        nodes = []
+        for nid in node_ids:
+            row = cursor.execute("SELECT id, topic, kind, content, title FROM notes WHERE id = ?", (nid,)).fetchone()
+            if row:
+                nodes.append(dict(row))
+        return {"nodes": nodes, "edges": edges}
+
+    def rank_neighbors(self, note_id: int, by: str = "weight"):
+        neighbors = self.get_note_neighbors(note_id)
+        if by == "confidence":
+            neighbors.sort(key=lambda x: x.get("confidence", 0) or 0, reverse=True)
+        else:
+            neighbors.sort(key=lambda x: x.get("weight", 0) or 0, reverse=True)
+        return neighbors
+
 
 # ── Module-level helpers ──────────────────────────────────
 
@@ -754,6 +946,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             commands TEXT DEFAULT '[]',
             handoff TEXT DEFAULT '',
             aliases TEXT DEFAULT '[]',
+            memory_state TEXT DEFAULT 'hot',
             created_at TEXT DEFAULT (datetime('now')),
             updated_at TEXT DEFAULT (datetime('now'))
         );
@@ -774,10 +967,33 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             to_note_id INTEGER NOT NULL,
             link_type TEXT NOT NULL DEFAULT 'related',
             weight REAL DEFAULT 1.0,
+            confidence REAL DEFAULT 1.0,
+            source TEXT DEFAULT 'auto',
             created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now')),
             PRIMARY KEY (from_note_id, to_note_id, link_type)
         );
+        CREATE TABLE IF NOT EXISTS planet_links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            from_planet_id INTEGER NOT NULL,
+            to_planet_id INTEGER NOT NULL,
+            relation TEXT NOT NULL DEFAULT 'related',
+            weight REAL DEFAULT 1.0,
+            created_at TEXT DEFAULT (datetime('now')),
+            UNIQUE(from_planet_id, to_planet_id, relation)
+        );
     """)
+    # Migrate existing tables — add columns that may be missing
+    for col, dtype in [("confidence", "REAL DEFAULT 1.0"), ("source", "TEXT DEFAULT 'auto'"), ("updated_at", "TEXT DEFAULT (datetime('now'))")]:
+        try:
+            conn.execute(f"ALTER TABLE note_links ADD COLUMN {col} {dtype}")
+        except Exception:
+            pass
+    for col, dtype in [("memory_state", "TEXT DEFAULT 'hot'")]:
+        try:
+            conn.execute(f"ALTER TABLE planets ADD COLUMN {col} {dtype}")
+        except Exception:
+            pass
     conn.commit()
     _SCHEMA_INITIALIZED.add(key)
 

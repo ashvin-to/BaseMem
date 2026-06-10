@@ -50,6 +50,28 @@ def index():
     except Exception as e:
         return f"Error loading UI: {str(e)}", 500
 
+
+@app.route("/inject", methods=["GET"])
+def inject_page():
+    """Serve the memory injector bookmarklet page"""
+    try:
+        path = Path(__file__).parent.parent.parent / "bookmarklet-inject.html"
+        with open(path, "r") as f:
+            return f.read()
+    except Exception as e:
+        return f"Error loading page: {str(e)}", 500
+
+
+@app.route("/log-chat", methods=["GET"])
+def log_chat_page():
+    """Serve the chat logging bookmarklet page"""
+    try:
+        path = Path(__file__).parent.parent.parent / "log-chat.html"
+        with open(path, "r") as f:
+            return f.read()
+    except Exception as e:
+        return f"Error loading page: {str(e)}", 500
+
 @app.route("/api/graph", methods=["GET"])
 def get_graph_data():
     """Get full graph data for visualization"""
@@ -134,7 +156,7 @@ def notes_graph():
                 })
 
             links = conn.execute(
-                """SELECT from_note_id, to_note_id, link_type, weight
+                """SELECT from_note_id, to_note_id, link_type, weight, confidence, source
                    FROM note_links
                    WHERE from_note_id IN (SELECT id FROM notes WHERE topic = ?)
                       OR to_note_id IN (SELECT id FROM notes WHERE topic = ?)""",
@@ -147,7 +169,27 @@ def notes_graph():
                     "target": f"note-{l['to_note_id']}",
                     "type": l["link_type"],
                     "weight": l["weight"] or 1,
+                    "confidence": l["confidence"] or 1,
+                    "link_source": l["source"] or "auto",
                 })
+
+        # Add planet-planet edges
+        plinks = conn.execute(
+            """SELECT pl.from_planet_id, pl.to_planet_id, pl.relation, pl.weight,
+                      p1.topic AS ft, p2.topic AS tt
+               FROM planet_links pl
+               JOIN planets p1 ON p1.id = pl.from_planet_id
+               JOIN planets p2 ON p2.id = pl.to_planet_id"""
+        ).fetchall()
+        for pl in plinks:
+            edges.append({
+                "source": f"planet-{pl['ft']}",
+                "target": f"planet-{pl['tt']}",
+                "type": "planet_link",
+                "weight": pl["weight"] or 1,
+                "confidence": 1.0,
+                "relation": pl["relation"],
+            })
 
         return jsonify({"nodes": nodes, "edges": edges, "stats": {"planets": len(planets), "notes": len(nodes) - len(planets)}})
     except Exception as e:
@@ -346,6 +388,7 @@ def _planet_to_json(row: dict, notes: list = None):
         "topic": row["topic"],
         "display_topic": row.get("display_topic") or row["topic"],
         "status": row.get("status", "active"),
+        "memory_state": row.get("memory_state", "hot"),
         "goal": row.get("goal", ""),
         "current_state": row.get("current_state", ""),
         "next_step": row.get("next_step", ""),
@@ -431,6 +474,52 @@ def api_delete_planet(topic):
         mgr = get_session()
         mgr.delete_planet(topic)
         return jsonify({"status": "success", "deleted": topic})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/planet-links", methods=["POST"])
+def api_link_planets():
+    """Create a link between two planets."""
+    try:
+        data = request.get_json()
+        mgr = get_session()
+        ok, msg = mgr.link_planets(
+            data.get("from_planet", ""),
+            data.get("to_planet", ""),
+            data.get("relation", "related"),
+            data.get("weight", 1.0),
+        )
+        if ok:
+            return jsonify({"status": "success", "message": msg})
+        return jsonify({"error": msg}), 400
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/planet-links/<topic>", methods=["GET"])
+def api_get_planet_links(topic):
+    """Get all links for a planet."""
+    try:
+        mgr = get_session()
+        links = mgr.get_planet_links(topic)
+        return jsonify({"planet": topic, "links": links})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/recompute-links", methods=["POST"])
+def api_recompute_links():
+    """Recompute Jaccard similarity for all note pairs."""
+    try:
+        data = request.get_json() or {}
+        mgr = get_session()
+        result = mgr.recompute_links(
+            topic=data.get("topic"),
+            threshold=data.get("threshold", 0.1),
+            min_weight=data.get("min_weight", 0.05),
+        )
+        return jsonify({"status": "success", "result": result})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

@@ -97,6 +97,16 @@ BASEMEM_EXT_DIR="$HOME/.gemini/extensions/00-basemem"
 rm -rf "$BASEMEM_EXT_DIR"
 cp -r "$BASE_DIR/extensions/gemini/." "$BASEMEM_EXT_DIR"
 
+echo "Installing Antigravity plugin..."
+ANTIGRAVITY_PLUGIN_DIR="$HOME/.gemini/config/plugins/basemem"
+mkdir -p "$HOME/.gemini/config/plugins"
+rm -rf "$ANTIGRAVITY_PLUGIN_DIR"
+cp -r "$BASE_DIR/extensions/gemini/." "$ANTIGRAVITY_PLUGIN_DIR"
+mv "$ANTIGRAVITY_PLUGIN_DIR/gemini-extension.json" "$ANTIGRAVITY_PLUGIN_DIR/plugin.json"
+
+echo "Generating Antigravity MCP tool schemas..."
+python3 "$BASE_DIR/generate_antigravity_schemas.py"
+
 ENABLEMENT_FILE="$HOME/.gemini/extensions/extension-enablement.json"
 mkdir -p "$(dirname "$ENABLEMENT_FILE")"
 python3 - "$ENABLEMENT_FILE" <<'PY'
@@ -131,6 +141,22 @@ mcp = config.setdefault("mcpServers", {}).get("basemem-memory")
 if mcp:
     mcp.setdefault("env", {})["BASEMEM_DB_PATH"] = db_path
     path.write_text(json.dumps(config, indent=2) + "\n")
+PY
+
+echo "Configuring MCP for Antigravity (global agent config)..."
+mkdir -p "$HOME/.gemini/config"
+python3 - "$HOME/.gemini/config/mcp_config.json" "$MCP_PYTHON" "$MCP_SCRIPT" "$BASEMEM_DB_PATH" <<'PY'
+import json, sys
+from pathlib import Path
+path = Path(sys.argv[1])
+config = json.loads(path.read_text()) if path.exists() else {}
+config["mcpServers"] = config.get("mcpServers", {})
+config["mcpServers"]["basemem-memory"] = {
+    "command": sys.argv[2],
+    "args": [sys.argv[3]],
+    "env": {"BASEMEM_DB_PATH": sys.argv[4]}
+}
+path.write_text(json.dumps(config, indent=2) + "\n")
 PY
 
 echo "Installing host guidance files..."
@@ -297,6 +323,7 @@ echo "  Windsurf        ~/.windsurf/mcp_config.json"
 echo ""
 echo "Extensions & guidance:"
 echo "  Gemini          ~/.gemini/extensions/00-basemem/ (skills/ + hooks/)"
+echo "  Antigravity     ~/.gemini/config/plugins/basemem/ (plugin.json + skills/)"
 echo "  Claude Code     ~/.claude/CLAUDE.md"
 echo "  Codex CLI       ~/.codex/CODEX.md"
 echo "  opencode        ~/.config/opencode/AGENTS.md"

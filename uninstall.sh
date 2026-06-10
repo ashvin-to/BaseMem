@@ -139,6 +139,7 @@ rm -f "$BASE_DIR/mcp-server.py"
 
 echo "Removing MCP config entries from agent settings..."
 remove_mcp_entry "$HOME/.gemini/settings.json" "basemem-memory"
+remove_mcp_entry "$HOME/.gemini/config/mcp_config.json" "basemem-memory"
 remove_mcp_entry "$HOME/.claude/settings.json" "basemem-memory"
 remove_mcp_entry "$HOME/.config/opencode/opencode.jsonc" "basemem-memory"
 remove_mcp_entry "$HOME/.cursor/mcp.json" "basemem-memory"
@@ -151,6 +152,10 @@ remove_if_contains_marker "$HOME/.config/opencode/AGENTS.md" "BaseMem"
 
 echo "Removing Gemini extension..."
 rm -rf "$HOME/.gemini/extensions/00-basemem"
+
+echo "Removing Antigravity plugin..."
+rm -rf "$HOME/.gemini/config/plugins/basemem"
+rm -rf "$HOME/.gemini/antigravity/mcp/basemem-memory"
 
 ENABLEMENT_FILE="$HOME/.gemini/extensions/extension-enablement.json"
 if [ -f "$ENABLEMENT_FILE" ]; then

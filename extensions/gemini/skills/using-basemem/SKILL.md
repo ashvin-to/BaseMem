@@ -19,23 +19,31 @@ This is not negotiable. This is not optional. You cannot rationalize your way ou
 
 ## How To Access Memory
 
-BaseMem MCP tools are available in your tool palette. Use them in this order:
+<EXTREMELY-IMPORTANT>
+DO NOT use `view_file` or any other tool to read the `.json` schemas in `~/.gemini/antigravity/mcp/basemem-memory/`. This wastes an entire minute! The exact syntax you need is provided below. You MUST use the `call_mcp_tool` tool directly without inspecting any schema files.
+</EXTREMELY-IMPORTANT>
+
+BaseMem tools are loaded lazily. Use `call_mcp_tool` with `ServerName: "basemem-memory"`.
 
 ### Mandatory Startup (BEFORE answering)
 
-1. `list_planets` — discover what topics exist (skip if topic is obvious from user's request)
-2. `get_agent_context(topic, query="<user request>")` — ALWAYS call this before your first answer
+1. `call_mcp_tool(ServerName="basemem-memory", ToolName="list_planets", Arguments={})`
+   *(skip if topic is obvious from user's request)*
+2. `call_mcp_tool(ServerName="basemem-memory", ToolName="get_agent_context", Arguments={"topic": "...", "query": "<user request>"})`
+   *ALWAYS call this before your first answer*
 3. Review the returned context. Prefer existing decisions. Do NOT re-ask what's already recorded.
 
 ### Mandatory Write-Back (AFTER completing work)
 
-1. `add_note(topic, kind="decision", content="...")` for every architectural choice or fact learned
-2. `update_planet(topic, current_state="...", next_step="...")` to persist progress
-3. `log_turn(topic, content="what I did")` for lightweight activity tracking
+1. `call_mcp_tool(ServerName="basemem-memory", ToolName="add_note", Arguments={"topic": "...", "kind": "decision", "content": "..."})`
+2. `call_mcp_tool(ServerName="basemem-memory", ToolName="update_planet", Arguments={"topic": "...", "current_state": "...", "next_step": "..."})`
+3. `call_mcp_tool(ServerName="basemem-memory", ToolName="log_turn", Arguments={"topic": "...", "content": "what I did"})`
 
-## Tool Name Mapping
-
-References for specific platforms are available in the `references/` directory.
+### Other Tools
+- `search_nodes` -> Arguments: `{"query": "...", "limit": 10}`
+- `search_notes` -> Arguments: `{"topic": "...", "kind": "...", "query": "...", "limit": 10}`
+- `get_node` -> Arguments: `{"node_id": "..."}`
+- `read_planet` -> Arguments: `{"topic": "..."}`
 
 ## Red Flags
 
