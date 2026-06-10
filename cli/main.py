@@ -35,6 +35,33 @@ def cli(ctx, db):
     ctx.obj['db'] = db or str(Path.home() / ".basemem" / "basemem.db")
     ctx.obj['storage'] = StorageManager(ctx.obj['db'])
 
+@cli.command("list-planets")
+@click.pass_context
+def list_planets(ctx):
+    """List all planets in the knowledge base."""
+    import sqlite3, json
+    conn = sqlite3.connect(ctx.obj['db'])
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        "SELECT topic, display_topic, status, goal, current_state FROM planets ORDER BY updated_at DESC"
+    ).fetchall()
+    conn.close()
+    if not rows:
+        click.echo("No planets found.")
+        return
+    for r in rows:
+        name = r["display_topic"] or r["topic"]
+        status = r["status"] or "active"
+        goal = r["goal"] or ""
+        state = r["current_state"] or ""
+        tag = f" [{status}]" if status != "active" else ""
+        click.echo(f"  {name}{tag}")
+        if goal:
+            click.echo(f"    Goal: {goal[:120]}")
+        if state:
+            click.echo(f"    State: {state[:120]}")
+        click.echo("")
+
 @cli.command()
 @click.argument('query')
 @click.pass_context
