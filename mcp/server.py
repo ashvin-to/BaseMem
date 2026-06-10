@@ -467,13 +467,13 @@ def list_planets() -> str:
 
 @server.tool(
     description=(
-        "Full-text search across ALL content (planets, notes, decisions, etc.). "
-        "Uses FTS5 for fast substring matching. Returns matching nodes with their topic, content preview, and type. "
+        "Full-text search across planets, notes, and old nodes. "
+        "Returns matching items with their topic, content preview, and type. "
         "Use this when you don't know which planet a piece of information belongs to."
     )
 )
 def search_nodes(query: str, limit: int = 10) -> str:
-    """FTS5 full-text search across all nodes."""
+    """Full-text search across planets, notes, and nodes."""
     import sqlite3
 
     db_path = get_db_path()
@@ -484,28 +484,57 @@ def search_nodes(query: str, limit: int = 10) -> str:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
-        cur = conn.execute(
-            "SELECT topic, content FROM nodes"
-        )
-        all_nodes = cur.fetchall()
+        like = f"%{query}%"
+        lines = [f"# Search results for: '{query}'\n"]
+        count = 0
 
-        query_lower = query.lower()
-        matching = [
-            n for n in all_nodes
-            if query_lower in (n["content"] or "").lower()
-            or query_lower in (n["topic"] or "").lower()
-        ]
-        matching = matching[:limit]
+        # Planets
+        for r in conn.execute(
+            "SELECT topic, display_topic, current_state FROM planets WHERE topic LIKE ? OR display_topic LIKE ? OR current_state LIKE ? OR goal LIKE ?",
+            (like, like, like, like),
+        ):
+            if count >= limit:
+                break
+            name = r["display_topic"] or r["topic"]
+            preview = (r["current_state"] or "")[:200]
+            lines.append(f"🪐 **Planet: {name}**")
+            if preview:
+                lines.append(f"   {preview}")
+            lines.append("")
+            count += 1
 
-        if not matching:
+        # Notes
+        for r in conn.execute(
+            "SELECT topic, kind, content FROM notes WHERE content LIKE ? OR title LIKE ?",
+            (like, like),
+        ):
+            if count >= limit:
+                break
+            preview = (r["content"] or "")[:200]
+            lines.append(f"[note] **{r['topic']} [{r['kind']}]**")
+            lines.append(f"   {preview}")
+            lines.append("")
+            count += 1
+
+        # Old nodes
+        from storage.db import StorageManager
+        storage = StorageManager(db_path)
+        old_ids = storage.search_nodes_fts(query, limit=limit - count)
+        for nid in old_ids:
+            if count >= limit:
+                break
+            n = storage.get_node(nid)
+            if n:
+                preview = (n.content or "")[:200]
+                lines.append(f"○ **{n.title}** ({n.node_type.value})")
+                lines.append(f"   {preview}")
+                lines.append("")
+                count += 1
+        storage.close()
+
+        if count == 0:
             return "No matches found."
 
-        lines = [f"# Search results for: {query}\n"]
-        for n in matching:
-            preview = (n["content"] or "")[:200]
-            lines.append(f"**Topic:** {n['topic']}")
-            lines.append(f"**Preview:** {preview}")
-            lines.append("")
         return "\n".join(lines)
     finally:
         conn.close()

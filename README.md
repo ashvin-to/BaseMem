@@ -139,8 +139,12 @@ The CLI (`kb`) and MCP tools share the same `planets` and `notes` SQLite tables.
    - **Obsidian Galaxy**: Dynamic D3.js visualization with Orbit mode and interactive node management.
 
 7. **CLI Interface** (`cli/`)
-   - User-friendly command line interface
-   - **Session Commands**: turn, bootstrap, ingest, read, review.
+   - `kb planet create/read/set/delete` — manage planets
+   - `kb note` — add decisions, facts, issues
+   - `kb search` — full-text search across planets, notes, and nodes
+   - `kb agent-context` — compact pre-answer memory block
+   - `kb list-planets` — list all planets
+   - `kb session turn/context/read` — activity logging and discovery
 
 ## Data Models
 
@@ -229,69 +233,29 @@ BaseMem/
 ## System Evolution
 
 ### Phase 1 (Complete)
-- ✅ SQLite + FTS5 storage
-- ✅ BM25 keyword search
-- ✅ Sentence transformer embeddings
-- ✅ Basic vector search
-- ✅ CLI interface
+- [x] SQLite + FTS5 storage
+- [x] BM25 keyword search
+- [x] Sentence transformer embeddings
+- [x] Basic vector search
+- [x] CLI interface
 
-### Phase 2 (Current)
-- ✅ **Hierarchical Memory**: Level 1 (Summary) and Level 2 (Full History).
-- ✅ **Web Hub**: Interactive "Obsidian Galaxy" visualizer.
-- ✅ **Semantic Gravity**: Automatic vector-based project linking.
-- ✅ **MCP Server**: Direct memory access for Claude/Gemini/Codex.
-- ✅ **Local Summarization**: Background BART/T5 support.
-- [ ] Decay-based forgetting system
-- [ ] Cross-encoder reranking
+### Phase 2 (Complete)
+- [x] Unified planets/notes tables shared between CLI and MCP
+- [x] MCP auto-config for Claude Code, opencode, Cursor, Windsurf, Gemini, Codex
+- [x] Planet schema with status, goal, state, files, commands, handoff
+- [x] Full-text search across planets, notes, and legacy nodes
+- [x] D3.js visualization with planets panel
 
 ### Phase 3 (Planned)
-- Neo4j integration for larger graphs
+- Cross-encoder reranking for search
+- Decay-based forgetting system
 - Multi-device synchronization
-- Advanced visualization
-- API server
 
 ## Configuration
 
-Set environment variables:
-
 ```bash
 export BASEMEM_DB_PATH="./data/basemem.db"
-export BASEMEM_TOKEN_BUDGET="2000"
-export BASEMEM_VECTOR_MODEL="all-MiniLM-L6-v2"
 ```
-
-## Plugin Integration
-
-Use BaseMem as middleware in your chat interface:
-
-```python
-# Example integration with any chat interface
-from basemem.orchestrator.context import ContextOrchestrator
-from basemem.storage.db import StorageManager
-
-storage = StorageManager("knowledge.db")
-orchestrator = ContextOrchestrator(storage, token_budget=2000)
-
-# In your chat handler:
-def handle_user_query(user_input, chat_history):
-    # Get context from knowledge base
-    context = orchestrator.orchestrate(user_input)
-    
-    # Augment prompt with context
-    augmented_prompt = f"{context.to_prompt_format()}\n\nUser: {user_input}"
-    
-    # Send to your LLM (Claude, Copilot, etc.)
-    response = your_llm.chat(augmented_prompt)
-    
-    return response
-```
-
-Works with:
-- ✅ Claude (Claude.ai, Claude Code)
-- ✅ GitHub Copilot & Copilot Chat
-- ✅ Google Gemini CLI
-- ✅ ChatGPT & OpenAI API
-- ✅ Any LLM via custom integration
 
 ## Development
 
@@ -301,18 +265,12 @@ Works with:
 pytest tests/ -v
 ```
 
-### Code Quality
+### Install from source
 
 ```bash
-black src/
-ruff check src/
-mypy src/
+pip install -e .
 ```
 
 ## License
 
 MIT
-
-## Contributing
-
-Contributions welcome! See CONTRIBUTING.md for guidelines.
