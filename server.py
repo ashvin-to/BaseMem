@@ -1,18 +1,18 @@
-"""Web server for BaseMem visualization and API (Storage Only Version)"""
+"""Web server for BaseMem visualization and API"""
+
+import json
+import logging
+import os
+import sys
+from pathlib import Path
 
 from flask import Flask, jsonify, request
 from flask_cors import CORS
-import logging
-from pathlib import Path
-import sys
-import os
 
-# Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from src.basemem.storage.db import StorageManager
 from src.basemem.graph.engine import GraphEngine
-from src.basemem.orchestrator.context import ContextOrchestrator
 from src.basemem.storage.sessions import SessionManager
 
 logging.basicConfig(
@@ -21,18 +21,15 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Initialize Flask app
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": "*"}})
 
-# Initialize BaseMem components (Lazily)
 _db = None
 _graph = None
 
 def get_db():
     global _db
     if _db is None:
-        # Default path in Home directory
         home = Path.home()
         db_path = home / ".basemem" / "basemem.db"
         _db = StorageManager(str(db_path))
@@ -43,6 +40,9 @@ def get_graph():
     if _graph is None:
         _graph = GraphEngine(get_db())
     return _graph
+
+def get_session():
+    return SessionManager(get_db())
 
 @app.route("/", methods=["GET"])
 def index():
@@ -227,24 +227,160 @@ def session_bootstrap():
 
 @app.route("/api/session/read/<topic>", methods=["GET"])
 def session_read(topic):
-    """Read history for a topic"""
+    """Read planet details for a topic"""
     try:
-        db_instance = get_db()
-        manager = SessionManager(db_instance)
-        agent_id = request.args.get("agent_id", "default")
-        
-        node_id = f"history-{agent_id}-{topic.lower().replace(' ', '-')}"
-        node = db_instance.get_node(node_id)
-        
-        if not node:
-            # Fallback to shared summary
-            node = manager.get_or_create_session(topic)
-
-        if node:
-            return jsonify({"topic": topic, "content": node.content})
-        return jsonify({"error": "Not found"}), 404
+        conn = get_db().connection
+        slug = topic.strip().lower().replace(" ", "-")
+        row = conn.execute(
+            "SELECT * FROM planets WHERE topic = ?", (slug,)
+        ).fetchone()
+        if not row:
+            return jsonify({"error": "Not found"}), 404
+        notes = conn.execute(
+            "SELECT * FROM notes WHERE topic = ? ORDER BY created_at DESC LIMIT 50",
+            (slug,),
+        ).fetchall()
+        data = _planet_to_json(dict(row), [dict(n) for n in notes])
+        lines = [f"# Planet: {data['display_topic']}"]
+        if data["goal"]: lines.append(f"\nGoal: {data['goal']}")
+        if data["current_state"]: lines.append(f"\nState: {data['current_state']}")
+        if data["next_steps"]:
+            lines.append("\nNext steps:")
+            lines.extend(f"  - {s}" for s in data["next_steps"])
+        if data["notes"]:
+            lines.append(f"\nNotes ({len(data['notes'])}):")
+            for n in data["notes"]:
+                lines.append(f"\n[{n['kind'].upper()}] {n['content']}")
+        return jsonify({"topic": slug, "content": "\n".join(lines)})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+# ── Planet/Note API (unified planets/notes tables) ──────────
+
+def _safe_json(val, fallback=None):
+    if not val or not val.strip():
+        return fallback or []
+    try:
+        return json.loads(val)
+    except (json.JSONDecodeError, TypeError):
+        return fallback or []
+
+
+def _planet_to_json(row: dict, notes: list = None):
+    return {
+        "topic": row["topic"],
+        "display_topic": row.get("display_topic") or row["topic"],
+        "status": row.get("status", "active"),
+        "goal": row.get("goal", ""),
+        "current_state": row.get("current_state", ""),
+        "next_step": row.get("next_step", ""),
+        "next_steps": _safe_json(row.get("next_steps")),
+        "files": _safe_json(row.get("files")),
+        "commands": _safe_json(row.get("commands")),
+        "handoff": row.get("handoff", ""),
+        "created_at": row.get("created_at", ""),
+        "updated_at": row.get("updated_at", ""),
+        "notes": [
+            {
+                "id": n.get("id"),
+                "kind": n.get("kind"),
+                "content": n.get("content"),
+                "title": n.get("title") or n.get("content", "")[:80],
+                "agent_id": n.get("agent_id", "default"),
+                "status": n.get("status", "open"),
+                "created_at": n.get("created_at", ""),
+            }
+            for n in (notes or [])
+        ] if notes else [],
+    }
+
+
+@app.route("/api/planets", methods=["GET"])
+def api_list_planets():
+    try:
+        conn = get_db().connection
+        rows = conn.execute(
+            "SELECT * FROM planets ORDER BY updated_at DESC"
+        ).fetchall()
+        return jsonify({
+            "planets": [_planet_to_json(dict(r)) for r in rows]
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/planets/<topic>", methods=["GET"])
+def api_get_planet(topic):
+    try:
+        conn = get_db().connection
+        row = conn.execute(
+            "SELECT * FROM planets WHERE topic = ?", (topic,)
+        ).fetchone()
+        if not row:
+            return jsonify({"error": "Planet not found"}), 404
+        notes = conn.execute(
+            "SELECT * FROM notes WHERE topic = ? ORDER BY created_at DESC LIMIT 50",
+            (topic,),
+        ).fetchall()
+        return jsonify(_planet_to_json(dict(row), [dict(n) for n in notes]))
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/planets", methods=["POST"])
+def api_upsert_planet():
+    try:
+        data = request.get_json()
+        topic = data.get("topic", "").strip().lower().replace(" ", "-")
+        if not topic:
+            return jsonify({"error": "topic required"}), 400
+
+        mgr = get_session()
+        mgr.update_planet(
+            "web",
+            topic,
+            status=data.get("status"),
+            goal=data.get("goal"),
+            current_state=data.get("current_state"),
+            next_step=data.get("next_step"),
+            handoff=data.get("handoff"),
+        )
+        return jsonify({"status": "success", "topic": topic})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/planets/<topic>", methods=["DELETE"])
+def api_delete_planet(topic):
+    try:
+        mgr = get_session()
+        mgr.delete_planet(topic)
+        return jsonify({"status": "success", "deleted": topic})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/notes", methods=["POST"])
+def api_add_note():
+    try:
+        data = request.get_json()
+        topic = data.get("topic", "").strip().lower().replace(" ", "-")
+        kind = data.get("kind", "fact")
+        content = data.get("content", "")
+        if not topic or not content:
+            return jsonify({"error": "topic and content required"}), 400
+
+        mgr = get_session()
+        result = mgr.add_note(
+            "web", topic, kind, content,
+            agent_id=data.get("agent_id", "web-ui"),
+            title=data.get("title"),
+        )
+        return jsonify({"status": "success", "note": result})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 
 def _get_node_color(node_type: str) -> str:
     """Map node type to color"""

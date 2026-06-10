@@ -39,9 +39,9 @@ class TerminalGraphVisualizer:
             "fact": "■",
             "summary": "▲",
             "conversation": "●",
-            "task": "✓",
+            "task": "[x]",
             "question": "?",
-            "example": "★",
+            "example": "*",
         }
         return symbols.get(node_type, "○")
 
@@ -107,7 +107,7 @@ class TerminalGraphVisualizer:
         output.append("")
 
         # Statistics
-        output.append(self._colorize("📊 Statistics", "green"))
+        output.append(self._colorize("[*] Statistics", "green"))
         output.append(f"  Nodes:              {self._colorize(str(stats['total_nodes']), 'cyan')}")
         output.append(f"  Edges:              {self._colorize(str(stats['total_edges']), 'cyan')}")
         avg_edges = f"{stats['avg_edges_per_node']:.2f}"
@@ -118,14 +118,14 @@ class TerminalGraphVisualizer:
 
         # Node types
         if stats["edge_types"]:
-            output.append(f"\n{self._colorize('🔗 Edge Types', 'green')}")
+            output.append(f"\n{self._colorize('Edge Types', 'green')}")
             for edge_type, count in sorted(stats["edge_types"].items(), key=lambda x: x[1], reverse=True):
                 if count > 0:
                     output.append(f"  {edge_type:20s} {self._colorize(str(count), 'yellow')}")
 
         # Top nodes
         if nodes:
-            output.append(f"\n{self._colorize('⭐ Most Important Nodes', 'green')}")
+            output.append(f"\n{self._colorize('Most Important Nodes', 'green')}")
             sorted_nodes = sorted(nodes, key=lambda n: n.weight, reverse=True)[:5]
             for i, node in enumerate(sorted_nodes, 1):
                 symbol = self._node_symbol(node.node_type.value)
@@ -135,7 +135,7 @@ class TerminalGraphVisualizer:
         # Clusters
         clusters = self.graph.get_clusters()
         if clusters:
-            output.append(f"\n{self._colorize('🔮 Connected Components', 'green')}")
+            output.append(f"\n{self._colorize('Connected Components', 'green')}")
             sorted_clusters = sorted(clusters, key=len, reverse=True)[:5]
             for i, cluster in enumerate(sorted_clusters, 1):
                 cluster_nodes = [self.storage.get_node(nid) for nid in cluster]

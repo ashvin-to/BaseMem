@@ -40,10 +40,12 @@ class _PlanetProxy:
     @property
     def metadata(self) -> Dict[str, Any]:
         row = self._row
-        next_steps = json.loads(row.get("next_steps", "[]"))
-        files = json.loads(row.get("files", "[]"))
-        commands = json.loads(row.get("commands", "[]"))
-        aliases = json.loads(row.get("aliases", "[]"))
+        def _sj(v):
+            return json.loads(v) if v and v.strip() else []
+        next_steps = _sj(row.get("next_steps"))
+        files = _sj(row.get("files"))
+        commands = _sj(row.get("commands"))
+        aliases = _sj(row.get("aliases"))
 
         activity = [
             {"timestamp": n.get("created_at", ""), "agent_id": n.get("agent_id", "unknown"),
@@ -184,7 +186,7 @@ class SessionManager:
         row = _get_planet_row(self.storage.connection, topic_slug)
 
         if row:
-            aliases = set(json.loads(row["aliases"] or "[]"))
+            aliases = set(json.loads(row["aliases"]) if row["aliases"] and row["aliases"].strip() else [])
             aliases.update({topic, topic_slug})
             _exec(
                 self.storage.connection,
@@ -230,15 +232,18 @@ class SessionManager:
         if current_state is not None:
             updates.append("current_state = ?"); params.append(current_state)
         if next_step is not None:
-            steps = set(json.loads(row.get("next_steps", "[]")))
+            raw = row.get("next_steps")
+            steps = set(json.loads(raw) if raw and raw.strip() else [])
             steps.add(next_step)
             updates.append("next_steps = ?"); params.append(json.dumps(sorted(steps)))
         if file_path is not None:
-            files = set(json.loads(row.get("files", "[]")))
+            raw = row.get("files")
+            files = set(json.loads(raw) if raw and raw.strip() else [])
             files.add(file_path)
             updates.append("files = ?"); params.append(json.dumps(sorted(files)))
         if command is not None:
-            commands = set(json.loads(row.get("commands", "[]")))
+            raw = row.get("commands")
+            commands = set(json.loads(raw) if raw and raw.strip() else [])
             commands.add(command)
             updates.append("commands = ?"); params.append(json.dumps(sorted(commands)))
         if handoff is not None:
