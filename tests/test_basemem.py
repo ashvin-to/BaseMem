@@ -3,14 +3,11 @@
 import pytest
 import tempfile
 from pathlib import Path
-import asyncio
-
 from src.basemem.models import Node, NodeType, Edge, EdgeType
 from src.basemem.storage.db import StorageManager
 from src.basemem.storage.sessions import SessionManager
 from src.basemem.retrieval.engine import RetrievalEngine
 from src.basemem.graph.engine import GraphEngine
-from src.basemem.processing.pipeline import ProcessingPipeline
 
 
 @pytest.fixture
@@ -114,20 +111,6 @@ class TestGraph:
         assert len(path) == 4
         assert path[0] == nodes[0].id
         assert path[-1] == nodes[3].id
-
-
-class TestProcessing:
-    """Test processing pipeline"""
-
-    def test_ingest_text(self, temp_db):
-        pipeline = ProcessingPipeline(temp_db)
-        text = "This is a test sentence. This is another test sentence."
-
-        nodes = asyncio.run(pipeline.ingest_text(text, source="test"))
-
-        assert len(nodes) > 0
-        assert all(isinstance(n, Node) for n in nodes)
-        assert all(n.content for n in nodes)
 
 
 class TestSessions:

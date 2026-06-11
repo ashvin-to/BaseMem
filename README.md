@@ -128,23 +128,22 @@ The CLI (`kb`) and MCP tools share the same `planets` and `notes` SQLite tables.
    - Diversity control
    - Structured context formatting
 
-5. **Processing Pipeline** (`processing/`)
-   - Async text ingestion
-   - Semantic chunking
-   - Automatic linking
-   - **Local Summarization**: Transformers-based (BART/T5) background processing.
-
-6. **Web Hub & API** (`server.py`)
+5. **Web Hub & API** (`server.py`)
    - Flask-based REST API for all commands.
    - **Obsidian Galaxy**: Dynamic D3.js visualization with Orbit mode and interactive node management.
 
-7. **CLI Interface** (`cli/`)
+6. **CLI Interface** (`cli/`)
    - `kb planet create/read/set/delete` — manage planets
    - `kb note` — add decisions, facts, issues
    - `kb search` — full-text search across planets, notes, and nodes
    - `kb agent-context` — compact pre-answer memory block
    - `kb list-planets` — list all planets
    - `kb session turn/context/read` — activity logging and discovery
+   - `kb recompute-links` — recalculate Jaccard similarity for all note pairs
+   - `kb planet set-state` — set memory tier (hot/warm/compacted)
+   - `kb planet link` — link two planets
+   - `kb note link` — connect two notes
+   - `kb note neighbors` — show linked notes
 
 ## Data Models
 
@@ -213,12 +212,8 @@ BaseMem/
 │   │   └── engine.py          # Graph operations (Semantic Gravity)
 │   ├── orchestrator/
 │   │   └── context.py         # Context orchestration
-│   ├── processing/
-│   │   ├── pipeline.py        # Main pipeline
-│   │   ├── workers.py         # Async workers
-│   │   └── summarizer.py      # Local BART/T5 summarizer
 │   ├── mcp/
-│   │   └── server.py          # Model Context Protocol server (same planets/notes tables)
+│   │   └── server.py          # Model Context Protocol server (MCP tools)
 │   └── cli/
 │       └── main.py            # CLI commands (same planets/notes tables)
 ├── tests/
@@ -235,8 +230,7 @@ BaseMem/
 ### Phase 1 (Complete)
 - [x] SQLite + FTS5 storage
 - [x] BM25 keyword search
-- [x] Sentence transformer embeddings
-- [x] Basic vector search
+- [x] Hybrid retrieval (BM25 + vector)
 - [x] CLI interface
 
 ### Phase 2 (Complete)
@@ -247,8 +241,9 @@ BaseMem/
 - [x] D3.js visualization with planets panel
 
 ### Phase 3 (Planned)
+- Embedding-backed similarity layer (hybrid lexical + semantic)
 - Cross-encoder reranking for search
-- Decay-based forgetting system
+- Edge decay and pruning for adaptive graph
 - Multi-device synchronization
 
 ## Configuration
