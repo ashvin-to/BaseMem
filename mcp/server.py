@@ -842,6 +842,111 @@ def rank_neighbors(note_id: str, by: str = "weight") -> str:
     return "\n".join(lines)
 
 
+@server.tool(
+    description=(
+        "Compute the similarity of the tool call's arguments, not the notes' content. "
+        "Returns both notes' content so the agent can judge similarity. "
+        "The agent should read both, decide a similarity score (0-1), "
+        "then call link_notes with the appropriate weight and confidence."
+    )
+)
+def compute_similarity(note_id_a: str, note_id_b: str) -> str:
+    """Return both notes for agent-driven semantic similarity comparison."""
+    from storage.sessions import SessionManager
+    from storage.db import StorageManager
+    storage = StorageManager(get_db_path())
+    manager = SessionManager(storage)
+    nid_a = manager._parse_note_id(note_id_a)
+    nid_b = manager._parse_note_id(note_id_b)
+    if nid_a is None or nid_b is None:
+        return "One or both note IDs are invalid."
+    rows = manager.storage.connection.cursor().execute(
+        "SELECT id, topic, kind, content, title FROM notes WHERE id IN (?, ?)",
+        (nid_a, nid_b),
+    ).fetchall()
+    if len(rows) != 2:
+        return "One or both notes not found."
+    result = []
+    for r in rows:
+        result.append(f"--- note-{r['id']} ({r['topic']}/{r['kind']}) ---")
+        if r["title"]:
+            result.append(f"Title: {r['title']}")
+        result.append(r["content"])
+    result.append("")
+    result.append("Agent: decide a similarity score (0-1) and call link_notes with weight=<score>.")
+    return "\n".join(result)
+
+
+@server.tool(
+    description=(
+        "Rerank a list of note IDs by relevance to a query. "
+        "Returns the query and each note's content so the agent can reorder them. "
+        "The agent should read all notes, then return them in relevance order."
+    )
+)
+def rerank(query: str, note_ids: list) -> str:
+    """Return query + note contents for agent-driven reranking."""
+    from storage.sessions import SessionManager
+    from storage.db import StorageManager
+    storage = StorageManager(get_db_path())
+    manager = SessionManager(storage)
+    ids = []
+    for nid in note_ids:
+        parsed = manager._parse_note_id(str(nid))
+        if parsed is not None:
+            ids.append(parsed)
+    if not ids:
+        return "No valid note IDs provided."
+    placeholders = ",".join("?" for _ in ids)
+    rows = manager.storage.connection.cursor().execute(
+        f"SELECT id, topic, kind, content, title FROM notes WHERE id IN ({placeholders}) ORDER BY id",
+        ids,
+    ).fetchall()
+    parts = [f"Query: {query}", f"Candidate notes ({len(rows)}):\n"]
+    for r in rows:
+        parts.append(f"--- note-{r['id']} ({r['topic']}/{r['kind']}) ---")
+        if r["title"]:
+            parts.append(f"Title: {r['title']}")
+        parts.append(r["content"][:500])
+        parts.append("")
+    parts.append("Agent: reorder the note IDs by relevance to the query and return them.")
+    return "\n".join(parts)
+
+
+@server.tool(
+    description=(
+        "Decay edge weights by a factor. "
+        "All auto-link weights are multiplied by <factor> (default 0.9). "
+        "Optionally limit to a specific planet."
+    )
+)
+def edge_decay(factor: float = 0.9, planet: str | None = None) -> str:
+    """Apply weight decay to auto-links."""
+    from storage.sessions import SessionManager
+    from storage.db import StorageManager
+    storage = StorageManager(get_db_path())
+    manager = SessionManager(storage)
+    result = manager.edge_decay(factor=factor, planet=planet)
+    return f"Decayed {result['decayed']} edge(s) by factor {result['factor']}."
+
+
+@server.tool(
+    description=(
+        "Prune edges below a weight threshold. "
+        "Removes auto-links with weight < threshold (default 0.05). "
+        "Optionally limit to a specific planet."
+    )
+)
+def edge_prune(threshold: float = 0.05, planet: str | None = None) -> str:
+    """Remove auto-links below weight threshold."""
+    from storage.sessions import SessionManager
+    from storage.db import StorageManager
+    storage = StorageManager(get_db_path())
+    manager = SessionManager(storage)
+    result = manager.edge_prune(threshold=threshold, planet=planet)
+    return f"Pruned {result['pruned']} edge(s) below threshold {result['threshold']}."
+
+
 def main():
     server.run()
 

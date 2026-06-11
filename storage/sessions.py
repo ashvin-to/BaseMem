@@ -922,6 +922,147 @@ class SessionManager:
             neighbors.sort(key=lambda x: x.get("weight", 0) or 0, reverse=True)
         return neighbors
 
+    # ── Edge lifecycle ────────────────────────────────────────
+
+    def edge_decay(self, factor: float = 0.9, planet: str | None = None):
+        cursor = self.storage.connection.cursor()
+        if planet:
+            slug = self.normalize_topic(planet)
+            note_ids = [
+                r["id"]
+                for r in cursor.execute(
+                    "SELECT id FROM notes WHERE topic = ?", (slug,)
+                ).fetchall()
+            ]
+            if not note_ids:
+                return {"decayed": 0, "message": "No notes in planet"}
+            placeholders = ",".join("?" for _ in note_ids)
+            affected = cursor.execute(
+                f"UPDATE note_links SET weight = ROUND(weight * ?, 3), updated_at = ? "
+                f"WHERE (from_note_id IN ({placeholders}) OR to_note_id IN ({placeholders})) AND source = 'auto'",
+                (factor, self._now(), *note_ids, *note_ids),
+            ).rowcount
+        else:
+            affected = cursor.execute(
+                "UPDATE note_links SET weight = ROUND(weight * ?, 3), updated_at = ? WHERE source = 'auto'",
+                (factor, self._now()),
+            ).rowcount
+        self.storage.connection.commit()
+        return {"decayed": affected, "factor": factor}
+
+    def edge_prune(self, threshold: float = 0.05, planet: str | None = None):
+        cursor = self.storage.connection.cursor()
+        if planet:
+            slug = self.normalize_topic(planet)
+            note_ids = [
+                r["id"]
+                for r in cursor.execute(
+                    "SELECT id FROM notes WHERE topic = ?", (slug,)
+                ).fetchall()
+            ]
+            if not note_ids:
+                return {"pruned": 0, "message": "No notes in planet"}
+            placeholders = ",".join("?" for _ in note_ids)
+            affected = cursor.execute(
+                f"DELETE FROM note_links WHERE weight < ? AND source = 'auto' "
+                f"AND (from_note_id IN ({placeholders}) OR to_note_id IN ({placeholders}))",
+                (threshold, *note_ids, *note_ids),
+            ).rowcount
+        else:
+            affected = cursor.execute(
+                "DELETE FROM note_links WHERE weight < ? AND source = 'auto'",
+                (threshold,),
+            ).rowcount
+        self.storage.connection.commit()
+        return {"pruned": affected, "threshold": threshold}
+
+    # ── Export / Import ──────────────────────────────────────
+
+    def export_kb(self, planet: str | None = None):
+        cursor = self.storage.connection.cursor()
+        data = {"version": 1, "planets": [], "notes": [], "note_links": [], "planet_links": []}
+        rows = cursor.execute("SELECT * FROM planets").fetchall()
+        for r in rows:
+            p = dict(r)
+            if planet and p["topic"] != planet:
+                continue
+            data["planets"].append(p)
+        if planet:
+            topic = self.normalize_topic(planet)
+            data["notes"] = [dict(r) for r in cursor.execute("SELECT * FROM notes WHERE topic = ?", (topic,)).fetchall()]
+            note_ids = [n["id"] for n in data["notes"]]
+            if note_ids:
+                ph = ",".join("?" for _ in note_ids)
+                data["note_links"] = [
+                    dict(r) for r in cursor.execute(
+                        f"SELECT * FROM note_links WHERE from_note_id IN ({ph}) OR to_note_id IN ({ph})", note_ids + note_ids
+                    ).fetchall()
+                ]
+        else:
+            data["notes"] = [dict(r) for r in cursor.execute("SELECT * FROM notes").fetchall()]
+            data["note_links"] = [dict(r) for r in cursor.execute("SELECT * FROM note_links").fetchall()]
+            data["planet_links"] = [dict(r) for r in cursor.execute("SELECT * FROM planet_links").fetchall()]
+        return data
+
+    def import_kb(self, data: dict) -> dict:
+        cursor = self.storage.connection.cursor()
+        stats = {"planets_created": 0, "planets_skipped": 0, "notes_created": 0, "notes_skipped": 0, "note_links": 0, "planet_links": 0, "errors": []}
+        for p in data.get("planets", []):
+            try:
+                cursor.execute(
+                    "INSERT OR IGNORE INTO planets (topic, display_topic, status, goal, current_state, next_step, next_steps, files, commands, handoff, aliases, memory_state) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (p["topic"], p.get("display_topic", ""), p.get("status", "active"), p.get("goal", ""),
+                     p.get("current_state", ""), p.get("next_step", ""), p.get("next_steps", "[]"),
+                     p.get("files", "[]"), p.get("commands", "[]"), p.get("handoff", ""),
+                     p.get("aliases", "[]"), p.get("memory_state", "hot")),
+                )
+                if cursor.rowcount:
+                    stats["planets_created"] += 1
+                else:
+                    stats["planets_skipped"] += 1
+            except Exception as e:
+                stats["errors"].append(f"planet {p.get('topic')}: {e}")
+        for n in data.get("notes", []):
+            try:
+                cursor.execute(
+                    "INSERT OR IGNORE INTO notes (id, topic, kind, content, title, agent_id, status, turn_index) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (n["id"], n["topic"], n.get("kind", "fact"), n["content"], n.get("title", ""),
+                     n.get("agent_id", "default"), n.get("status", "open"), n.get("turn_index", 0)),
+                )
+                if cursor.rowcount:
+                    stats["notes_created"] += 1
+                else:
+                    stats["notes_skipped"] += 1
+            except Exception as e:
+                stats["errors"].append(f"note {n.get('id')}: {e}")
+        for nl in data.get("note_links", []):
+            try:
+                cursor.execute(
+                    "INSERT OR IGNORE INTO note_links (from_note_id, to_note_id, link_type, weight, confidence, source) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (nl["from_note_id"], nl["to_note_id"], nl.get("link_type", "related"),
+                     nl.get("weight", 1.0), nl.get("confidence", 1.0), nl.get("source", "auto")),
+                )
+                if cursor.rowcount:
+                    stats["note_links"] += 1
+            except Exception as e:
+                stats["errors"].append(f"note_link {nl.get('from_note_id')}->{nl.get('to_note_id')}: {e}")
+        for pl in data.get("planet_links", []):
+            try:
+                cursor.execute(
+                    "INSERT OR IGNORE INTO planet_links (from_planet_id, to_planet_id, relation, weight) "
+                    "VALUES (?, ?, ?, ?)",
+                    (pl["from_planet_id"], pl["to_planet_id"], pl.get("relation", "related"), pl.get("weight", 1.0)),
+                )
+                if cursor.rowcount:
+                    stats["planet_links"] += 1
+            except Exception as e:
+                stats["errors"].append(f"planet_link {pl.get('from_planet_id')}->{pl.get('to_planet_id')}: {e}")
+        self.storage.connection.commit()
+        return stats
+
 
 # ── Module-level helpers ──────────────────────────────────
 

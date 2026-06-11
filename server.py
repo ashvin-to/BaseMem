@@ -524,6 +524,79 @@ def api_recompute_links():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/search")
+def api_search():
+    """Search across planets and notes."""
+    q = request.args.get("q", "").strip()
+    if not q:
+        return jsonify({"results": []})
+    like = f"%{q}%"
+    mgr = get_session()
+    conn = mgr.storage.connection
+    results = []
+    for r in conn.execute(
+        "SELECT topic, display_topic, current_state, goal, updated_at FROM planets WHERE topic LIKE ? OR display_topic LIKE ? OR current_state LIKE ? OR goal LIKE ? LIMIT 10",
+        (like, like, like, like),
+    ):
+        results.append({"type": "planet", "label": r["display_topic"] or r["topic"], "id": "planet-" + r["topic"], "preview": (r["current_state"] or r["goal"] or "")[:150]})
+    for r in conn.execute(
+        "SELECT id, topic, kind, content, title FROM notes WHERE content LIKE ? OR title LIKE ? LIMIT 20",
+        (like, like),
+    ):
+        results.append({"type": "note", "label": f"{r['topic']} / {r['kind']}", "id": f"note-{r['id']}", "preview": r["content"][:150], "topic": r["topic"]})
+    return jsonify({"results": results})
+
+
+@app.route("/api/edge/decay", methods=["POST"])
+def api_edge_decay():
+    """Apply weight decay to auto-links."""
+    try:
+        data = request.get_json() or {}
+        mgr = get_session()
+        result = mgr.edge_decay(factor=data.get("factor", 0.9), planet=data.get("planet"))
+        return jsonify({"status": "success", "result": result})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/edge/prune", methods=["POST"])
+def api_edge_prune():
+    """Remove auto-links below a weight threshold."""
+    try:
+        data = request.get_json() or {}
+        mgr = get_session()
+        result = mgr.edge_prune(threshold=data.get("threshold", 0.05), planet=data.get("planet"))
+        return jsonify({"status": "success", "result": result})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/export", methods=["GET"])
+def api_export():
+    """Export knowledge base as JSON."""
+    try:
+        planet = request.args.get("planet")
+        mgr = get_session()
+        data = mgr.export_kb(planet=planet)
+        return jsonify(data)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/import", methods=["POST"])
+def api_import():
+    """Import knowledge base from JSON."""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "request body required"}), 400
+        mgr = get_session()
+        stats = mgr.import_kb(data)
+        return jsonify({"status": "success", "result": stats})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/notes", methods=["POST"])
 def api_add_note():
     try:

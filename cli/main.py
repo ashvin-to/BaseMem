@@ -522,6 +522,78 @@ def note_neighbors(ctx, note_id, link_type):
         name = n["title"] or n["content"][:80]
         click.echo(f"  note-{n['id']} [{n['link_type']}] (w={n['weight']}) {name}")
 
+# ── Edge commands ─────────────────────────────────────────
+
+@cli.group()
+def edge():
+    """Manage edge lifecycle: decay and prune."""
+    pass
+
+
+@edge.command("decay")
+@click.option('--factor', default=0.9, type=float, help='Multiply all auto-link weights by this factor')
+@click.option('--planet', help='Limit to a specific planet')
+@click.pass_context
+def edge_decay(ctx, factor, planet):
+    """Apply weight decay to auto-links. Reduces old/unused connections."""
+    from storage.sessions import SessionManager
+    manager = SessionManager(ctx.obj['storage'])
+    result = manager.edge_decay(factor=factor, planet=planet)
+    click.echo(f"Decayed {result['decayed']} edge(s) by factor {result['factor']}.")
+
+
+@edge.command("prune")
+@click.option('--threshold', default=0.05, type=float, help='Remove auto-links below this weight')
+@click.option('--planet', help='Limit to a specific planet')
+@click.pass_context
+def edge_prune(ctx, threshold, planet):
+    """Remove auto-links below a weight threshold."""
+    from storage.sessions import SessionManager
+    manager = SessionManager(ctx.obj['storage'])
+    result = manager.edge_prune(threshold=threshold, planet=planet)
+    click.echo(f"Pruned {result['pruned']} edge(s) below threshold {result['threshold']}.")
+
+
+# ── Export / Import ─────────────────────────────────────
+
+@cli.command()
+@click.option('--planet', help='Export only a specific planet')
+@click.option('--output', '-o', default='basemem-export.json', help='Output file path')
+@click.pass_context
+def export(ctx, planet, output):
+    """Export knowledge base to JSON."""
+    from storage.sessions import SessionManager
+    manager = SessionManager(ctx.obj['storage'])
+    data = manager.export_kb(planet=planet)
+    import json
+    out_path = Path(output)
+    out_path.write_text(json.dumps(data, indent=2, default=str))
+    click.echo(f"[ok] Exported to {out_path.resolve()} ({len(data['planets'])} planets, {len(data['notes'])} notes, {len(data['note_links'])} note links)")
+
+
+@cli.command()
+@click.argument('input', required=False, default='basemem-export.json')
+@click.pass_context
+def import_kb(ctx, input):
+    """Import knowledge base from JSON. Skips existing planets/notes."""
+    from storage.sessions import SessionManager
+    manager = SessionManager(ctx.obj['storage'])
+    import json
+    in_path = Path(input)
+    if not in_path.exists():
+        click.echo(f"[!] File not found: {in_path}")
+        return
+    data = json.loads(in_path.read_text())
+    stats = manager.import_kb(data)
+    click.echo(f"Import results: {stats['planets_created']} planets created, {stats['planets_skipped']} skipped, "
+               f"{stats['notes_created']} notes created, {stats['notes_skipped']} skipped, "
+               f"{stats['note_links']} note links, {stats['planet_links']} planet links")
+    if stats['errors']:
+        click.echo(f"Errors: {len(stats['errors'])}")
+        for e in stats['errors'][:5]:
+            click.echo(f"  {e}")
+
+
 @cli.command()
 @click.argument('doc_name', required=False)
 @click.pass_context
