@@ -1,6 +1,1 @@
-"""Processing pipeline for BaseMem"""
-
-from .pipeline import ProcessingPipeline
-from .workers import IngestWorker
-
-__all__ = ["ProcessingPipeline", "IngestWorker"]
+"""Processing pipeline for BaseMem (currently unused - agent-driven summarization replaces local ML)"""
