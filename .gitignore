@@ -67,6 +67,7 @@ logs/
 # md files
 AGENTS.md
 .basemem-*.md
+ARCHITECTURE.md
 IDEA.md
 IMPLEMENTATION.md
 DEVELOPMENT.md

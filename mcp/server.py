@@ -140,6 +140,9 @@ def _ensure_db_path():
     return db_path
 
 
+_REMINDER = "\n\n---\nAfter your response, call log_turn(topic=..., content=...) to persist this interaction."
+
+
 @server.tool(
     description=(
         "Get the relevant agent context for a given topic. "
@@ -163,6 +166,16 @@ def get_agent_context(topic: str, query: str = "") -> str:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
+        # Auto-log this context retrieval as a turn
+        try:
+            conn.execute(
+                "INSERT INTO notes (topic, kind, content, agent_id, turn_index) VALUES (?, 'turn', ?, 'system', 0)",
+                (topic, f"Context retrieved (query: {query or 'none'})"),
+            )
+            conn.commit()
+        except Exception:
+            pass
+
         planet = conn.execute(
             "SELECT * FROM planets WHERE topic = ?", (topic,)
         ).fetchone()
@@ -207,7 +220,7 @@ def get_agent_context(topic: str, query: str = "") -> str:
             parts.append("\n## Facts")
             parts.extend(f"- {f}" for f in facts[-5:])
 
-        return "\n".join(parts)
+        return "\n".join(parts) + _REMINDER
     finally:
         conn.close()
 
@@ -268,7 +281,7 @@ def read_planet(topic: str) -> str:
                 lines.append(
                     f"\n### [{n['kind'].upper()}] (id={n['id']})\n{n['content']}\n"
                 )
-        return "\n".join(lines)
+        return "\n".join(lines) + _REMINDER
     finally:
         conn.close()
 
@@ -503,7 +516,7 @@ def list_planets() -> str:
             goal = p["goal"] or ""
             goal_str = f" — {goal[:80]}" if goal else ""
             lines.append(f"- **{name}** {status_tag}: {state[:120]}{goal_str}")
-        return "\n".join(lines)
+        return "\n".join(lines) + _REMINDER
     finally:
         conn.close()
 
@@ -578,7 +591,7 @@ def search_nodes(query: str, limit: int = 10) -> str:
         if count == 0:
             return "No matches found."
 
-        return "\n".join(lines)
+        return "\n".join(lines) + _REMINDER
     finally:
         conn.close()
 
@@ -626,7 +639,7 @@ def search_notes(topic: str, kind: str = "", query: str = "", limit: int = 10) -
             lines.append(
                 f"\n**[{r['kind'].upper()}] (id={r['id']})**\n{preview}"
             )
-        return "\n".join(lines)
+        return "\n".join(lines) + _REMINDER
     finally:
         conn.close()
 
@@ -663,7 +676,7 @@ def get_node(node_id: str) -> str:
             f"**Created:** {row['created_at']}\n"
             f"**Updated:** {row.get('updated_at', 'N/A')}\n"
             f"\n**Content:**\n{row['content']}"
-        )
+        ) + _REMINDER
     finally:
         conn.close()
 
@@ -705,7 +718,7 @@ def get_note_neighbors(note_id: str) -> str:
     for n in neighbors:
         name = n["title"] or n["content"][:80]
         lines.append(f"- note-{n['id']} [{n['link_type']}] (w={n['weight']}) {name}")
-    return "\n".join(lines)
+    return "\n".join(lines) + _REMINDER
 
 
 # ── Planet links ─────────────────────────────────────────────
@@ -746,7 +759,7 @@ def get_planet_links(planet: str) -> str:
     lines = [f"Planets linked to '{planet}':\n"]
     for l in links:
         lines.append(f"- {l['planet']} [{l['relation']}] (w={l['weight']})")
-    return "\n".join(lines)
+    return "\n".join(lines) + _REMINDER
 
 
 # ── Memory tiers ──────────────────────────────────────────────
@@ -794,7 +807,7 @@ def get_neighbors_weighted(note_id: str, depth: int = 1, min_weight: float = 0.0
     lines = [f"Neighbors (depth={depth}, min_weight={min_weight}):\n"]
     for r in results:
         lines.append(f"  note-{r['id']} [{r['link_type']}] (w={r['weight']}, d={r['_depth']}) {r['title'] or r['content'][:60]}")
-    return "\n".join(lines)
+    return "\n".join(lines) + _REMINDER
 
 
 @server.tool(
@@ -815,7 +828,7 @@ def get_subgraph(note_id: str, depth: int = 2, min_weight: float = 0.2) -> str:
     if nid is None:
         return f"Invalid note ID: {note_id}"
     result = manager.get_subgraph(nid, depth=depth, min_weight=min_weight)
-    return json.dumps(result, indent=2)
+    return json.dumps(result, indent=2) + _REMINDER
 
 
 @server.tool(
@@ -839,7 +852,7 @@ def rank_neighbors(note_id: str, by: str = "weight") -> str:
     lines = [f"Neighbors ranked by {by}:\n"]
     for i, r in enumerate(ranked, 1):
         lines.append(f"  {i}. note-{r['id']} (w={r['weight']}, c={r.get('confidence','?')}) {r['title'] or r['content'][:60]}")
-    return "\n".join(lines)
+    return "\n".join(lines) + _REMINDER
 
 
 @server.tool(

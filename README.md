@@ -105,6 +105,14 @@ If your host supports MCP, the server at `src/basemem/mcp/server.py` exposes the
 - `compute_similarity(note_id_a, note_id_b)` — returns both notes for agent to judge similarity
 - `rerank(query, note_ids)` — returns query + notes for agent to reorder by relevance
 
+**Code Intelligence** (tree-sitter powered)
+- `code_init(project_root)` — index a project's source code into the code knowledge graph
+- `code_search(query, limit)` — search code symbols by name or signature
+- `code_node(symbol_identifier)` — get full details of a code symbol (callers, callees, location)
+- `code_callers(symbol_name)` — find all callers of a function
+- `code_callees(symbol_name, file_path)` — find what a function calls
+- `code_status()` — show indexing stats
+
 **Graph Lifecycle**
 - `edge_decay(factor, planet)` — multiply all auto-link weights by factor
 - `edge_prune(threshold, planet)` — remove auto-links below weight threshold
@@ -150,7 +158,7 @@ When `add_note` is called, the new note is automatically linked to existing note
    - Schema: planets, notes, note_links, planet_links
 
 2. **MCP Server** (`mcp/server.py`)
-   - 25 MCP tools for agent integration
+   - 31 MCP tools for agent integration
    - Shares same DB path as CLI and Flask
 
 3. **Web Hub** (`server.py`)
@@ -170,6 +178,15 @@ When `add_note` is called, the new note is automatically linked to existing note
    - `kb edge decay/prune` — graph lifecycle management
    - `kb export` / `kb import` — multi-device sync
 
+5. **Code Intelligence** (`indexer/`)
+   - `kb code init <path>` — index a project's source code with tree-sitter
+   - `kb code search <query>` — search code symbols by name or signature
+   - `kb code node <id|name>` — full symbol details with callers/callees
+   - `kb code callers <symbol>` — find what calls a function
+   - `kb code callees <symbol>` — find what a function calls
+   - `kb code status` — show indexing stats
+   - Auto-syncs on file changes via watchdog
+
 ## Project Structure
 
 ```
@@ -178,8 +195,14 @@ BaseMem/
 │   ├── storage/
 │   │   ├── db.py              # SQLite storage manager
 │   │   └── sessions.py        # SessionManager — planets/notes/links (shared by all interfaces)
+│   ├── indexer/              # Code intelligence module (tree-sitter)
+│   │   ├── parser.py          # Code parser: tree-sitter queries for Python/JS/TS/Rust
+│   │   ├── indexer.py         # Directory walker, symbol/edge persistence, FTS5 search
+│   │   ├── schema.py          # code_symbols / code_edges / code_projects tables
+│   │   ├── watcher.py         # Watchdog-based auto-sync on file changes
+│   │   └── __init__.py
 │   ├── mcp/
-│   │   └── server.py          # Model Context Protocol server (25 tools)
+│   │   └── server.py          # Model Context Protocol server (31 tools)
 │   ├── cli/
 │   │   └── main.py            # CLI commands (same planets/notes tables)
 │   ├── server.py               # Flask REST API + D3 visualization
@@ -280,7 +303,7 @@ A weighted edge between two planets.
 
 ### Phase 2 (Complete)
 - Unified planets/notes tables shared between CLI, MCP, and Flask
-- 25 MCP tools for full agent integration
+- 31 MCP tools for full agent integration
 - MCP auto-config for Claude Code, opencode, Cursor, Windsurf, Gemini, Codex
 - Planet schema with status, goal, state, files, commands, handoff, aliases, memory tiers
 - Full-text search across planets, notes, and legacy nodes
@@ -292,10 +315,19 @@ A weighted edge between two planets.
 - Bookmarklet inject/logger for browser-based memory
 - Multi-device sync via JSON export/import
 
-### Phase 3 (Planned)
+### Phase 3 (Complete)
+- Code intelligence: tree-sitter based code parser for Python, JavaScript, TypeScript, Rust
+- Code symbol graph (functions, classes, methods, calls, imports) stored in same DB
+- MCP tools for code search, symbol lookup, caller/callee analysis
+- CLI commands under `kb code` group for code initialization and querying
+- Flask API endpoints for code graph
+- Auto-sync via watchdog file watcher
+
+### Phase 4 (Planned)
 - Embedding-backed similarity layer (hybrid lexical + semantic, agent-assisted)
 - Cross-encoder reranking for search (agent-driven)
 - Edge decay scheduling (time-based, automated)
+- Link agent decision notes directly to code symbols (bidirectional)
 
 ## Configuration
 
