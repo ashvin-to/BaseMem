@@ -195,7 +195,7 @@ BaseMem/
 │   ├── storage/
 │   │   ├── db.py              # SQLite storage manager
 │   │   └── sessions.py        # SessionManager — planets/notes/links (shared by all interfaces)
-│   ├── indexer/              # Code intelligence module (tree-sitter)
+│   ├── indexer/                # Code intelligence module (tree-sitter)
 │   │   ├── parser.py          # Code parser: tree-sitter queries for Python/JS/TS/Rust
 │   │   ├── indexer.py         # Directory walker, symbol/edge persistence, FTS5 search
 │   │   ├── schema.py          # code_symbols / code_edges / code_projects tables

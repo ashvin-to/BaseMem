@@ -963,18 +963,18 @@ def edge_prune(threshold: float = 0.05, planet: str | None = None) -> str:
 # ── Code Graph MCP Tools ──────────────────────────────────────────
 
 
-_CODEGRAPH_INDEXER = None  # Global or re-created per call
+_CODE_INDEXER = None  # Global or re-created per call
 
 
 def _get_code_indexer(project_root: str = "") -> "CodeIndexer | None":
     """Get or create a CodeIndexer for the given project root."""
-    global _CODEGRAPH_INDEXER
+    global _CODE_INDEXER
     try:
         from indexer import CodeIndexer
         db_path = _resolve_db_path()
-        if _CODEGRAPH_INDEXER is None:
-            _CODEGRAPH_INDEXER = CodeIndexer(db_path)
-        return _CODEGRAPH_INDEXER
+        if _CODE_INDEXER is None:
+            _CODE_INDEXER = CodeIndexer(db_path)
+        return _CODE_INDEXER
     except Exception as e:
         return None
 
@@ -984,7 +984,7 @@ def _get_code_indexer(project_root: str = "") -> "CodeIndexer | None":
         "Index or re-index a project's source code into the code knowledge graph. "
         "Scans all supported source files (Python, JS, TS, Rust, etc.) using tree-sitter "
         "and builds a symbol graph of functions, classes, methods, calls, and imports. "
-        "Run this once per project to enable indexer_search, indexer_node, etc."
+        "Run this once per project to enable code_search, code_node, etc."
     )
 )
 def code_init(project_root: str) -> str:
