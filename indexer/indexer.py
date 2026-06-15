@@ -11,7 +11,7 @@ from typing import Callable, Optional
 from .parser import CodeParser, SUPPORTED_LANGUAGES
 from .schema import ensure_code_schema
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("basemem.indexer")
 
 # Directories to skip by default
 SKIP_DIRS = {

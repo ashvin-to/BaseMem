@@ -1,4 +1,4 @@
-"""Code intelligence module: code symbol graph via tree-sitter."""
+"""Code intelligence: tree-sitter symbol graph indexer."""
 
 from .schema import ensure_code_schema
 from .parser import CodeParser, SUPPORTED_LANGUAGES
