@@ -43,35 +43,20 @@ def get_session():
 
 @app.route("/", methods=["GET"])
 def index():
-    """Serve the galaxy visualization UI"""
-    try:
-        ui_path = Path(__file__).parent.parent.parent / "graph_visualization.html"
-        with open(ui_path, "r") as f:
-            return f.read()
-    except Exception as e:
-        return f"Error loading UI: {str(e)}", 500
-
-
-@app.route("/inject", methods=["GET"])
-def inject_page():
-    """Serve the memory injector bookmarklet page"""
-    try:
-        path = Path(__file__).parent.parent.parent / "bookmarklet-inject.html"
-        with open(path, "r") as f:
-            return f.read()
-    except Exception as e:
-        return f"Error loading page: {str(e)}", 500
-
-
-@app.route("/log-chat", methods=["GET"])
-def log_chat_page():
-    """Serve the chat logging bookmarklet page"""
-    try:
-        path = Path(__file__).parent.parent.parent / "log-chat.html"
-        with open(path, "r") as f:
-            return f.read()
-    except Exception as e:
-        return f"Error loading page: {str(e)}", 500
+    """BaseMem API server."""
+    return jsonify({
+        "service": "BaseMem",
+        "version": "0.2.0",
+        "endpoints": {
+            "planets": "/api/planets",
+            "notes": "/api/notes",
+            "notes_graph": "/api/notes/graph",
+            "search": "/api/search?q=...",
+            "code_search": "/api/code/search?q=...",
+            "code_status": "/api/code/status",
+            "graph": "/api/graph",
+        }
+    })
 
 @app.route("/api/graph", methods=["GET"])
 def get_graph_data():
