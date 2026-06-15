@@ -136,21 +136,6 @@ def stats(ctx):
     click.echo(f"\n[*] Galaxy Nodes: {len(storage.get_all_nodes())}")
     click.echo(f"[*] Galaxy Bridges: {len(storage.get_edges())}")
 
-@cli.command()
-@click.option('--background', '-b', is_flag=True, help='Run in bg')
-@click.pass_context
-def serve(ctx, background, port=5000):
-    import subprocess
-    if background:
-        log = Path.home() / ".basemem" / "server.log"
-        click.echo(f"[*] Galaxy active in background. Port {port}")
-        with open(log, "a") as f:
-            subprocess.Popen([sys.executable, str(Path(__file__).parent.parent.parent.parent / "kb.py"), "serve"], stdout=f, stderr=f, start_new_session=True)
-        return
-    from serverimport app
-    click.echo(f"[*] Galaxy active on http://localhost:{port}")
-    app.run(host="0.0.0.0", port=port, debug=False)
-
 @cli.group()
 def session():
     pass
