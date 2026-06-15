@@ -960,6 +960,213 @@ def edge_prune(threshold: float = 0.05, planet: str | None = None) -> str:
     return f"Pruned {result['pruned']} edge(s) below threshold {result['threshold']}."
 
 
+# ── Code Graph MCP Tools ──────────────────────────────────────────
+
+
+_CODEGRAPH_INDEXER = None  # Global or re-created per call
+
+
+def _get_code_indexer(project_root: str = "") -> "CodeIndexer | None":
+    """Get or create a CodeIndexer for the given project root."""
+    global _CODEGRAPH_INDEXER
+    try:
+        from indexer import CodeIndexer
+        db_path = _resolve_db_path()
+        if _CODEGRAPH_INDEXER is None:
+            _CODEGRAPH_INDEXER = CodeIndexer(db_path)
+        return _CODEGRAPH_INDEXER
+    except Exception as e:
+        return None
+
+
+@server.tool(
+    description=(
+        "Index or re-index a project's source code into the code knowledge graph. "
+        "Scans all supported source files (Python, JS, TS, Rust, etc.) using tree-sitter "
+        "and builds a symbol graph of functions, classes, methods, calls, and imports. "
+        "Run this once per project to enable indexer_search, indexer_node, etc."
+    )
+)
+def code_init(project_root: str) -> str:
+    """Index a project's source code into the code knowledge graph."""
+    import os
+    if not os.path.isdir(project_root):
+        return f"Directory not found: {project_root}"
+
+    from indexer import CodeIndexer
+    db_path = _resolve_db_path()
+    indexer = CodeIndexer(db_path)
+    try:
+        result = indexer.index_project(project_root, max_workers=4)
+        return (
+            f"Indexed {result['files']} files, {result['symbols']} symbols, "
+            f"{result['edges']} edges in {result['elapsed']:.1f}s"
+        )
+    finally:
+        indexer.close()
+
+
+@server.tool(
+    description=(
+        "Search code symbols by name or signature. "
+        "Returns matching functions, classes, methods with file locations and line numbers. "
+        "Use this to find where code is defined before reading it."
+    )
+)
+def code_search(query: str, limit: int = 20) -> str:
+    """Search for code symbols across the indexed codebase."""
+    from indexer import CodeIndexer
+    db_path = _resolve_db_path()
+    indexer = CodeIndexer(db_path)
+    try:
+        results = indexer.search_symbols(query, limit=limit)
+        if not results:
+            return "No matching symbols found. Run `code_init` first to index a project."
+        parts = [f"Found {len(results)} symbol(s):\n"]
+        for r in results:
+            loc = f"{r['file_path']}:{r['start_line']}-{r['end_line']}"
+            sig = f" {r['signature']}" if r.get('signature') else ""
+            parts.append(f"  [{r['id']}] {r['symbol_type']} **{r['symbol_name']}**{sig}  ({loc})")
+            if r.get('docstring'):
+                parts.append(f"       doc: {r['docstring'][:150]}")
+        return "\n".join(parts)
+    finally:
+        indexer.close()
+
+
+@server.tool(
+    description=(
+        "Get detailed information about a specific code symbol by its ID or name. "
+        "Returns source file, location, full signature, docstring, and caller/callee info. "
+        "Use after code_search to drill into a specific symbol."
+    )
+)
+def code_node(symbol_identifier: str) -> str:
+    """Get details about a specific code symbol."""
+    from indexer import CodeIndexer
+    db_path = _resolve_db_path()
+    indexer = CodeIndexer(db_path)
+    try:
+        # Try as numeric ID first
+        sym = None
+        try:
+            sid = int(symbol_identifier)
+            sym = indexer.get_symbol(sid)
+        except ValueError:
+            pass
+        if not sym:
+            symbols = indexer.get_symbol_by_name(symbol_identifier)
+            if not symbols:
+                return f"Symbol not found: {symbol_identifier}. Run `code_init` first or try `code_search`."
+            sym = symbols[0]
+            if len(symbols) > 1:
+                parts = [f"Multiple symbols named '{symbol_identifier}':\n"]
+                for s in symbols:
+                    parts.append(f"  [{s['id']}] {s['symbol_type']} in {s['file_path']}:{s['start_line']}")
+                return "\n".join(parts)
+
+        # Get callers
+        callers = indexer.get_callers(sym['symbol_name'])
+        callees = indexer.get_callees(sym['symbol_name'], sym['file_path'])
+
+        parts = [
+            f"**{sym['symbol_type']}** `{sym['symbol_name']}`",
+            f"  File: {sym['file_path']}:{sym['start_line']}-{sym['end_line']}",
+            f"  Language: {sym['language']}",
+        ]
+        if sym.get('signature'):
+            parts.append(f"  Signature: {sym['signature']}")
+        if sym.get('docstring'):
+            parts.append(f"  Doc: {sym['docstring']}")
+        if callers:
+            parts.append(f"\n  Callers ({len(callers)}):")
+            for c in callers[:10]:
+                parts.append(f"    {c['symbol_type']} {c['symbol_name']} ({c['edge_file']}:{c['line_number']})")
+        if callees:
+            parts.append(f"\n  Calls ({len(callees)}):")
+            for c in callees[:10]:
+                parts.append(f"    {c['from_name']} (line {c['line_number']})")
+        return "\n".join(parts)
+    finally:
+        indexer.close()
+
+
+@server.tool(
+    description=(
+        "Find all code symbols that call a given function or method name. "
+        "Returns the callers with their file locations. "
+        "Use this to understand how a function is used before modifying it."
+    )
+)
+def code_callers(symbol_name: str) -> str:
+    """Find what calls a given symbol."""
+    from indexer import CodeIndexer
+    db_path = _resolve_db_path()
+    indexer = CodeIndexer(db_path)
+    try:
+        results = indexer.get_callers(symbol_name)
+        if not results:
+            return f"No callers found for '{symbol_name}'."
+        parts = [f"Callers of `{symbol_name}` ({len(results)}):\n"]
+        for r in results:
+            parts.append(f"  {r['symbol_type']} `{r['symbol_name']}` in {r['edge_file']}:{r['line_number']}")
+        return "\n".join(parts)
+    finally:
+        indexer.close()
+
+
+@server.tool(
+    description=(
+        "Find what a given function or method calls. Shows callees with file locations. "
+        "Use this to understand a function's dependencies."
+    )
+)
+def code_callees(symbol_name: str, file_path: str = "") -> str:
+    """Find what a given symbol calls."""
+    from indexer import CodeIndexer
+    db_path = _resolve_db_path()
+    indexer = CodeIndexer(db_path)
+    try:
+        results = indexer.get_callees(symbol_name, file_path)
+        if not results:
+            return f"No callees found for '{symbol_name}'."
+        parts = [f"Callees of `{symbol_name}` ({len(results)}):\n"]
+        for r in results:
+            parts.append(f"  {r['from_name']} at {r['file_path']}:{r['line_number']}")
+        return "\n".join(parts)
+    finally:
+        indexer.close()
+
+
+@server.tool(
+    description=(
+        "Show code graph indexing status and stats. "
+        "Returns how many files, symbols, and edges are indexed."
+    )
+)
+def code_status() -> str:
+    """Show code graph indexing status."""
+    from indexer import CodeIndexer
+    db_path = _resolve_db_path()
+    indexer = CodeIndexer(db_path)
+    try:
+        stats = indexer.get_project_stats()
+        if not stats.get("indexed"):
+            return "No code project indexed yet. Run `code_init` with a project root path."
+        return (
+            f"Project: {stats.get('name', '?')}\n"
+            f"  Root: {stats.get('root_path', '?')}\n"
+            f"  Files: {stats['file_count']}\n"
+            f"  Symbols: {stats['symbol_count']}\n"
+            f"  Edges: {stats['edges']}\n"
+            f"  Last indexed: {stats.get('last_indexed', 'never')}"
+        )
+    finally:
+        indexer.close()
+
+
+# ── End Code Graph Tools ──────────────────────────────────────────
+
 def main():
     server.run()
 

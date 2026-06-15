@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 from pathlib import Path
 
 from flask import Flask, jsonify, request
@@ -644,6 +645,76 @@ def _get_node_color(node_type: str) -> str:
         "example": "#00BCD4",
     }
     return colors.get(node_type, "#757575")
+
+# ── Code Graph API ────────────────────────────────────────────────
+
+
+@app.route("/api/code/init", methods=["POST"])
+def code_init():
+    """Index a project's source code."""
+    data = request.get_json(silent=True) or {}
+    root = data.get("root_path", "")
+    if not root or not os.path.isdir(root):
+        return jsonify({"error": "Invalid root_path"}), 400
+    _home = Path.home()
+    db_path = str(_home / ".basemem" / "basemem.db")
+    from .indexer import CodeIndexer
+    indexer = CodeIndexer(db_path)
+    try:
+        result = indexer.index_project(root)
+        return jsonify(result)
+    finally:
+        indexer.close()
+
+
+@app.route("/api/code/search", methods=["GET"])
+def code_search():
+    """Search code symbols."""
+    query = request.args.get("q", "")
+    limit = int(request.args.get("limit", 20))
+    if not query:
+        return jsonify({"error": "Missing query"}), 400
+    _home = Path.home()
+    db_path = str(_home / ".basemem" / "basemem.db")
+    from .indexer import CodeIndexer
+    indexer = CodeIndexer(db_path)
+    try:
+        results = indexer.search_symbols(query, limit=limit)
+        return jsonify(results)
+    finally:
+        indexer.close()
+
+
+@app.route("/api/code/symbol/<int:symbol_id>", methods=["GET"])
+def code_symbol(symbol_id: int):
+    """Get a code symbol by ID."""
+    _home = Path.home()
+    db_path = str(_home / ".basemem" / "basemem.db")
+    from .indexer import CodeIndexer
+    indexer = CodeIndexer(db_path)
+    try:
+        sym = indexer.get_symbol(symbol_id)
+        if not sym:
+            return jsonify({"error": "Not found"}), 404
+        callers = indexer.get_callers(sym["symbol_name"])
+        callees = indexer.get_callees(sym["symbol_name"], sym["file_path"])
+        return jsonify({"symbol": sym, "callers": callers, "callees": callees})
+    finally:
+        indexer.close()
+
+
+@app.route("/api/code/status", methods=["GET"])
+def code_status():
+    """Code graph indexing status."""
+    _home = Path.home()
+    db_path = str(_home / ".basemem" / "basemem.db")
+    from .indexer import CodeIndexer
+    indexer = CodeIndexer(db_path)
+    try:
+        return jsonify(indexer.get_project_stats())
+    finally:
+        indexer.close()
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=False)

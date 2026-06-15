@@ -594,6 +594,172 @@ def import_kb(ctx, input):
             click.echo(f"  {e}")
 
 
+# ── Code Graph commands ─────────────────────────────────────
+
+@cli.group()
+def code():
+    """Code intelligence: index and query source code symbols."""
+    pass
+
+
+@code.command("init")
+@click.argument('project_root', required=False, default='.')
+@click.option('--workers', default=4, help='Number of parallel workers')
+@click.pass_context
+def code_init(ctx, project_root, workers):
+    """Index a project's source code into the knowledge graph."""
+    import os
+    root = os.path.abspath(project_root)
+    if not os.path.isdir(root):
+        click.echo(f"[!] Not a directory: {root}")
+        return
+    from indexer import CodeIndexer
+    indexer = CodeIndexer(ctx.obj['db'])
+    try:
+        with click.progressbar(length=1, label='Indexing...') as bar:
+            result = indexer.index_project(root, max_workers=workers)
+            bar.update(1)
+        click.echo(f"[ok] Indexed {result['files']} files, {result['symbols']} symbols, {result['edges']} edges in {result['elapsed']:.1f}s")
+    finally:
+        indexer.close()
+
+
+@code.command("search")
+@click.argument('query')
+@click.option('--limit', default=20, type=int)
+@click.pass_context
+def code_search(ctx, query, limit):
+    """Search code symbols by name or signature."""
+    from indexer import CodeIndexer
+    indexer = CodeIndexer(ctx.obj['db'])
+    try:
+        results = indexer.search_symbols(query, limit=limit)
+        if not results:
+            click.echo("No matching symbols found. Run `kb code init` first.")
+            return
+        click.echo(f"Found {len(results)} symbol(s):\n")
+        for r in results:
+            loc = f"{r['file_path']}:{r['start_line']}-{r['end_line']}"
+            sig = f" {r['signature']}" if r.get('signature') else ""
+            click.echo(f"  [{r['id']}] {r['symbol_type']} {r['symbol_name']}{sig}")
+            click.echo(f"         {loc}")
+            if r.get('docstring'):
+                click.echo(f"         doc: {r['docstring'][:150]}")
+    finally:
+        indexer.close()
+
+
+@code.command("node")
+@click.argument('identifier')
+@click.pass_context
+def code_node(ctx, identifier):
+    """Show details of a code symbol by ID or name."""
+    from indexer import CodeIndexer
+    indexer = CodeIndexer(ctx.obj['db'])
+    try:
+        sym = None
+        try:
+            sid = int(identifier)
+            sym = indexer.get_symbol(sid)
+        except ValueError:
+            pass
+        if not sym:
+            symbols = indexer.get_symbol_by_name(identifier)
+            if not symbols:
+                click.echo(f"Symbol not found: {identifier}")
+                return
+            if len(symbols) == 1:
+                sym = symbols[0]
+            else:
+                click.echo(f"Multiple symbols named '{identifier}':")
+                for s in symbols:
+                    click.echo(f"  [{s['id']}] {s['symbol_type']} in {s['file_path']}:{s['start_line']}")
+                return
+
+        callers = indexer.get_callers(sym['symbol_name'])
+        callees = indexer.get_callees(sym['symbol_name'], sym['file_path'])
+
+        click.echo(f"{sym['symbol_type']}: {sym['symbol_name']}")
+        click.echo(f"  File: {sym['file_path']}:{sym['start_line']}-{sym['end_line']}")
+        click.echo(f"  Language: {sym['language']}")
+        if sym.get('signature'):
+            click.echo(f"  Signature: {sym['signature']}")
+        if sym.get('docstring'):
+            click.echo(f"  Doc: {sym['docstring']}")
+        if callers:
+            click.echo(f"  Callers ({len(callers)}):")
+            for c in callers[:10]:
+                click.echo(f"    {c['symbol_type']} {c['symbol_name']} ({c['edge_file']}:{c['line_number']})")
+        if callees:
+            click.echo(f"  Calls ({len(callees)}):")
+            for c in callees[:10]:
+                click.echo(f"    {c['from_name']} (line {c['line_number']})")
+    finally:
+        indexer.close()
+
+
+@code.command("callers")
+@click.argument('symbol_name')
+@click.pass_context
+def code_callers(ctx, symbol_name):
+    """Find what calls a given symbol."""
+    from indexer import CodeIndexer
+    indexer = CodeIndexer(ctx.obj['db'])
+    try:
+        results = indexer.get_callers(symbol_name)
+        if not results:
+            click.echo(f"No callers found for '{symbol_name}'.")
+            return
+        click.echo(f"Callers of {symbol_name} ({len(results)}):")
+        for r in results:
+            click.echo(f"  {r['symbol_type']} {r['symbol_name']} in {r['edge_file']}:{r['line_number']}")
+    finally:
+        indexer.close()
+
+
+@code.command("callees")
+@click.argument('symbol_name')
+@click.option('--file-path', help='Limit to a specific file')
+@click.pass_context
+def code_callees(ctx, symbol_name, file_path):
+    """Find what a given symbol calls."""
+    from indexer import CodeIndexer
+    indexer = CodeIndexer(ctx.obj['db'])
+    try:
+        results = indexer.get_callees(symbol_name, file_path or "")
+        if not results:
+            click.echo(f"No callees found for '{symbol_name}'.")
+            return
+        click.echo(f"Callees of {symbol_name} ({len(results)}):")
+        for r in results:
+            click.echo(f"  {r['from_name']} at {r['file_path']}:{r['line_number']}")
+    finally:
+        indexer.close()
+
+
+@code.command("status")
+@click.pass_context
+def code_status(ctx):
+    """Show code graph indexing stats."""
+    from indexer import CodeIndexer
+    indexer = CodeIndexer(ctx.obj['db'])
+    try:
+        stats = indexer.get_project_stats()
+        if not stats.get("indexed"):
+            click.echo("No code project indexed yet. Run `kb code init <project_root>`.")
+            return
+        click.echo(f"Project: {stats.get('name', '?')}")
+        click.echo(f"  Root: {stats.get('root_path', '?')}")
+        click.echo(f"  Files: {stats['file_count']}")
+        click.echo(f"  Symbols: {stats['symbol_count']}")
+        click.echo(f"  Edges: {stats.get('edges', 0)}")
+        click.echo(f"  Last indexed: {stats.get('last_indexed', 'never')}")
+    finally:
+        indexer.close()
+
+
+# ── End Code Graph commands ─────────────────────────────────
+
 @cli.command()
 @click.argument('doc_name', required=False)
 @click.pass_context
