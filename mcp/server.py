@@ -1021,7 +1021,7 @@ def code_search(query: str, limit: int = 20) -> str:
     try:
         results = indexer.search_symbols(query, limit=limit)
         if not results:
-            return "No matching symbols found. Run `code_init` first to index a project."
+            return f"No symbols match '{query}'. Try a different term or run `code_init` to index a project."
         parts = [f"Found {len(results)} symbol(s):\n"]
         for r in results:
             loc = f"{r['file_path']}:{r['start_line']}-{r['end_line']}"
