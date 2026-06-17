@@ -609,6 +609,32 @@ def code_init(ctx, project_root, workers):
         indexer.close()
 
 
+@code.command("list")
+@click.option('--limit', default=100, type=int, help='Max symbols')
+@click.option('--offset', default=0, type=int, help='Pagination offset')
+@click.pass_context
+def code_list(ctx, limit, offset):
+    """List all indexed code symbols."""
+    from indexer import CodeIndexer
+    indexer = CodeIndexer(ctx.obj['db'])
+    try:
+        stats = indexer.get_project_stats()
+        if not stats.get("indexed"):
+            click.echo("No code project indexed yet. Run `kb code init`.")
+            return
+        results = indexer.list_symbols(limit=limit, offset=offset)
+        if not results:
+            click.echo("No symbols found.")
+            return
+        total = stats.get('symbol_count', 0)
+        click.echo(f"Symbols {offset+1}-{offset+len(results)} of {total}:\n")
+        for r in results:
+            loc = f"{r['file_path']}:{r['start_line']}-{r['end_line']}"
+            click.echo(f"  [{r['id']}] {r['symbol_type']} {r['symbol_name']}  ({loc})")
+    finally:
+        indexer.close()
+
+
 @code.command("search")
 @click.argument('query')
 @click.option('--limit', default=20, type=int)

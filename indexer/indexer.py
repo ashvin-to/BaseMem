@@ -133,6 +133,31 @@ class CodeIndexer:
         self.conn.commit()
         return {"removed": removed}
 
+    def list_symbols(
+        self, project_id: str = "", limit: int = 100, offset: int = 0
+    ) -> list[dict]:
+        """List all code symbols, optionally filtered by project."""
+        if project_id:
+            cur = self.conn.execute(
+                """SELECT cs.id, cs.project_id, cs.file_path, cs.symbol_name, cs.symbol_type,
+                          cs.language, cs.signature, cs.start_line, cs.end_line
+                   FROM code_symbols cs
+                   WHERE cs.project_id = ?
+                   ORDER BY cs.file_path, cs.start_line
+                   LIMIT ? OFFSET ?""",
+                (project_id, limit, offset),
+            )
+        else:
+            cur = self.conn.execute(
+                """SELECT cs.id, cs.project_id, cs.file_path, cs.symbol_name, cs.symbol_type,
+                          cs.language, cs.signature, cs.start_line, cs.end_line
+                   FROM code_symbols cs
+                   ORDER BY cs.file_path, cs.start_line
+                   LIMIT ? OFFSET ?""",
+                (limit, offset),
+            )
+        return [dict(r) for r in cur.fetchall()]
+
     def search_symbols(
         self, query: str, limit: int = 20
     ) -> list[dict]:
