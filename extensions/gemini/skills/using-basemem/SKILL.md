@@ -45,6 +45,28 @@ BaseMem tools are loaded lazily. Use `call_mcp_tool` with `ServerName: "basemem-
 - `get_node` -> Arguments: `{"node_id": "..."}`
 - `read_planet` -> Arguments: `{"topic": "..."}`
 
+## Code Intelligence (tree-sitter)
+
+The project has a code indexer (`basemem.indexer`) that parses Python/JS/TS/Rust into a symbol graph via tree-sitter. Use it when the user asks about code structure, callers, callees, or searching symbols.
+
+### Shell Commands (via `execute_command`)
+- `kb code search <query>` — find functions/classes by name
+- `kb code node <id|name>` — file, signature, docstring, callers/callees
+- `kb code callers <function>` — what calls a given symbol
+- `kb code callees <function>` — what a symbol calls
+- `kb code init <path>` — index or re-index a project
+- `kb code status` — show indexing stats
+
+### MCP Tools (on basemem-memory server)
+- `code_init(project_root)` — index a project
+- `code_search(query, limit)` — search symbols
+- `code_node(symbol_identifier)` — symbol details
+- `code_callers(symbol_name)` — find callers
+- `code_callees(symbol_name)` — find callees
+- `code_status()` — indexing stats
+
+All tools read/write the same `basemem.db` — no sync needed.
+
 ## Red Flags
 
 If you find yourself thinking any of the following, STOP and check memory instead:

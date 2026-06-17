@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 from typing import Callable, Optional
 
-from .parser import CodeParser, SUPPORTED_LANGUAGES
+from .parser import CodeParser
 from .schema import ensure_code_schema
 
 logger = logging.getLogger("basemem.indexer")
@@ -251,17 +251,14 @@ class CodeIndexer:
                 ext = Path(fn).suffix.lower()
                 if ext in SKIP_EXTENSIONS:
                     continue
-                if ext in SUPPORTED_LANGUAGES:
+                if CodeParser.supported_extension(ext):
                     yield Path(dirpath) / fn
 
     def _index_file(self, root_path: str, file_path: str) -> tuple[int, int]:
         rel_path = os.path.relpath(file_path, root_path)
-        ext = Path(file_path).suffix.lower()
-        lang_name = SUPPORTED_LANGUAGES.get(ext)
-        if not lang_name:
+        parser = CodeParser.for_file(file_path)
+        if parser is None:
             return 0, 0
-
-        parser = CodeParser(lang_name)
         with open(file_path, "rb") as f:
             source_bytes = f.read()
 

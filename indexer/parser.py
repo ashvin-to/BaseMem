@@ -1,52 +1,45 @@
-"""Tree-sitter based code parser. Extracts symbols and edges from source files."""
+"""Tree-sitter based code parser. Extracts symbols and edges from source files.
+
+Supported languages:
+  - Custom queries: python, javascript, typescript, tsx, rust (richer extraction)
+  - All others: uses tree-sitter-language-pack's process() for basic symbols
+"""
 
 import hashlib
 from pathlib import Path
 from typing import Optional
 
 from tree_sitter import Language, Node, Parser, Query, QueryCursor
+from tree_sitter_language_pack import get_language as _load_language, detect_language_from_extension, process, ProcessConfig
 
 # ── Language grammars ────────────────────────────────────────────────
 
-def _load_language(package):
-    capsule = package.language()
-    return Language(capsule)
-
-
 _GRAMMAR_CACHE = {}
-_QUERY_CACHE = {}
 
 
 def _get_grammar(lang: str) -> Optional[Language]:
     if lang not in _GRAMMAR_CACHE:
         try:
-            if lang == "python":
-                import tree_sitter_python
-                _GRAMMAR_CACHE[lang] = _load_language(tree_sitter_python)
-            elif lang == "javascript":
-                import tree_sitter_javascript
-                _GRAMMAR_CACHE[lang] = _load_language(tree_sitter_javascript)
-            elif lang == "typescript":
-                import tree_sitter_typescript
-                _GRAMMAR_CACHE[lang] = _load_language(tree_sitter_typescript.tsx)
-            elif lang == "rust":
-                import tree_sitter_rust
-                _GRAMMAR_CACHE[lang] = _load_language(tree_sitter_rust)
-        except ImportError:
+            _GRAMMAR_CACHE[lang] = _load_language(lang)
+        except Exception:
             return None
     return _GRAMMAR_CACHE.get(lang)
 
 
-SUPPORTED_LANGUAGES = {
-    ".py": "python",
-    ".js": "javascript",
-    ".jsx": "javascript",
-    ".ts": "typescript",
-    ".tsx": "typescript",
-    ".rs": "rust",
-    ".mjs": "javascript",
-    ".cjs": "javascript",
-}
+_SKIP_EXTENSIONS = frozenset({
+    ".md", ".markdown", ".rst", ".txt", ".tex",
+    ".json", ".jsonc", ".json5",
+    ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf",
+    ".css", ".scss", ".less", ".sass",
+    ".html", ".htm", ".xhtml",
+    ".xml", ".svg", ".graphql", ".proto",
+    ".sql", ".db", ".sqlite",
+    ".csv", ".tsv",
+    ".png", ".jpg", ".jpeg", ".gif", ".ico", ".webp", ".bmp",
+    ".woff", ".woff2", ".ttf", ".eot",
+    ".pdf", ".doc", ".docx",
+    ".zip", ".tar", ".gz", ".bz2", ".xz", ".7z", ".rar",
+})
 
 # ── Queries per language ─────────────────────────────────────────────
 
@@ -154,7 +147,7 @@ TS_QUERIES = {
     "interface": """
         (interface_declaration
             name: (type_identifier) @name
-            body: (object_type) @body) @symbol
+            body: (interface_body) @body) @symbol
     """,
     "type_alias": """
         (type_alias_declaration
@@ -162,9 +155,9 @@ TS_QUERIES = {
             value: (_) @body) @symbol
     """,
     "enum": """
-        (enum_item
-            name: (type_identifier) @name
-            body: (enum_variant_list) @body) @symbol
+        (enum_declaration
+            name: (identifier) @name
+            body: (enum_body) @body) @symbol
     """,
     "call": """
         (call_expression
@@ -177,10 +170,6 @@ TS_QUERIES = {
     """,
     "import": """
         (import_statement
-            source: (string) @source) @import
-    """,
-    "import_type": """
-        (import_type
             source: (string) @source) @import
     """,
     "export": """
@@ -236,27 +225,52 @@ LANGUAGE_QUERIES = {
     "python": PYTHON_QUERIES,
     "javascript": JS_QUERIES,
     "typescript": TS_QUERIES,
+    "tsx": TS_QUERIES,
     "rust": RUST_QUERIES,
 }
 
 
+# ── Process-based structure kind mapping ─────────────────────────────
+
+_PROCESS_KIND_MAP = {
+    "Function": "function",
+    "Method": "method",
+    "Class": "class",
+    "Type": "class",
+    "Interface": "interface",
+    "Struct": "struct",
+    "Enum": "enum",
+    "Trait": "trait",
+    "Module": "module",
+}
+
+
 class CodeParser:
-    """Parses source code into symbols and edges using tree-sitter."""
+    """Parses source code into symbols and edges using tree-sitter.
+
+    Uses custom .scm queries for python/js/ts/tsx/rust (richer extraction
+    with call edges, method context, etc.), and falls back to the
+    language-pack's process() for all other recognized languages.
+    """
 
     def __init__(self, language: str):
         self.language = language
-        self.grammar = _get_grammar(language)
-        if self.grammar is None:
-            raise ValueError(f"Unsupported or unavailable language: {language}")
-        self.parser = Parser()
-        self.parser.language = self.grammar
         self.queries = LANGUAGE_QUERIES.get(language, {})
-        self._compiled_queries = {}
+        self._has_queries = bool(self.queries)
+        if self._has_queries:
+            self.grammar = _get_grammar(language)
+            if self.grammar is None:
+                raise ValueError(f"Unsupported or unavailable language: {language}")
+            self.parser = Parser()
+            self.parser.language = self.grammar
+            self._compiled_queries = {}
 
     @classmethod
     def for_file(cls, file_path: str) -> Optional["CodeParser"]:
         ext = Path(file_path).suffix.lower()
-        lang = SUPPORTED_LANGUAGES.get(ext)
+        if not ext or ext in _SKIP_EXTENSIONS:
+            return None
+        lang = detect_language_from_extension(ext.lstrip("."))
         if not lang:
             return None
         try:
@@ -266,23 +280,33 @@ class CodeParser:
 
     @classmethod
     def supported_extension(cls, ext: str) -> bool:
-        return ext.lower() in SUPPORTED_LANGUAGES
+        if not ext or ext in _SKIP_EXTENSIONS:
+            return False
+        return detect_language_from_extension(ext.lstrip(".")) is not None
 
     def _get_query(self, name: str):
         if name not in self._compiled_queries:
             source = self.queries.get(name, "")
             if not source:
                 return None
-            self._compiled_queries[name] = Query(self.grammar, source)
+            try:
+                self._compiled_queries[name] = Query(self.grammar, source)
+            except Exception:
+                return None
         return self._compiled_queries[name]
 
     def parse(self, source_bytes: bytes, file_path: str = ""):
         """Parse source code and extract symbols and edges.
 
-        Returns:
-            symbols: list of dicts
-            edges: list of dicts
+        Returns: (symbols, edges) as lists of dicts.
         """
+        if self._has_queries:
+            return self._parse_with_queries(source_bytes, file_path)
+        return self._parse_with_process(source_bytes, file_path)
+
+    # ── Query-based parsing (python/js/ts/tsx/rust) ───────────────────
+
+    def _parse_with_queries(self, source_bytes: bytes, file_path: str = ""):
         tree = self.parser.parse(source_bytes)
         root = tree.root_node
         symbols = []
@@ -476,6 +500,76 @@ class CodeParser:
                     })
 
         return edges
+
+
+    # ── Process-based fallback (any language without custom queries) ──
+
+    def _parse_with_process(self, source_bytes: bytes, file_path: str = ""):
+        source_str = source_bytes.decode("utf-8", errors="replace")
+        config = ProcessConfig(
+            language=self.language,
+            structure=True,
+            imports=True,
+            symbols=False,
+            comments=False,
+            docstrings=False,
+        )
+        result = process(source_str, config)
+
+        symbols = []
+        edges = []
+        _seen_ranges = set()
+
+        for item in result.structure:
+            s = item.span
+            if s is None:
+                continue
+            range_key = (s.start_byte, s.end_byte)
+            if range_key in _seen_ranges:
+                continue
+            _seen_ranges.add(range_key)
+
+            kind_str = str(item.kind)
+            sym_type = _PROCESS_KIND_MAP.get(kind_str, kind_str.lower())
+
+            signature = ""
+            if item.signature and str(item.signature) != "None":
+                signature = str(item.signature)
+
+            docstring = ""
+            if item.doc_comment:
+                docstring = str(item.doc_comment)
+
+            symbol = {
+                "file_path": file_path,
+                "symbol_name": item.name,
+                "symbol_type": sym_type,
+                "language": self.language,
+                "kind": kind_str.lower(),
+                "start_line": s.start_line + 1,
+                "end_line": s.end_line + 1,
+                "start_col": s.start_column + 1,
+                "end_col": s.end_column + 1,
+                "signature": signature,
+                "docstring": docstring,
+                "parent_id": None,
+                "content_hash": hashlib.sha256(
+                    source_bytes[s.start_byte:s.end_byte]
+                ).hexdigest()[:16],
+            }
+            symbols.append(symbol)
+
+        for imp in result.imports:
+            src = str(imp.source) if imp.source else ""
+            edges.append({
+                "edge_type": "imports",
+                "from_name": src.strip("'\""),
+                "target_name": None,
+                "file_path": file_path,
+                "line_number": imp.span.start_line + 1 if imp.span else 0,
+            })
+
+        return symbols, edges
 
 
 # ── Helpers ──────────────────────────────────────────────────────────
