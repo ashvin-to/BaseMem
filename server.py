@@ -636,33 +636,36 @@ def _get_node_color(node_type: str) -> str:
 
 @app.route("/api/code/init", methods=["POST"])
 def code_init():
-    """Index a project's source code."""
+    """Index a project's source code into a per-project .basemem.code.db."""
     data = request.get_json(silent=True) or {}
     root = data.get("root_path", "")
     if not root or not os.path.isdir(root):
         return jsonify({"error": "Invalid root_path"}), 400
-    _home = Path.home()
-    db_path = str(_home / ".basemem" / "basemem.db")
     from .indexer import CodeIndexer
-    indexer = CodeIndexer(db_path)
+    indexer = CodeIndexer(root)
     try:
-        result = indexer.index_project(root)
-        return jsonify(result)
+        result = indexer.index_project()
+        return jsonify({**result, "db_path": indexer.db_path})
     finally:
         indexer.close()
 
 
 @app.route("/api/code/search", methods=["GET"])
 def code_search():
-    """Search code symbols."""
+    """Search code symbols in a project's .basemem.code.db."""
+    root = request.args.get("root", "")
     query = request.args.get("q", "")
-    limit = int(request.args.get("limit", 20))
+    if not root or not os.path.isdir(root):
+        return jsonify({"error": "Missing or invalid root param"}), 400
     if not query:
         return jsonify({"error": "Missing query"}), 400
-    _home = Path.home()
-    db_path = str(_home / ".basemem" / "basemem.db")
+    limit = int(request.args.get("limit", 20))
     from .indexer import CodeIndexer
-    indexer = CodeIndexer(db_path)
+    from .indexer.indexer import CODE_DB_FILENAME
+    db_path = os.path.join(root, CODE_DB_FILENAME)
+    if not os.path.exists(db_path):
+        return jsonify({"error": f"No index at {db_path}"}), 404
+    indexer = CodeIndexer(root)
     try:
         results = indexer.search_symbols(query, limit=limit)
         return jsonify(results)
@@ -672,11 +675,16 @@ def code_search():
 
 @app.route("/api/code/symbol/<int:symbol_id>", methods=["GET"])
 def code_symbol(symbol_id: int):
-    """Get a code symbol by ID."""
-    _home = Path.home()
-    db_path = str(_home / ".basemem" / "basemem.db")
+    """Get a code symbol by ID from a project's .basemem.code.db."""
+    root = request.args.get("root", "")
+    if not root or not os.path.isdir(root):
+        return jsonify({"error": "Missing or invalid root param"}), 400
     from .indexer import CodeIndexer
-    indexer = CodeIndexer(db_path)
+    from .indexer.indexer import CODE_DB_FILENAME
+    db_path = os.path.join(root, CODE_DB_FILENAME)
+    if not os.path.exists(db_path):
+        return jsonify({"error": f"No index at {db_path}"}), 404
+    indexer = CodeIndexer(root)
     try:
         sym = indexer.get_symbol(symbol_id)
         if not sym:
@@ -690,11 +698,16 @@ def code_symbol(symbol_id: int):
 
 @app.route("/api/code/status", methods=["GET"])
 def code_status():
-    """Code graph indexing status."""
-    _home = Path.home()
-    db_path = str(_home / ".basemem" / "basemem.db")
+    """Code graph indexing status for a project."""
+    root = request.args.get("root", "")
+    if not root or not os.path.isdir(root):
+        return jsonify({"error": "Missing or invalid root param"}), 400
     from .indexer import CodeIndexer
-    indexer = CodeIndexer(db_path)
+    from .indexer.indexer import CODE_DB_FILENAME
+    db_path = os.path.join(root, CODE_DB_FILENAME)
+    if not os.path.exists(db_path):
+        return jsonify({"error": f"No index at {db_path}"}), 404
+    indexer = CodeIndexer(root)
     try:
         return jsonify(indexer.get_project_stats())
     finally:

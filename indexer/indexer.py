@@ -32,13 +32,50 @@ SKIP_EXTENSIONS = {
 }
 
 
-class CodeIndexer:
-    """Indexes source code files into the code graph."""
+CODE_DB_FILENAME = ".basemem.code.db"
 
-    def __init__(self, db_path: str, project_id: str = "default"):
-        self.db_path = db_path
-        self.project_id = project_id
-        self.conn = sqlite3.connect(db_path, check_same_thread=False)
+
+def find_code_projects(search_root: str = "") -> list[dict]:
+    """Scan for .basemem.code.db files and return project info."""
+    import os
+    root = Path(search_root or os.path.expanduser("~")).resolve()
+    results = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if not d.startswith(".") or d == ".config"]
+        if CODE_DB_FILENAME in filenames:
+            db_path = Path(dirpath) / CODE_DB_FILENAME
+            name = Path(dirpath).name
+            try:
+                conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+                row = conn.execute(
+                    "SELECT file_count, symbol_count FROM code_projects LIMIT 1"
+                ).fetchone()
+                conn.close()
+                fc = row[0] if row else 0
+                sc = row[1] if row else 0
+            except Exception:
+                fc, sc = 0, 0
+            results.append({
+                "name": name,
+                "root": str(dirpath),
+                "db_path": str(db_path),
+                "files": fc,
+                "symbols": sc,
+            })
+    return results
+
+
+class CodeIndexer:
+    """Indexes source code files into a per-project .basemem.code.db."""
+
+    def __init__(self, project_root: str):
+        root = Path(project_root).resolve()
+        if not root.is_dir():
+            raise ValueError(f"Not a directory: {project_root}")
+        self.project_root = str(root)
+        self.project_id = root.name
+        self.db_path = str(root / CODE_DB_FILENAME)
+        self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         ensure_code_schema(self.conn)
 
@@ -47,14 +84,14 @@ class CodeIndexer:
 
     def index_project(
         self,
-        root_path: str,
+        root_path: Optional[str] = None,
         progress_cb: Optional[Callable] = None,
         max_workers: int = 4,
     ):
         """Index an entire project directory."""
-        root = Path(root_path).resolve()
+        root = Path(root_path or self.project_root).resolve()
         if not root.is_dir():
-            raise ValueError(f"Not a directory: {root_path}")
+            raise ValueError(f"Not a directory: {root}")
 
         self._clear_project()
 
@@ -122,40 +159,29 @@ class CodeIndexer:
     def remove_file(self, file_path: str):
         """Remove symbols for a deleted file."""
         cursor = self.conn.execute(
-            "DELETE FROM code_symbols WHERE project_id = ? AND file_path = ?",
-            (self.project_id, file_path),
+            "DELETE FROM code_symbols WHERE file_path = ?",
+            (file_path,),
         )
         removed = cursor.rowcount
         self.conn.execute(
-            "DELETE FROM code_edges WHERE project_id = ? AND file_path = ?",
-            (self.project_id, file_path),
+            "DELETE FROM code_edges WHERE file_path = ?",
+            (file_path,),
         )
         self.conn.commit()
         return {"removed": removed}
 
     def list_symbols(
-        self, project_id: str = "", limit: int = 100, offset: int = 0
+        self, limit: int = 100, offset: int = 0
     ) -> list[dict]:
-        """List all code symbols, optionally filtered by project."""
-        if project_id:
-            cur = self.conn.execute(
-                """SELECT cs.id, cs.project_id, cs.file_path, cs.symbol_name, cs.symbol_type,
-                          cs.language, cs.signature, cs.start_line, cs.end_line
-                   FROM code_symbols cs
-                   WHERE cs.project_id = ?
-                   ORDER BY cs.file_path, cs.start_line
-                   LIMIT ? OFFSET ?""",
-                (project_id, limit, offset),
-            )
-        else:
-            cur = self.conn.execute(
-                """SELECT cs.id, cs.project_id, cs.file_path, cs.symbol_name, cs.symbol_type,
-                          cs.language, cs.signature, cs.start_line, cs.end_line
-                   FROM code_symbols cs
-                   ORDER BY cs.file_path, cs.start_line
-                   LIMIT ? OFFSET ?""",
-                (limit, offset),
-            )
+        """List all code symbols in this project's DB."""
+        cur = self.conn.execute(
+            """SELECT cs.id, cs.file_path, cs.symbol_name, cs.symbol_type,
+                      cs.language, cs.signature, cs.start_line, cs.end_line
+               FROM code_symbols cs
+               ORDER BY cs.file_path, cs.start_line
+               LIMIT ? OFFSET ?""",
+            (limit, offset),
+        )
         return [dict(r) for r in cur.fetchall()]
 
     def search_symbols(
@@ -163,7 +189,7 @@ class CodeIndexer:
     ) -> list[dict]:
         """Full-text search across code symbols (name, signature, docstring, file_path, type, kind)."""
         cur = self.conn.execute(
-            """SELECT cs.id, cs.project_id, cs.file_path, cs.symbol_name, cs.symbol_type,
+            """SELECT cs.id, cs.file_path, cs.symbol_name, cs.symbol_type,
                       cs.language, cs.signature, cs.start_line, cs.end_line,
                       cs.docstring
                FROM code_symbols_fts fts
@@ -177,25 +203,23 @@ class CodeIndexer:
         if results:
             return results
 
-        # Fallback: search plain-text columns (type, kind) not indexed by FTS
         like = f"%{query}%"
         cur = self.conn.execute(
-            """SELECT cs.id, cs.project_id, cs.file_path, cs.symbol_name, cs.symbol_type,
+            """SELECT cs.id, cs.file_path, cs.symbol_name, cs.symbol_type,
                       cs.language, cs.signature, cs.start_line, cs.end_line,
                       cs.docstring
                FROM code_symbols cs
-               WHERE cs.project_id = ?
-                 AND (cs.symbol_type LIKE ? OR cs.kind LIKE ?)
+               WHERE cs.symbol_type LIKE ? OR cs.kind LIKE ?
                ORDER BY cs.symbol_name
                LIMIT ?""",
-            (self.project_id, like, like, limit),
+            (like, like, limit),
         )
         return [dict(r) for r in cur.fetchall()]
 
     def get_symbol(self, symbol_id: int) -> Optional[dict]:
         cur = self.conn.execute(
-            "SELECT * FROM code_symbols WHERE id = ? AND project_id = ?",
-            (symbol_id, self.project_id),
+            "SELECT * FROM code_symbols WHERE id = ?",
+            (symbol_id,),
         )
         row = cur.fetchone()
         return dict(row) if row else None
@@ -203,30 +227,29 @@ class CodeIndexer:
     def get_symbol_by_name(self, name: str, file_path: str = "") -> list[dict]:
         if file_path:
             cur = self.conn.execute(
-                "SELECT * FROM code_symbols WHERE project_id = ? AND symbol_name = ? AND file_path = ?",
-                (self.project_id, name, file_path),
+                "SELECT * FROM code_symbols WHERE symbol_name = ? AND file_path = ?",
+                (name, file_path),
             )
         else:
             cur = self.conn.execute(
-                "SELECT * FROM code_symbols WHERE project_id = ? AND symbol_name = ?",
-                (self.project_id, name),
+                "SELECT * FROM code_symbols WHERE symbol_name = ?",
+                (name,),
             )
         return [dict(r) for r in cur.fetchall()]
 
     def get_callers(self, symbol_name: str) -> list[dict]:
         """Find symbols that call a given symbol."""
         cur = self.conn.execute(
-            """SELECT DISTINCT cs.id, cs.project_id, cs.file_path, cs.symbol_name, cs.symbol_type,
+            """SELECT DISTINCT cs.id, cs.file_path, cs.symbol_name, cs.symbol_type,
                       cs.language, cs.signature, cs.start_line, cs.end_line, cs.docstring,
                       ce.line_number, ce.file_path AS edge_file, ce.from_name
                FROM code_edges ce
                JOIN code_symbols cs ON cs.id = ce.from_symbol_id
                WHERE ce.edge_type = 'calls'
-                 AND ce.project_id = ?
                  AND ce.to_name = ?
                  AND ce.from_symbol_id > 0
                LIMIT 50""",
-            (self.project_id, symbol_name),
+            (symbol_name,),
         )
         return [dict(r) for r in cur.fetchall()]
 
@@ -238,12 +261,11 @@ class CodeIndexer:
                    FROM code_edges ce
                    JOIN code_symbols cs ON cs.id = ce.from_symbol_id
                    WHERE ce.edge_type = 'calls'
-                     AND ce.project_id = ?
                      AND ce.file_path = ?
                      AND cs.symbol_name = ?
                      AND ce.from_symbol_id > 0
                    LIMIT 50""",
-                (self.project_id, file_path, symbol_name),
+                (file_path, symbol_name),
             )
         else:
             cur = self.conn.execute(
@@ -251,11 +273,10 @@ class CodeIndexer:
                    FROM code_edges ce
                    JOIN code_symbols cs ON cs.id = ce.from_symbol_id
                    WHERE ce.edge_type = 'calls'
-                     AND ce.project_id = ?
                      AND cs.symbol_name = ?
                      AND ce.from_symbol_id > 0
                    LIMIT 50""",
-                (self.project_id, symbol_name),
+                (symbol_name,),
             )
         return [dict(r) for r in cur.fetchall()]
 
@@ -269,10 +290,8 @@ class CodeIndexer:
         if not row:
             return {"indexed": False}
         result = dict(row)
-        # Count edges
         ec = self.conn.execute(
-            "SELECT COUNT(*) as c FROM code_edges WHERE project_id = ?",
-            (self.project_id,),
+            "SELECT COUNT(*) as c FROM code_edges"
         ).fetchone()
         result["edges"] = ec["c"] if ec else 0
         result["indexed"] = True
@@ -281,9 +300,9 @@ class CodeIndexer:
     # ── Internal ──────────────────────────────────────────────────
 
     def _clear_project(self):
-        self.conn.execute("DELETE FROM code_symbols WHERE project_id = ?", (self.project_id,))
-        self.conn.execute("DELETE FROM code_edges WHERE project_id = ?", (self.project_id,))
-        self.conn.execute("DELETE FROM code_symbols_fts WHERE rowid IN (SELECT id FROM code_symbols WHERE project_id = ?)", (self.project_id,))
+        self.conn.execute("DELETE FROM code_symbols")
+        self.conn.execute("DELETE FROM code_edges")
+        self.conn.execute("DELETE FROM code_symbols_fts")
         self.conn.commit()
 
     def _discover_files(self, root: Path):

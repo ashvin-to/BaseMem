@@ -105,13 +105,15 @@ If your host supports MCP, the server at `src/basemem/mcp/server.py` exposes the
 - `compute_similarity(note_id_a, note_id_b)` — returns both notes for agent to judge similarity
 - `rerank(query, note_ids)` — returns query + notes for agent to reorder by relevance
 
-**Code Intelligence** (tree-sitter powered)
-- `code_init(project_root)` — index a project's source code into the code knowledge graph
-- `code_search(query, limit)` — search code symbols by name or signature
-- `code_node(symbol_identifier)` — get full details of a code symbol (callers, callees, location)
-- `code_callers(symbol_name)` — find all callers of a function
-- `code_callees(symbol_name, file_path)` — find what a function calls
-- `code_status()` — show indexing stats
+**Code Intelligence** (tree-sitter powered, per-project `.basemem.code.db`)
+- `code_init(project_root)` — index a project; stores `.basemem.code.db` in project root
+- `code_search(project_root, query, limit)` — search code symbols by name or signature
+- `code_node(project_root, symbol_identifier)` — get full details of a code symbol
+- `code_callers(project_root, symbol_name)` — find all callers of a function
+- `code_callees(project_root, symbol_name, file_path)` — find what a function calls
+- `code_list(project_root, limit, offset)` — list all indexed symbols
+- `code_status(project_root)` — show indexing stats
+- `code_list_projects(search_root)` — scan filesystem for all indexed projects
 
 **Graph Lifecycle**
 - `edge_decay(factor, planet)` — multiply all auto-link weights by factor
@@ -178,14 +180,16 @@ When `add_note` is called, the new note is automatically linked to existing note
    - `kb edge decay/prune` — graph lifecycle management
    - `kb export` / `kb import` — multi-device sync
 
-5. **Code Intelligence** (`indexer/`)
-   - `kb code init <path>` — index a project's source code with tree-sitter
-   - `kb code search <query>` — search code symbols by name or signature
-   - `kb code node <id|name>` — full symbol details with callers/callees
-   - `kb code callers <symbol>` — find what calls a function
-   - `kb code callees <symbol>` — find what a function calls
-   - `kb code status` — show indexing stats
-   - Auto-syncs on file changes via watchdog
+5. **Code Intelligence** (`indexer/`) — per-project `.basemem.code.db` in project root
+   - `kb code init [path] [--watch]` — index a project; `--watch` auto-reindexes on file changes
+   - `kb code search <query> --root <path>` — search code symbols (defaults to cwd)
+   - `kb code node <id|name> --root <path>` — full symbol details with callers/callees
+   - `kb code callers <symbol> --root <path>` — find what calls a function
+   - `kb code callees <symbol> --root <path>` — find what a function calls
+   - `kb code list --root <path>` — list all indexed symbols (pagination via `--limit`/`--offset`)
+   - `kb code status --root <path>` — show indexing stats
+   - `kb code list-projects [--search-root]` — scan filesystem for all indexed projects
+   - Run `kb code init` once per project before searching; `list-projects` discovers them
 
 ## Project Structure
 

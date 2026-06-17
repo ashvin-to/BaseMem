@@ -45,27 +45,48 @@ BaseMem tools are loaded lazily. Use `call_mcp_tool` with `ServerName: "basemem-
 - `get_node` -> Arguments: `{"node_id": "..."}`
 - `read_planet` -> Arguments: `{"topic": "..."}`
 
-## Code Intelligence (tree-sitter)
+## Code Intelligence (tree-sitter) — Token Efficiency Rule
 
-The project has a code indexer (`basemem.indexer`) that parses source code into a symbol graph via tree-sitter (306 languages). Custom queries for Python/JS/TS/TSX/Rust give richer extraction — all other languages get basic symbols via the language-pack's auto-fallback. Use it when the user asks about code structure, callers, callees, or searching symbols.
+The project has a code indexer (`basemem.indexer`) that parses source code into a symbol graph via tree-sitter (306 languages). Custom queries for Python/JS/TS/TSX/Rust give richer extraction — all other languages get basic symbols via the language-pack's auto-fallback.
+
+### ⚠️ CRITICAL RULE: Use Code Tools, NOT File Reads
+
+When you need to understand code structure (find a function, trace callers, check what a function calls, list symbols in a file):
+
+**DO**: `code_search("/path/to/project", "function_name")` — 1 MCP call, ~200 tokens
+
+**DO NOT**: Read source files directly — that dumps hundreds of lines into context
+
+**Why**: `code_node` returns the function's signature, docstring, file location, callers, and callees in ~500 tokens. Reading the same source file to extract this information costs 5-20x more tokens. The graph already knows the structure — use it.
+
+**Workflow**:
+1. `code_search` to find the symbol
+2. `code_node` to get full details (signature, location, callers, callees)
+3. Only read the file if you actually need the full implementation body
+4. `code_callers` / `code_callees` to trace dependencies without reading anything
+
+### Per-Project Code DB
+Each project stores its own `.basemem.code.db` in the project root. **You must `code_init` a project before searching it.**
 
 ### Shell Commands (via `execute_command`)
-- `kb code search <query>` — find functions/classes by name
-- `kb code node <id|name>` — file, signature, docstring, callers/callees
-- `kb code callers <function>` — what calls a given symbol
-- `kb code callees <function>` — what a symbol calls
-- `kb code init <path>` — index or re-index a project
-- `kb code status` — show indexing stats
+- `kb code init [path] [--watch]` — index a project; `--watch` auto-reindexes on file changes
+- `kb code search <query> --root <path>` — search symbols (defaults to cwd)
+- `kb code node <id|name> --root <path>` — file, signature, docstring, callers/callees
+- `kb code callers <function> --root <path>` — what calls a given symbol
+- `kb code callees <function> --root <path>` — what a symbol calls
+- `kb code list --root <path>` — list indexed symbols
+- `kb code status --root <path>` — show indexing stats
+- `kb code list-projects [--search-root]` — scan filesystem for all indexed projects
 
-### MCP Tools (on basemem-memory server)
-- `code_init(project_root)` — index a project
-- `code_search(query, limit)` — search symbols
-- `code_node(symbol_identifier)` — symbol details
-- `code_callers(symbol_name)` — find callers
-- `code_callees(symbol_name)` — find callees
-- `code_status()` — indexing stats
-
-All tools read/write the same `basemem.db` — no sync needed.
+### MCP Tools (on basemem-memory server) — all require `project_root`
+- `code_init(project_root)` — index a project into `.basemem.code.db`
+- `code_search(project_root, query, limit)` — search symbols
+- `code_node(project_root, symbol_identifier)` — symbol details
+- `code_callers(project_root, symbol_name)` — find callers
+- `code_callees(project_root, symbol_name)` — find callees
+- `code_list(project_root, limit, offset)` — list symbols
+- `code_status(project_root)` — indexing stats
+- `code_list_projects(search_root)` — discover all indexed projects on the system
 
 ## Red Flags
 
@@ -86,6 +107,8 @@ If you find yourself thinking any of the following, STOP and check memory instea
 | "I need to be helpful first" | Being helpful means not repeating past mistakes |
 | "I'll do it in the background" | You can't; check synchronously before your first response |
 | "This doesn't apply to coding tasks" | Memory applies to every topic |
+| "I'll read the file to find the function" | Use `code_search` + `code_node` instead — graph queries cost 5-20x fewer tokens than file reads |
+| "I need to see the source to understand it" | You need the signature + callers + callees, not the full implementation |
 
 ## Instruction Priority
 

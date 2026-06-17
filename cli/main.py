@@ -587,40 +587,67 @@ def code():
     pass
 
 
+def _get_code_indexer(project_root: str):
+    """Create a CodeIndexer from a project root directory."""
+    import os
+    from indexer import CodeIndexer, CODE_DB_FILENAME
+    root = os.path.abspath(project_root)
+    if not os.path.isdir(root):
+        click.echo(f"[!] Not a directory: {root}")
+        return None
+    db_path = os.path.join(root, CODE_DB_FILENAME)
+    if not os.path.exists(db_path):
+        click.echo(f"[!] No code index found at {db_path}. Run `kb code init {root}` first.")
+        return None
+    return CodeIndexer(root)
+
+
 @code.command("init")
 @click.argument('project_root', required=False, default='.')
 @click.option('--workers', default=4, help='Number of parallel workers')
-@click.pass_context
-def code_init(ctx, project_root, workers):
-    """Index a project's source code into the knowledge graph."""
+@click.option('--watch', is_flag=True, help='Watch for file changes and auto-reindex')
+def code_init(project_root, workers, watch):
+    """Index a project into a per-project .basemem.code.db."""
     import os
+    import signal
+    from indexer import CodeIndexer
     root = os.path.abspath(project_root)
     if not os.path.isdir(root):
         click.echo(f"[!] Not a directory: {root}")
         return
-    from indexer import CodeIndexer
-    indexer = CodeIndexer(ctx.obj['db'])
+    indexer = CodeIndexer(root)
     try:
         with click.progressbar(length=1, label='Indexing...') as bar:
-            result = indexer.index_project(root, max_workers=workers)
+            result = indexer.index_project(max_workers=workers)
             bar.update(1)
         click.echo(f"[ok] Indexed {result['files']} files, {result['symbols']} symbols, {result['edges']} edges in {result['elapsed']:.1f}s")
+        click.echo(f"     DB: {indexer.db_path}")
+
+        if watch:
+            from ..indexer.watcher import CodeGraphWatcher
+            watcher = CodeGraphWatcher(root, indexer)
+            watcher.start()
+            click.echo(f" Watching {root} for changes (Ctrl+C to stop)...")
+            signal.signal(signal.SIGINT, lambda s, f: (watcher.stop(), exit(0)))
+            signal.pause()
     finally:
-        indexer.close()
+        if not watch:
+            indexer.close()
 
 
 @code.command("list")
+@click.option('--root', default='.', help='Project root directory')
 @click.option('--limit', default=100, type=int, help='Max symbols')
 @click.option('--offset', default=0, type=int, help='Pagination offset')
-@click.pass_context
-def code_list(ctx, limit, offset):
-    """List all indexed code symbols."""
-    from indexer import CodeIndexer
-    indexer = CodeIndexer(ctx.obj['db'])
+def code_list(root, limit, offset):
+    """List all indexed code symbols in a project."""
+    indexer = _get_code_indexer(root)
+    if indexer is None:
+        return
     try:
         stats = indexer.get_project_stats()
         if not stats.get("indexed"):
-            click.echo("No code project indexed yet. Run `kb code init`.")
+            click.echo("No code indexed.")
             return
         results = indexer.list_symbols(limit=limit, offset=offset)
         if not results:
@@ -637,16 +664,17 @@ def code_list(ctx, limit, offset):
 
 @code.command("search")
 @click.argument('query')
+@click.option('--root', default='.', help='Project root directory')
 @click.option('--limit', default=20, type=int)
-@click.pass_context
-def code_search(ctx, query, limit):
+def code_search(query, root, limit):
     """Search code symbols by name or signature."""
-    from indexer import CodeIndexer
-    indexer = CodeIndexer(ctx.obj['db'])
+    indexer = _get_code_indexer(root)
+    if indexer is None:
+        return
     try:
         results = indexer.search_symbols(query, limit=limit)
         if not results:
-            click.echo("No matching symbols found. Run `kb code init` first.")
+            click.echo(f"No symbols match '{query}'.")
             return
         click.echo(f"Found {len(results)} symbol(s):\n")
         for r in results:
@@ -662,11 +690,12 @@ def code_search(ctx, query, limit):
 
 @code.command("node")
 @click.argument('identifier')
-@click.pass_context
-def code_node(ctx, identifier):
+@click.option('--root', default='.', help='Project root directory')
+def code_node(identifier, root):
     """Show details of a code symbol by ID or name."""
-    from indexer import CodeIndexer
-    indexer = CodeIndexer(ctx.obj['db'])
+    indexer = _get_code_indexer(root)
+    if indexer is None:
+        return
     try:
         sym = None
         try:
@@ -711,11 +740,12 @@ def code_node(ctx, identifier):
 
 @code.command("callers")
 @click.argument('symbol_name')
-@click.pass_context
-def code_callers(ctx, symbol_name):
+@click.option('--root', default='.', help='Project root directory')
+def code_callers(symbol_name, root):
     """Find what calls a given symbol."""
-    from indexer import CodeIndexer
-    indexer = CodeIndexer(ctx.obj['db'])
+    indexer = _get_code_indexer(root)
+    if indexer is None:
+        return
     try:
         results = indexer.get_callers(symbol_name)
         if not results:
@@ -730,12 +760,13 @@ def code_callers(ctx, symbol_name):
 
 @code.command("callees")
 @click.argument('symbol_name')
+@click.option('--root', default='.', help='Project root directory')
 @click.option('--file-path', help='Limit to a specific file')
-@click.pass_context
-def code_callees(ctx, symbol_name, file_path):
+def code_callees(symbol_name, root, file_path):
     """Find what a given symbol calls."""
-    from indexer import CodeIndexer
-    indexer = CodeIndexer(ctx.obj['db'])
+    indexer = _get_code_indexer(root)
+    if indexer is None:
+        return
     try:
         results = indexer.get_callees(symbol_name, file_path or "")
         if not results:
@@ -749,24 +780,45 @@ def code_callees(ctx, symbol_name, file_path):
 
 
 @code.command("status")
-@click.pass_context
-def code_status(ctx):
-    """Show code graph indexing stats."""
-    from indexer import CodeIndexer
-    indexer = CodeIndexer(ctx.obj['db'])
+@click.option('--root', default='.', help='Project root directory')
+def code_status(root):
+    """Show code graph indexing stats for a project."""
+    indexer = _get_code_indexer(root)
+    if indexer is None:
+        return
     try:
         stats = indexer.get_project_stats()
         if not stats.get("indexed"):
-            click.echo("No code project indexed yet. Run `kb code init <project_root>`.")
+            click.echo("No code indexed. Run `kb code init` first.")
             return
         click.echo(f"Project: {stats.get('name', '?')}")
         click.echo(f"  Root: {stats.get('root_path', '?')}")
+        click.echo(f"  DB: {indexer.db_path}")
         click.echo(f"  Files: {stats['file_count']}")
         click.echo(f"  Symbols: {stats['symbol_count']}")
         click.echo(f"  Edges: {stats.get('edges', 0)}")
         click.echo(f"  Last indexed: {stats.get('last_indexed', 'never')}")
     finally:
         indexer.close()
+
+
+@code.command("list-projects")
+@click.option('--search-root', default='~', help='Directory to scan for .basemem.code.db files')
+def code_list_projects(search_root):
+    """Scan for all indexed projects on the system."""
+    import os
+    from ..indexer.indexer import find_code_projects
+    root = os.path.abspath(os.path.expanduser(search_root))
+    click.echo(f"Scanning {root} for .basemem.code.db...")
+    projects = find_code_projects(root)
+    if not projects:
+        click.echo("No indexed projects found.")
+        return
+    click.echo(f"\nFound {len(projects)} project(s):\n")
+    for p in sorted(projects, key=lambda x: x["name"]):
+        click.echo(f"  {p['name']}")
+        click.echo(f"    Root: {p['root']}")
+        click.echo(f"    Symbols: {p['symbols']}  Files: {p['files']}")
 
 
 # ── End Code Graph commands ─────────────────────────────────

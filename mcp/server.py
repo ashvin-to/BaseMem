@@ -963,44 +963,29 @@ def edge_prune(threshold: float = 0.05, planet: str | None = None) -> str:
 # ── Code Graph MCP Tools ──────────────────────────────────────────
 
 
-_CODE_INDEXER = None  # Global or re-created per call
-
-
-def _get_code_indexer(project_root: str = "") -> "CodeIndexer | None":
-    """Get or create a CodeIndexer for the given project root."""
-    global _CODE_INDEXER
-    try:
-        from indexer import CodeIndexer
-        db_path = _resolve_db_path()
-        if _CODE_INDEXER is None:
-            _CODE_INDEXER = CodeIndexer(db_path)
-        return _CODE_INDEXER
-    except Exception as e:
-        return None
-
-
 @server.tool(
     description=(
-        "Index or re-index a project's source code into the code knowledge graph. "
+        "Index or re-index a project's source code into a per-project .basemem.code.db. "
         "Scans source files using tree-sitter (306 languages supported) "
         "and builds a symbol graph of functions, classes, methods, calls, and imports. "
-        "Run this once per project to enable code_search, code_node, etc."
+        "Run this once per project (stored in <project_root>/.basemem.code.db) "
+        "to enable code_search, code_node, etc."
     )
 )
 def code_init(project_root: str) -> str:
-    """Index a project's source code into the code knowledge graph."""
+    """Index a project's source code into a per-project .basemem.code.db."""
     import os
     if not os.path.isdir(project_root):
         return f"Directory not found: {project_root}"
 
     from indexer import CodeIndexer
-    db_path = _resolve_db_path()
-    indexer = CodeIndexer(db_path)
+    indexer = CodeIndexer(project_root)
     try:
-        result = indexer.index_project(project_root, max_workers=4)
+        result = indexer.index_project(max_workers=4)
         return (
             f"Indexed {result['files']} files, {result['symbols']} symbols, "
-            f"{result['edges']} edges in {result['elapsed']:.1f}s"
+            f"{result['edges']} edges in {result['elapsed']:.1f}s\n"
+            f"DB: {indexer.db_path}"
         )
     finally:
         indexer.close()
@@ -1008,19 +993,23 @@ def code_init(project_root: str) -> str:
 
 @server.tool(
     description=(
-        "List all indexed code symbols, with optional project filter. "
-        "Returns symbols with file locations and line numbers."
+        "List all indexed code symbols in a project. "
+        "Returns symbols with file locations and line numbers. "
+        "Requires project_root for a project with an existing .basemem.code.db."
     )
 )
-def code_list(limit: int = 100, offset: int = 0) -> str:
-    """List all code symbols in the knowledge graph."""
-    from indexer import CodeIndexer
-    db_path = _resolve_db_path()
-    indexer = CodeIndexer(db_path)
+def code_list(project_root: str, limit: int = 100, offset: int = 0) -> str:
+    """List all code symbols in a project's .basemem.code.db."""
+    import os
+    from indexer import CodeIndexer, CODE_DB_FILENAME
+    db_path = os.path.join(project_root, CODE_DB_FILENAME)
+    if not os.path.exists(db_path):
+        return f"No code index at {db_path}. Run `code_init(\"{project_root}\")` first."
+    indexer = CodeIndexer(project_root)
     try:
         stats = indexer.get_project_stats()
         if not stats.get("indexed"):
-            return "No code project indexed yet. Run `code_init` first."
+            return "No code indexed."
         results = indexer.list_symbols(limit=limit, offset=offset)
         if not results:
             return "No symbols found."
@@ -1036,20 +1025,24 @@ def code_list(limit: int = 100, offset: int = 0) -> str:
 
 @server.tool(
     description=(
-        "Search code symbols by name or signature. "
+        "Search code symbols by name or signature in a project. "
         "Returns matching functions, classes, methods with file locations and line numbers. "
-        "Use this to find where code is defined before reading it."
+        "Requires project_root for a project with an existing .basemem.code.db. "
+        "Run code_init first to index a project."
     )
 )
-def code_search(query: str, limit: int = 20) -> str:
-    """Search for code symbols across the indexed codebase."""
-    from indexer import CodeIndexer
-    db_path = _resolve_db_path()
-    indexer = CodeIndexer(db_path)
+def code_search(project_root: str, query: str, limit: int = 20) -> str:
+    """Search for code symbols in a project's .basemem.code.db."""
+    import os
+    from indexer import CodeIndexer, CODE_DB_FILENAME
+    db_path = os.path.join(project_root, CODE_DB_FILENAME)
+    if not os.path.exists(db_path):
+        return f"No code index at {db_path}. Run `code_init` first."
+    indexer = CodeIndexer(project_root)
     try:
         results = indexer.search_symbols(query, limit=limit)
         if not results:
-            return f"No symbols match '{query}'. Try a different term or run `code_init` to index a project."
+            return f"No symbols match '{query}' in that project."
         parts = [f"Found {len(results)} symbol(s):\n"]
         for r in results:
             loc = f"{r['file_path']}:{r['start_line']}-{r['end_line']}"
@@ -1066,16 +1059,18 @@ def code_search(query: str, limit: int = 20) -> str:
     description=(
         "Get detailed information about a specific code symbol by its ID or name. "
         "Returns source file, location, full signature, docstring, and caller/callee info. "
-        "Use after code_search to drill into a specific symbol."
+        "Requires project_root for a project with an existing .basemem.code.db."
     )
 )
-def code_node(symbol_identifier: str) -> str:
-    """Get details about a specific code symbol."""
-    from indexer import CodeIndexer
-    db_path = _resolve_db_path()
-    indexer = CodeIndexer(db_path)
+def code_node(project_root: str, symbol_identifier: str) -> str:
+    """Get details about a specific code symbol in a project."""
+    import os
+    from indexer import CodeIndexer, CODE_DB_FILENAME
+    db_path = os.path.join(project_root, CODE_DB_FILENAME)
+    if not os.path.exists(db_path):
+        return f"No code index at {db_path}. Run `code_init` first."
+    indexer = CodeIndexer(project_root)
     try:
-        # Try as numeric ID first
         sym = None
         try:
             sid = int(symbol_identifier)
@@ -1085,7 +1080,7 @@ def code_node(symbol_identifier: str) -> str:
         if not sym:
             symbols = indexer.get_symbol_by_name(symbol_identifier)
             if not symbols:
-                return f"Symbol not found: {symbol_identifier}. Run `code_init` first or try `code_search`."
+                return f"Symbol not found: {symbol_identifier}."
             sym = symbols[0]
             if len(symbols) > 1:
                 parts = [f"Multiple symbols named '{symbol_identifier}':\n"]
@@ -1093,7 +1088,6 @@ def code_node(symbol_identifier: str) -> str:
                     parts.append(f"  [{s['id']}] {s['symbol_type']} in {s['file_path']}:{s['start_line']}")
                 return "\n".join(parts)
 
-        # Get callers
         callers = indexer.get_callers(sym['symbol_name'])
         callees = indexer.get_callees(sym['symbol_name'], sym['file_path'])
 
@@ -1123,14 +1117,17 @@ def code_node(symbol_identifier: str) -> str:
     description=(
         "Find all code symbols that call a given function or method name. "
         "Returns the callers with their file locations. "
-        "Use this to understand how a function is used before modifying it."
+        "Requires project_root for a project with an existing .basemem.code.db."
     )
 )
-def code_callers(symbol_name: str) -> str:
-    """Find what calls a given symbol."""
-    from indexer import CodeIndexer
-    db_path = _resolve_db_path()
-    indexer = CodeIndexer(db_path)
+def code_callers(project_root: str, symbol_name: str) -> str:
+    """Find what calls a given symbol in a project."""
+    import os
+    from indexer import CodeIndexer, CODE_DB_FILENAME
+    db_path = os.path.join(project_root, CODE_DB_FILENAME)
+    if not os.path.exists(db_path):
+        return f"No code index at {db_path}. Run `code_init` first."
+    indexer = CodeIndexer(project_root)
     try:
         results = indexer.get_callers(symbol_name)
         if not results:
@@ -1146,14 +1143,17 @@ def code_callers(symbol_name: str) -> str:
 @server.tool(
     description=(
         "Find what a given function or method calls. Shows callees with file locations. "
-        "Use this to understand a function's dependencies."
+        "Requires project_root for a project with an existing .basemem.code.db."
     )
 )
-def code_callees(symbol_name: str, file_path: str = "") -> str:
-    """Find what a given symbol calls."""
-    from indexer import CodeIndexer
-    db_path = _resolve_db_path()
-    indexer = CodeIndexer(db_path)
+def code_callees(project_root: str, symbol_name: str, file_path: str = "") -> str:
+    """Find what a given symbol calls in a project."""
+    import os
+    from indexer import CodeIndexer, CODE_DB_FILENAME
+    db_path = os.path.join(project_root, CODE_DB_FILENAME)
+    if not os.path.exists(db_path):
+        return f"No code index at {db_path}. Run `code_init` first."
+    indexer = CodeIndexer(project_root)
     try:
         results = indexer.get_callees(symbol_name, file_path)
         if not results:
@@ -1168,19 +1168,23 @@ def code_callees(symbol_name: str, file_path: str = "") -> str:
 
 @server.tool(
     description=(
-        "Show code graph indexing status and stats. "
-        "Returns how many files, symbols, and edges are indexed."
+        "Show code graph indexing status and stats for a project. "
+        "Returns how many files, symbols, and edges are indexed. "
+        "Requires project_root for a project with an existing .basemem.code.db."
     )
 )
-def code_status() -> str:
-    """Show code graph indexing status."""
-    from indexer import CodeIndexer
-    db_path = _resolve_db_path()
-    indexer = CodeIndexer(db_path)
+def code_status(project_root: str) -> str:
+    """Show code graph indexing status for a project."""
+    import os
+    from indexer import CodeIndexer, CODE_DB_FILENAME
+    db_path = os.path.join(project_root, CODE_DB_FILENAME)
+    if not os.path.exists(db_path):
+        return f"No code index at {db_path}. Run `code_init` first."
+    indexer = CodeIndexer(project_root)
     try:
         stats = indexer.get_project_stats()
         if not stats.get("indexed"):
-            return "No code project indexed yet. Run `code_init` with a project root path."
+            return "No code indexed."
         return (
             f"Project: {stats.get('name', '?')}\n"
             f"  Root: {stats.get('root_path', '?')}\n"
@@ -1191,6 +1195,29 @@ def code_status() -> str:
         )
     finally:
         indexer.close()
+
+
+@server.tool(
+    description=(
+        "Scan the filesystem for all indexed code projects (.basemem.code.db files). "
+        "Returns project names, root paths, and symbol/file counts. "
+        "Use this to discover what projects have been indexed."
+    )
+)
+def code_list_projects(search_root: str = "~") -> str:
+    """Scan for all .basemem.code.db files on the system."""
+    import os
+    from ..indexer.indexer import find_code_projects
+    root = os.path.abspath(os.path.expanduser(search_root))
+    projects = find_code_projects(root)
+    if not projects:
+        return f"No indexed projects found under {root}."
+    parts = [f"Found {len(projects)} project(s) under {root}:\n"]
+    for p in sorted(projects, key=lambda x: x["name"]):
+        parts.append(f"  **{p['name']}**")
+        parts.append(f"    Root: {p['root']}")
+        parts.append(f"    Symbols: {p['symbols']}  Files: {p['files']}")
+    return "\n".join(parts)
 
 
 # ── End Code Graph Tools ──────────────────────────────────────────
