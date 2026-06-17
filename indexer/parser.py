@@ -521,6 +521,9 @@ class CodeParser:
         _seen_ranges = set()
 
         for item in result.structure:
+            name = item.name
+            if not name or str(name).strip() == "":
+                continue
             s = item.span
             if s is None:
                 continue
@@ -542,7 +545,7 @@ class CodeParser:
 
             symbol = {
                 "file_path": file_path,
-                "symbol_name": item.name,
+                "symbol_name": str(name),
                 "symbol_type": sym_type,
                 "language": self.language,
                 "kind": kind_str.lower(),
