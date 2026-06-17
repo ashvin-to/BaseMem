@@ -136,7 +136,7 @@ class CodeIndexer:
     def search_symbols(
         self, query: str, limit: int = 20
     ) -> list[dict]:
-        """Full-text search across code symbols."""
+        """Full-text search across code symbols (name, signature, docstring, file_path, type, kind)."""
         cur = self.conn.execute(
             """SELECT cs.id, cs.project_id, cs.file_path, cs.symbol_name, cs.symbol_type,
                       cs.language, cs.signature, cs.start_line, cs.end_line,
@@ -147,6 +147,23 @@ class CodeIndexer:
                ORDER BY rank
                LIMIT ?""",
             (query, limit),
+        )
+        results = [dict(r) for r in cur.fetchall()]
+        if results:
+            return results
+
+        # Fallback: search plain-text columns (type, kind) not indexed by FTS
+        like = f"%{query}%"
+        cur = self.conn.execute(
+            """SELECT cs.id, cs.project_id, cs.file_path, cs.symbol_name, cs.symbol_type,
+                      cs.language, cs.signature, cs.start_line, cs.end_line,
+                      cs.docstring
+               FROM code_symbols cs
+               WHERE cs.project_id = ?
+                 AND (cs.symbol_type LIKE ? OR cs.kind LIKE ?)
+               ORDER BY cs.symbol_name
+               LIMIT ?""",
+            (self.project_id, like, like, limit),
         )
         return [dict(r) for r in cur.fetchall()]
 

@@ -33,6 +33,8 @@ CREATE VIRTUAL TABLE IF NOT EXISTS code_symbols_fts USING fts5(
     signature,
     docstring,
     file_path,
+    symbol_type,
+    kind,
     content=code_symbols,
     content_rowid=id
 );
@@ -68,6 +70,24 @@ CREATE TABLE IF NOT EXISTS code_projects (
 
 
 def ensure_code_schema(conn):
-    """Ensure all code graph tables exist."""
+    """Ensure all code graph tables exist, with migration support."""
     conn.executescript(CODE_SCHEMA_SQL)
+
+    # Migration: FTS5 older versions only had 4 columns (missing symbol_type, kind)
+    try:
+        cols = conn.execute("PRAGMA table_info(code_symbols_fts)").fetchall()
+        col_names = {r[1] for r in cols}
+        missing = {"symbol_type", "kind"} - col_names
+        if missing:
+            fts_def = (
+                "CREATE VIRTUAL TABLE code_symbols_fts USING fts5("
+                "symbol_name, signature, docstring, file_path, symbol_type, kind, "
+                "content=code_symbols, content_rowid=id)"
+            )
+            conn.execute("DROP TABLE IF EXISTS code_symbols_fts")
+            conn.execute(fts_def)
+            conn.execute("INSERT INTO code_symbols_fts(code_symbols_fts) VALUES('rebuild')")
+    except Exception:
+        pass  # pragma: no cover — first-run tables always have correct columns
+
     conn.commit()

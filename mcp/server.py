@@ -982,7 +982,7 @@ def _get_code_indexer(project_root: str = "") -> "CodeIndexer | None":
 @server.tool(
     description=(
         "Index or re-index a project's source code into the code knowledge graph. "
-        "Scans all supported source files (Python, JS, TS, Rust, etc.) using tree-sitter "
+        "Scans source files using tree-sitter (306 languages supported) "
         "and builds a symbol graph of functions, classes, methods, calls, and imports. "
         "Run this once per project to enable code_search, code_node, etc."
     )

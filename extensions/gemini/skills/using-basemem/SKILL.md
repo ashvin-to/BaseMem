@@ -47,7 +47,7 @@ BaseMem tools are loaded lazily. Use `call_mcp_tool` with `ServerName: "basemem-
 
 ## Code Intelligence (tree-sitter)
 
-The project has a code indexer (`basemem.indexer`) that parses Python/JS/TS/Rust into a symbol graph via tree-sitter. Use it when the user asks about code structure, callers, callees, or searching symbols.
+The project has a code indexer (`basemem.indexer`) that parses source code into a symbol graph via tree-sitter (306 languages). Custom queries for Python/JS/TS/TSX/Rust give richer extraction — all other languages get basic symbols via the language-pack's auto-fallback. Use it when the user asks about code structure, callers, callees, or searching symbols.
 
 ### Shell Commands (via `execute_command`)
 - `kb code search <query>` — find functions/classes by name

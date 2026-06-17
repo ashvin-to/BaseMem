@@ -196,7 +196,7 @@ BaseMem/
 │   │   ├── db.py              # SQLite storage manager
 │   │   └── sessions.py        # SessionManager — planets/notes/links (shared by all interfaces)
 │   ├── indexer/                # Code intelligence module (tree-sitter)
-│   │   ├── parser.py          # Code parser: tree-sitter queries for Python/JS/TS/Rust
+│   │   ├── parser.py          # Code parser: custom queries for 5 langs, fallback for 300+ (tree-sitter)
 │   │   ├── indexer.py         # Directory walker, symbol/edge persistence, FTS5 search
 │   │   ├── schema.py          # code_symbols / code_edges / code_projects tables
 │   │   ├── watcher.py         # Watchdog-based auto-sync on file changes
@@ -316,7 +316,7 @@ A weighted edge between two planets.
 - Multi-device sync via JSON export/import
 
 ### Phase 3 (Complete)
-- Code intelligence: tree-sitter based code parser for Python, JavaScript, TypeScript, Rust
+- Code intelligence: tree-sitter based code parser (custom queries for Python/JS/TS/TSX/Rust, auto-fallback for 300+ languages)
 - Code symbol graph (functions, classes, methods, calls, imports) stored in same DB
 - MCP tools for code search, symbol lookup, caller/callee analysis
 - CLI commands under `kb code` group for code initialization and querying
