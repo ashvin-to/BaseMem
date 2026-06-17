@@ -6,7 +6,7 @@ import threading
 from pathlib import Path
 from typing import Callable, Optional
 
-from .parser import SUPPORTED_LANGUAGES
+from .parser import CodeParser
 
 logger = logging.getLogger(__name__)
 
@@ -58,8 +58,7 @@ class CodeGraphEventHandler(FileSystemEventHandler):
             self._queue("deleted", event.src_path)
 
     def _is_source_file(self, path: str) -> bool:
-        ext = Path(path).suffix.lower()
-        return ext in SUPPORTED_LANGUAGES
+        return CodeParser.supported_extension(Path(path).suffix.lower())
 
     def _queue(self, kind: str, path: str):
         with self._lock:
