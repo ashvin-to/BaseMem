@@ -1008,6 +1008,34 @@ def code_init(project_root: str) -> str:
 
 @server.tool(
     description=(
+        "List all indexed code symbols, with optional project filter. "
+        "Returns symbols with file locations and line numbers."
+    )
+)
+def code_list(limit: int = 100, offset: int = 0) -> str:
+    """List all code symbols in the knowledge graph."""
+    from indexer import CodeIndexer
+    db_path = _resolve_db_path()
+    indexer = CodeIndexer(db_path)
+    try:
+        stats = indexer.get_project_stats()
+        if not stats.get("indexed"):
+            return "No code project indexed yet. Run `code_init` first."
+        results = indexer.list_symbols(limit=limit, offset=offset)
+        if not results:
+            return "No symbols found."
+        total = stats.get("symbol_count", 0)
+        parts = [f"Symbols {offset+1}-{offset+len(results)} of {total}:\n"]
+        for r in results:
+            loc = f"{r['file_path']}:{r['start_line']}-{r['end_line']}"
+            parts.append(f"  [{r['id']}] {r['symbol_type']} **{r['symbol_name']}**  ({loc})")
+        return "\n".join(parts)
+    finally:
+        indexer.close()
+
+
+@server.tool(
+    description=(
         "Search code symbols by name or signature. "
         "Returns matching functions, classes, methods with file locations and line numbers. "
         "Use this to find where code is defined before reading it."
