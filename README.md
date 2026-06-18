@@ -11,7 +11,7 @@ The critical integration rule:
 BaseMem exposes a canonical pre-answer context command:
 
 ```bash
-kb agent-context --topic "project-name" --query "what am I working on?"
+mem agent-context --topic "project-name" --query "what am I working on?"
 ```
 
 ## Quick Start
@@ -22,46 +22,46 @@ kb agent-context --topic "project-name" --query "what am I working on?"
 chmod +x setup.sh && ./setup.sh
 ```
 
-This installs the `kb` CLI globally and configures MCP for Claude Code, Codex, Cursor, Windsurf, and Gemini.
+This installs the `mem` CLI globally and configures MCP for Claude Code, Cursor, Windsurf, Gemini, and Codex.
 
 ### Basic Usage
 
 ```bash
 # Create a planet (a topic/workspace with goals and state)
-kb planet create "my-project" --goal "Build feature X" --state "Research phase"
+mem planet create "my-project" --goal "Build feature X" --state "Research phase"
 
 # Update its status and next steps
-kb planet set "my-project" --status active --next "Read the docs"
+mem planet set "my-project" --status active --next "Read the docs"
 
 # Add a decision or fact
-kb note add "my-project" --type decision -m "Use SQLite for persistence"
+mem note add "my-project" --type decision -m "Use SQLite for persistence"
 
 # Get agent-ready context before answering
-kb agent-context --topic "my-project" --query "what did we decide?"
+mem agent-context --topic "my-project" --query "what did we decide?"
 
 # Read the full planet details
-kb planet read "my-project"
+mem planet read "my-project"
 
 # Log a turn (lightweight activity record)
-kb session turn --topic "my-project" --message "Reviewed the PR" --agent-id "codex"
+mem session turn --topic "my-project" --message "Reviewed the PR" --agent-id "codex"
 ```
 
 ### Search
 
 ```bash
-kb search "what is machine learning"
+mem search "what is machine learning"
 ```
 
 ### View your planets
 
 ```bash
-kb session context
+mem session context
 ```
 
 ### Ingest AI chat history
 
 ```bash
-kb session sync "topic-name" --agent-id "your-unique-suffix"
+mem session sync "topic-name" --agent-id "your-unique-suffix"
 ```
 
 All CLI commands write to the same `planets` and `notes` tables that the MCP tools use — no sync needed.
@@ -72,7 +72,7 @@ The agent does not automatically know your knowledge base. Your launcher and hos
 
 ### Installed CLI
 
-Running `./setup.sh` installs `kb` and configures MCP for Claude Code, Codex, Cursor, Windsurf, and Gemini, plus hooks and plugins for automatic memory retrieval.
+Running `./setup.sh` installs `mem` and configures MCP for Claude Code, Cursor, Windsurf, Gemini, and Codex, plus hooks and plugins for automatic memory retrieval.
 
 ### MCP Tools
 
@@ -170,26 +170,26 @@ When `add_note` is called, the new note is automatically linked to existing note
    - Chat logger at `/log-chat`
 
 4. **CLI Interface** (`cli/main.py`)
-   - `kb planet create/read/set/delete/compact/summarize/link/set-state`
-   - `kb note add/link/neighbors`
-   - `kb search` — full-text search across planets, notes, and nodes
-   - `kb agent-context` — compact pre-answer memory block
-   - `kb list-planets` — list all planets
-   - `kb session turn/context/read/sync`
-   - `kb recompute-links` — recalculate Jaccard similarity for all note pairs
-   - `kb edge decay/prune` — graph lifecycle management
-   - `kb export` / `kb import` — multi-device sync
+   - `mem planet create/read/set/delete/compact/summarize/link/set-state`
+   - `mem note add/link/neighbors`
+   - `mem search` — full-text search across planets, notes, and nodes
+   - `mem agent-context` — compact pre-answer memory block
+   - `mem list-planets` — list all planets
+   - `mem session turn/context/read/sync`
+   - `mem recompute-links` — recalculate Jaccard similarity for all note pairs
+   - `mem edge decay/prune` — graph lifecycle management
+   - `mem export` / `mem import` — multi-device sync
 
 5. **Code Intelligence** (`indexer/`) — per-project `.basemem.code.db` in project root
-   - `kb code init [path] [--watch]` — index a project; `--watch` auto-reindexes on file changes
-   - `kb code search <query> --root <path>` — search code symbols (defaults to cwd)
-   - `kb code node <id|name> --root <path>` — full symbol details with callers/callees
-   - `kb code callers <symbol> --root <path>` — find what calls a function
-   - `kb code callees <symbol> --root <path>` — find what a function calls
-   - `kb code list --root <path>` — list all indexed symbols (pagination via `--limit`/`--offset`)
-   - `kb code status --root <path>` — show indexing stats
-   - `kb code list-projects [--search-root]` — scan filesystem for all indexed projects
-   - Run `kb code init` once per project before searching; `list-projects` discovers them
+   - `mem code init [path] [--watch]` — index a project; `--watch` auto-reindexes on file changes
+   - `mem code search <query> --root <path>` — search code symbols (defaults to cwd)
+   - `mem code node <id|name> --root <path>` — full symbol details with callers/callees
+   - `mem code callers <symbol> --root <path>` — find what calls a function
+   - `mem code callees <symbol> --root <path>` — find what a function calls
+   - `mem code list --root <path>` — list all indexed symbols (pagination via `--limit`/`--offset`)
+   - `mem code status --root <path>` — show indexing stats
+   - `mem code list-projects [--search-root]` — scan filesystem for all indexed projects
+   - Run `mem code init` once per project before searching; `list-projects` discovers them
 
 ## Project Structure
 
@@ -210,7 +210,7 @@ BaseMem/
 │   ├── cli/
 │   │   └── main.py            # CLI commands (same planets/notes tables)
 │   ├── server.py               # Flask REST API + D3 visualization
-│   ├── _entry.py               # kb entry point
+│   ├── _entry.py               # mem entry point
 │   └── __init__.py
 ├── graph_visualization.html    # Interactive D3 Web UI
 ├── bookmarklet-inject.html     # Drag-to-bookmarks memory injector
@@ -298,40 +298,6 @@ A weighted edge between two planets.
     "weight": "float",           # 0-1
 }
 ```
-
-## System Evolution
-
-### Phase 1 (Complete)
-- SQLite + FTS5 storage
-- Basic CLI interface
-
-### Phase 2 (Complete)
-- Unified planets/notes tables shared between CLI, MCP, and Flask
-- 31 MCP tools for full agent integration
-- MCP auto-config for Claude Code, opencode, Cursor, Windsurf, Gemini, Codex
-- Planet schema with status, goal, state, files, commands, handoff, aliases, memory tiers
-- Full-text search across planets, notes, and legacy nodes
-- D3.js visualization with planets panel, weighted edges, and graph-aware exploration
-- Note auto-linking via Jaccard similarity with edge reinforcement
-- Planet linking with weighted relations
-- Memory tiers (hot/warm/compacted) with agent-driven summarization
-- Edge decay and pruning for graph lifecycle management
-- Bookmarklet inject/logger for browser-based memory
-- Multi-device sync via JSON export/import
-
-### Phase 3 (Complete)
-- Code intelligence: tree-sitter based code parser (custom queries for Python/JS/TS/TSX/Rust, auto-fallback for 300+ languages)
-- Code symbol graph (functions, classes, methods, calls, imports) stored in same DB
-- MCP tools for code search, symbol lookup, caller/callee analysis
-- CLI commands under `kb code` group for code initialization and querying
-- Flask API endpoints for code graph
-- Auto-sync via watchdog file watcher
-
-### Phase 4 (Planned)
-- Embedding-backed similarity layer (hybrid lexical + semantic, agent-assisted)
-- Cross-encoder reranking for search (agent-driven)
-- Edge decay scheduling (time-based, automated)
-- Link agent decision notes directly to code symbols (bidirectional)
 
 ## Configuration
 

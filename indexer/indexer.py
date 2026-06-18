@@ -38,30 +38,45 @@ CODE_DB_FILENAME = ".basemem.code.db"
 def find_code_projects(search_root: str = "") -> list[dict]:
     """Scan for .basemem.code.db files and return project info."""
     import os
-    root = Path(search_root or os.path.expanduser("~")).resolve()
+    if search_root:
+        roots = [Path(p.strip()).resolve() for p in search_root.split(",") if p.strip()]
+    else:
+        home = os.path.expanduser("~")
+        roots = [Path(home)]
+        for extra in ["/mnt", "/media", "/opt", "/var/lib"]:
+            p = Path(extra)
+            if p.is_dir():
+                roots.append(p)
+    SYSTEM_DIRS = {"proc", "sys", "dev", "run", "lost+found", "boot", "lib", "lib64", "sbin", "bin"}
     results = []
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if not d.startswith(".") or d == ".config"]
-        if CODE_DB_FILENAME in filenames:
-            db_path = Path(dirpath) / CODE_DB_FILENAME
-            name = Path(dirpath).name
-            try:
-                conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-                row = conn.execute(
-                    "SELECT file_count, symbol_count FROM code_projects LIMIT 1"
-                ).fetchone()
-                conn.close()
-                fc = row[0] if row else 0
-                sc = row[1] if row else 0
-            except Exception:
-                fc, sc = 0, 0
-            results.append({
-                "name": name,
-                "root": str(dirpath),
-                "db_path": str(db_path),
-                "files": fc,
-                "symbols": sc,
-            })
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = [
+                d for d in dirnames
+                if (not d.startswith(".") or d == ".config") and d not in SYSTEM_DIRS
+            ]
+            if CODE_DB_FILENAME in filenames:
+                db_path = Path(dirpath) / CODE_DB_FILENAME
+                name = Path(dirpath).name
+                try:
+                    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+                    row = conn.execute(
+                        "SELECT file_count, symbol_count FROM code_projects LIMIT 1"
+                    ).fetchone()
+                    conn.close()
+                    fc = row[0] if row else 0
+                    sc = row[1] if row else 0
+                except Exception:
+                    fc, sc = 0, 0
+                results.append({
+                    "name": name,
+                    "root": str(dirpath),
+                    "db_path": str(db_path),
+                    "files": fc,
+                    "symbols": sc,
+                })
     return results
 
 

@@ -73,3 +73,4 @@ BOOKMARKLET.md
 
 # Frontend (removed)
 *.html
+.basemem.code.db

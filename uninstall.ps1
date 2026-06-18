@@ -124,6 +124,13 @@ Remove-IfContainsMarker -FilePath "$env:USERPROFILE\.codex\CODEX.md" -Marker "Ba
 Remove-IfContainsMarker -FilePath "$env:USERPROFILE\.claude\CLAUDE.md" -Marker "BaseMem"
 Remove-IfContainsMarker -FilePath "$env:USERPROFILE\.config\opencode\AGENTS.md" -Marker "BaseMem"
 
+# Remove Gemini AGENTS.md
+$agentsMd = "$env:USERPROFILE\.gemini\config\AGENTS.md"
+if (Test-Path $agentsMd) {
+    Remove-Item -Force $agentsMd
+    Write-Host "  Removed $agentsMd" -ForegroundColor Gray
+}
+
 # Remove Gemini extension
 Write-Host "Removing Gemini extension..." -ForegroundColor Yellow
 $geminiExt = "$env:USERPROFILE\.gemini\extensions\00-basemem"

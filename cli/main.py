@@ -827,14 +827,11 @@ def code_status(root):
 
 
 @code.command("list-projects")
-@click.option('--search-root', default='~', help='Directory to scan for .basemem.code.db files')
+@click.option('--search-root', default='', help='Comma-separated paths to scan (default: ~,/mnt,/media,/opt)')
 def code_list_projects(search_root):
     """Scan for all indexed projects on the system."""
-    import os
     from ..indexer.indexer import find_code_projects
-    root = os.path.abspath(os.path.expanduser(search_root))
-    click.echo(f"Scanning {root} for .basemem.code.db...")
-    projects = find_code_projects(root)
+    projects = find_code_projects(search_root)
     if not projects:
         click.echo("No indexed projects found.")
         return

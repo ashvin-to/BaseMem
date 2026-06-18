@@ -1,16 +1,19 @@
 #!/bin/bash
 
-# BaseMem Galaxy: Production Setup v6
-# Installs kb, wrapper launchers, and optional startup guidance for Gemini/Codex/Claude.
+# BaseMem Galaxy: Production Setup
+# Installs mem CLI, MCP server, and agent integrations.
 
 set -euo pipefail
 
-echo "Initializing your Universal Knowledge Galaxy..."
-
 BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 DATA_DIR="$HOME/.basemem"
+MEM_BIN_DIR="${BASEMEM_BIN_DIR:-$HOME/.local/bin}"
+
+echo "Initializing your Universal Knowledge Galaxy..."
+
 mkdir -p "$DATA_DIR/sessions"
 
+# --- Virtual environment ---
 if [ ! -d "$BASE_DIR/venv" ]; then
   echo "Creating virtual environment..."
   python3 -m venv "$BASE_DIR/venv"
@@ -18,10 +21,11 @@ fi
 
 echo "Installing core engine..."
 "$BASE_DIR/venv/bin/pip" install -q -r "$BASE_DIR/requirements.txt"
+"$BASE_DIR/venv/bin/pip" install -q -e "$BASE_DIR"
 
-MEM_BIN_DIR="${BASEMEM_BIN_DIR:-$HOME/.local/bin}"
 mkdir -p "$MEM_BIN_DIR"
 
+# --- CLI wrappers ---
 write_executable() {
   local target="$1"
   local content="$2"
@@ -34,42 +38,11 @@ write_executable() {
   fi
 }
 
-append_managed_block() {
-  local file="$1"
-  local marker="$2"
-  local block="$3"
-  mkdir -p "$(dirname "$file")"
-  touch "$file"
-  python3 - "$file" "$marker" "$block" <<'PY'
-from pathlib import Path
-import sys
-
-path = Path(sys.argv[1])
-marker = sys.argv[2]
-block = sys.argv[3]
-start = f"# >>> {marker} >>>"
-end = f"# <<< {marker} <<<"
-text = path.read_text() if path.exists() else ""
-
-if start in text and end in text:
-    prefix, rest = text.split(start, 1)
-    _, suffix = rest.split(end, 1)
-    new_text = prefix.rstrip() + "\n" + start + "\n" + block.rstrip() + "\n" + end + suffix
-else:
-    new_text = text.rstrip()
-    if new_text:
-        new_text += "\n\n"
-    new_text += start + "\n" + block.rstrip() + "\n" + end + "\n"
-
-path.write_text(new_text)
-PY
-}
-
-echo "Installing mem command..."
 MEM_WRAPPER="#!/bin/bash
 $BASE_DIR/venv/bin/python3 $BASE_DIR/mem.py --db $DATA_DIR/basemem.db \"\$@\""
 write_executable "$MEM_BIN_DIR/mem" "$MEM_WRAPPER"
 
+# --- MCP server entry point ---
 echo "Installing MCP server entry point..."
 cat <<'PYEOF' >"$BASE_DIR/mem-mcp.py"
 #!/usr/bin/env python3
@@ -84,18 +57,102 @@ if __name__ == "__main__":
 PYEOF
 chmod 755 "$BASE_DIR/mem-mcp.py"
 
-echo "Installing basemem package in venv..."
-"$BASE_DIR/venv/bin/pip" install -q -e "$BASE_DIR"
-
-
 MCP_PYTHON="$BASE_DIR/venv/bin/python3"
 MCP_SCRIPT="$BASE_DIR/mem-mcp.py"
 BASEMEM_DB_PATH="$DATA_DIR/basemem.db"
+
+# --- Shared agent guidance (written to CODEX.md, AGENTS.md) ---
+AGENT_GUIDANCE=$(cat <<'GUIDANCE'
+# BaseMem Memory Protocol — Mandatory Rules
+
+## Rule 1: Skip standalone questions
+Standalone programming questions, definitions, math, trivia — answer directly. Zero MCP calls. Do not over-apply memory.
+
+## Rule 2: You MUST check memory for project context
+When the question touches an existing project, topic, past decision, or ongoing work:
+1. `list_planets` — find the right topic
+2. `get_agent_context(topic, query)` — read prior context
+3. Use what you find. Do not re-ask what's already recorded.
+
+## Rule 3: You MUST use code graph before reading source files
+Before opening any source file:
+1. Run `code_init(project_root)` if no `.basemem.code.db` exists
+2. Use `code_search`/`code_node`/`code_callers`/`code_callees` instead of `Read`
+3. **Only read the file** if you still need the full implementation body
+
+⚠️ **You will default to `Read` because it's the most basic tool. Break this habit.** A single `code_search` call (~200 tokens) beats reading a source file (~4000+ tokens). If you catch yourself thinking "I'll just Read the file" — STOP and check the code graph first.
+
+## Rule 4: You MUST log every interaction that used memory
+After answering, call all three:
+1. `add_note(topic, kind="decision", content="...")` for each architectural choice
+2. `update_planet(topic, current_state="...", next_step="...")` to persist progress
+3. `log_turn(topic, content="what I did")` — lightweight activity record
+
+**Failure mode:** If you skip writes, the next session starts from zero. Prior decisions are lost.
+GUIDANCE
+)
+
+# --- JSON config helper (merges with existing) ---
+write_json() {
+  local file="$1"; shift
+  python3 - "$file" "$@" <<'PY'
+import json, sys
+from pathlib import Path
+
+def try_json(s):
+    try: return json.loads(s)
+    except (json.JSONDecodeError, TypeError): return s
+
+path = Path(sys.argv[1])
+config = json.loads(path.read_text()) if path.exists() else {}
+rest = sys.argv[2:]
+i = 0
+while i < len(rest):
+    keys = rest[i].split(".")
+    val = try_json(rest[i + 1])
+    i += 2
+    target = config
+    for k in keys[:-1]:
+        target = target.setdefault(k, {})
+    target[keys[-1]] = val
+path.write_text(json.dumps(config, indent=2) + "\n")
+PY
+}
 
 echo "Installing Gemini extension..."
 BASEMEM_EXT_DIR="$HOME/.gemini/extensions/00-basemem"
 rm -rf "$BASEMEM_EXT_DIR"
 cp -r "$BASE_DIR/extensions/gemini/." "$BASEMEM_EXT_DIR"
+
+echo "Installing Gemini AGENTS.md (global startup rules)..."
+cat <<'AGENTS_MD' >"$HOME/.gemini/config/AGENTS.md"
+# BaseMem Memory Protocol — Mandatory Rules
+
+## Rule 1: Skip standalone questions
+Standalone programming questions, definitions, math, trivia — answer directly. Zero MCP calls. Do not over-apply memory.
+
+## Rule 2: You MUST check memory for project context
+When the question touches an existing project, topic, past decision, or ongoing work:
+1. `list_planets` — find the right topic
+2. `get_agent_context(topic, query)` — read prior context
+3. Use what you find. Do not re-ask what's already recorded.
+
+## Rule 3: You MUST use code graph before reading source files
+Before opening any source file:
+1. Run `code_init(project_root)` if no `.basemem.code.db` exists
+2. Use `code_search`/`code_node`/`code_callers`/`code_callees` instead of `Read`
+3. **Only read the file** if you still need the full implementation body
+
+⚠️ **You will default to `Read` — it's the most basic tool. Break this habit.** A single `code_search` call (~200 tokens) beats reading a source file (~4000+). If you catch yourself thinking "I'll just Read the file" — STOP and check code graph first.
+
+## Rule 4: You MUST log every interaction that used memory
+After answering, call all three:
+1. `add_note(topic, kind="decision", content="...")` for each architectural choice
+2. `update_planet(topic, current_state="...", next_step="...")` to persist progress
+3. `log_turn(topic, content="what I did")` — lightweight activity record
+
+**Failure mode:** If you skip writes, the next session starts from zero. Prior decisions are lost.
+AGENTS_MD
 
 echo "Installing Antigravity plugin..."
 ANTIGRAVITY_PLUGIN_DIR="$HOME/.gemini/config/plugins/basemem"
@@ -105,214 +162,129 @@ cp -r "$BASE_DIR/extensions/gemini/." "$ANTIGRAVITY_PLUGIN_DIR"
 mv "$ANTIGRAVITY_PLUGIN_DIR/gemini-extension.json" "$ANTIGRAVITY_PLUGIN_DIR/plugin.json"
 
 echo "Generating Antigravity MCP tool schemas..."
-python3 "$BASE_DIR/generate_antigravity_schemas.py"
+if [ -f "$BASE_DIR/generate_antigravity_schemas.py" ]; then
+  python3 "$BASE_DIR/generate_antigravity_schemas.py" || true
+fi
 
 ENABLEMENT_FILE="$HOME/.gemini/extensions/extension-enablement.json"
 mkdir -p "$(dirname "$ENABLEMENT_FILE")"
 python3 - "$ENABLEMENT_FILE" <<'PY'
-import os
+import os, json, sys
 from pathlib import Path
-import json
-import sys
 path = Path(sys.argv[1])
-if path.exists():
-    try:
-        data = json.loads(path.read_text() or "{}")
-    except json.JSONDecodeError:
-        data = {}
-else:
-    data = {}
+data = json.loads(path.read_text()) if path.exists() else {}
 data["00-basemem"] = {"overrides": [os.environ.get("HOME", "~") + "/*"]}
 path.write_text(json.dumps(data, indent=2) + "\n")
 PY
 
 echo "Configuring MCP for Gemini CLI..."
 gemini mcp add basemem-memory "$MCP_PYTHON" "$MCP_SCRIPT" --scope user --trust -e "BASEMEM_DB_PATH=$BASEMEM_DB_PATH" 2>/dev/null || true
-# If already exists, update with trust
-python3 - "$HOME/.gemini/settings.json" "$BASEMEM_DB_PATH" <<'PY'
-import json, sys
-from pathlib import Path
-path = Path(sys.argv[1])
-db_path = sys.argv[2]
-if not path.exists():
-    exit(0)
-config = json.loads(path.read_text())
-mcp = config.setdefault("mcpServers", {}).get("basemem-memory")
-if mcp:
-    mcp.setdefault("env", {})["BASEMEM_DB_PATH"] = db_path
-    path.write_text(json.dumps(config, indent=2) + "\n")
-PY
+write_json "$HOME/.gemini/settings.json" \
+  "mcpServers.basemem-memory.command" "$MCP_PYTHON" \
+  "mcpServers.basemem-memory.args" "[\"$MCP_SCRIPT\"]" \
+  "mcpServers.basemem-memory.env.BASEMEM_DB_PATH" "$BASEMEM_DB_PATH"
 
-echo "Configuring MCP for Antigravity (global agent config)..."
-mkdir -p "$HOME/.gemini/config"
-python3 - "$HOME/.gemini/config/mcp_config.json" "$MCP_PYTHON" "$MCP_SCRIPT" "$BASEMEM_DB_PATH" <<'PY'
-import json, sys
-from pathlib import Path
-path = Path(sys.argv[1])
-config = json.loads(path.read_text()) if path.exists() else {}
-config["mcpServers"] = config.get("mcpServers", {})
-config["mcpServers"]["basemem-memory"] = {
-    "command": sys.argv[2],
-    "args": [sys.argv[3]],
-    "env": {"BASEMEM_DB_PATH": sys.argv[4]}
-}
-path.write_text(json.dumps(config, indent=2) + "\n")
-PY
+echo "Configuring MCP for Antigravity..."
+write_json "$HOME/.gemini/config/mcp_config.json" \
+  "mcpServers.basemem-memory.command" "$MCP_PYTHON" \
+  "mcpServers.basemem-memory.args" "[\"$MCP_SCRIPT\"]" \
+  "mcpServers.basemem-memory.env.BASEMEM_DB_PATH" "$BASEMEM_DB_PATH"
 
 echo "Installing host guidance files..."
-mkdir -p "$HOME/.codex" "$HOME/.claude"
-cat >"$HOME/.codex/CODEX.md" <<'CODEX'
-# BaseMem Memory Protocol
+mkdir -p "$HOME/.claude"
+printf "%s\n" "$AGENT_GUIDANCE" >"$HOME/.claude/CLAUDE.md"
 
-<EXTREMELY-IMPORTANT>
-**FAILURE MODE:** Without this protocol, every session starts from zero. You will repeat past work, forget prior decisions, and waste context on what was already resolved.
+echo "Configuring MCP for Codex CLI..."
+codex mcp add --env "BASEMEM_DB_PATH=$BASEMEM_DB_PATH" basemem-memory -- "$MCP_PYTHON" "$MCP_SCRIPT" 2>/dev/null || true
+echo "Installing BaseMem skill for Codex..."
+CODEX_SKILL_DIR="$HOME/.codex/skills/basemem"
+mkdir -p "$CODEX_SKILL_DIR/agents"
+cat <<'CODEX_SKILL' >"$CODEX_SKILL_DIR/SKILL.md"
+---
+name: basemem
+description: BaseMem memory protocol — mandatory project context, code graph, and write-back rules
+---
 
-IF A MEMORY CHECK COULD BE RELEVANT TO WHAT THE USER IS ASKING, YOU DO NOT HAVE A CHOICE. YOU MUST CHECK MEMORY FIRST. This is not negotiable. This is not optional.
-</EXTREMELY-IMPORTANT>
+## Rule 1: Skip standalone questions
+Standalone programming questions, definitions, math, trivia — answer directly. Zero MCP calls.
 
-## Mandatory Startup (BEFORE answering)
+## Rule 2: You MUST check memory for project context
+When the question touches an existing project, topic, past decision, or ongoing work:
+1. `list_planets` + `get_agent_context(topic, query)` — read prior context
+2. Use what you find. Do not re-ask what's already recorded.
 
-BaseMem MCP tools are available. Use them in this order:
+## Rule 3: You MUST use code graph before reading source files
+Before opening any source file:
+1. Run `code_init(project_root)` if no `.basemem.code.db` exists
+2. Use `code_search`/`code_node`/`code_callers`/`code_callees` instead of Read
 
-1. `list_planets` — discover what topics exist
-2. `get_agent_context(topic, query="<user request>")` — ALWAYS call this before your first answer
-3. Review the returned context. Prefer existing decisions. Do NOT re-ask what's already recorded.
+⚠️ **You will default to `Read` — it's the most basic tool. Break this habit.** A single `code_search` call (~200 tokens) beats reading a source file (~4000+). If you catch yourself thinking "I'll just Read the file" — STOP and check code graph first.
 
-## Mandatory Write-Back (AFTER completing work)
+## Rule 4: You MUST log every interaction that used memory
+After answering, call all three:
+1. `add_note(topic, kind, content)` — decisions, facts, issues
+2. `update_planet(topic, current_state, next_step)` — persist progress
+3. `log_turn(topic, content)` — activity record
 
-1. `add_note(topic, kind="decision", content="...")` for every architectural choice, fact learned, or issue found
-2. `update_planet(topic, current_state="...", next_step="...")` to persist progress
-3. `log_turn(topic, content="what I did")` for lightweight activity tracking
+**Failure mode:** If you skip writes, the next session starts from zero. Prior decisions are lost.
+CODEX_SKILL
+cat <<'YAML' >"$CODEX_SKILL_DIR/agents/openai.yaml"
+interface:
+  display_name: "BaseMem Memory"
+  short_description: "Persistent knowledge base with planets, notes, and code intelligence"
+YAML
 
-## Red Flags
-
-If you think any of these, STOP and check memory instead:
-- "I don't need to check memory yet" → Check before answering anything
-- "I can check later" → Later means after starting without context
-- "The topic is obvious" → You don't know what prior decisions exist
-- "I already know about this" → You only know what's in this session
-- "Checking memory wastes tokens" → Wasting work because you ignored prior decisions wastes more
-- "The user would have told me if there was context" → Users forget; that's why memory exists
-CODEX
-
-cp "$HOME/.codex/CODEX.md" "$HOME/.claude/CLAUDE.md"
+echo "Installing host guidance for Codex..."
+CODEX_MD_DIR="$HOME/.codex"
+mkdir -p "$CODEX_MD_DIR"
+printf "%s\n" "$AGENT_GUIDANCE" >"$CODEX_MD_DIR/CODEX.md"
 
 echo "Configuring MCP for Claude Code..."
-mkdir -p "$HOME/.claude"
-python3 - "$HOME/.claude/settings.json" "$MCP_PYTHON" "$MCP_SCRIPT" "$BASEMEM_DB_PATH" <<'PY'
-import json, sys
-path = Path(sys.argv[1]) if False else None
-from pathlib import Path
-path = Path(sys.argv[1])
-config = json.loads(path.read_text()) if path.exists() else {}
-config["mcpServers"] = config.get("mcpServers", {})
-config["mcpServers"]["basemem-memory"] = {
-    "command": sys.argv[2],
-    "args": [sys.argv[3]],
-    "env": {"BASEMEM_DB_PATH": sys.argv[4]}
-}
-path.write_text(json.dumps(config, indent=2) + "\n")
-PY
+claude mcp add -s user -e "BASEMEM_DB_PATH=$BASEMEM_DB_PATH" -- basemem-memory "$MCP_PYTHON" "$MCP_SCRIPT" 2>/dev/null || true
 
 echo "Configuring MCP for opencode..."
 mkdir -p "$HOME/.config/opencode"
-python3 - "$HOME/.config/opencode/opencode.jsonc" "$MCP_PYTHON" "$MCP_SCRIPT" "$BASEMEM_DB_PATH" <<'PY'
-import json, sys
-from pathlib import Path
-path = Path(sys.argv[1])
-config = json.loads(path.read_text()) if path.exists() else {"$schema": "https://opencode.ai/config.json"}
-config["mcp"] = config.get("mcp", {})
-config["mcp"]["basemem-memory"] = {
-    "type": "local",
-    "command": [sys.argv[2], sys.argv[3]],
-    "enabled": True,
-    "environment": {"BASEMEM_DB_PATH": sys.argv[4]}
-}
-path.write_text(json.dumps(config, indent=2) + "\n")
-PY
-
-echo "Installing opencode global rules..."
-cat >"$HOME/.config/opencode/AGENTS.md" <<'AGENTS'
-BaseMem Memory Protocol
-
-<EXTREMELY-IMPORTANT>
-**FAILURE MODE:** Without this protocol, every session starts from zero. You will repeat past work, forget prior decisions, and waste context on what was already resolved.
-
-IF A MEMORY CHECK COULD BE RELEVANT TO WHAT THE USER IS ASKING, YOU DO NOT HAVE A CHOICE. YOU MUST CHECK MEMORY FIRST. This is not negotiable. This is not optional.
-</EXTREMELY-IMPORTANT>
-
-## Mandatory Startup (BEFORE answering)
-
-BaseMem MCP tools are available. Use them in this order:
-
-1. `list_planets` — discover what topics exist
-2. `get_agent_context(topic, query="<user request>")` — ALWAYS call this before your first answer
-3. Review the returned context. Prefer existing decisions. Do NOT re-ask what's already recorded.
-
-## Mandatory Write-Back (AFTER completing work)
-
-1. `add_note(topic, kind="decision", content="...")` for every architectural choice, fact learned, or issue found
-2. `update_planet(topic, current_state="...", next_step="...")` to persist progress
-3. `log_turn(topic, content="what I did")` for lightweight activity tracking
-
-## Red Flags
-
-If you think any of these, STOP and check memory instead:
-- "I don't need to check memory yet" → Check before answering anything
-- "I can check later" → Later means after starting without context
-- "The topic is obvious" → You don't know what prior decisions exist
-- "I already know about this" → You only know what's in this session
-- "Checking memory wastes tokens" → Wasting work because you ignored prior decisions wastes more
-- "The user would have told me if there was context" → Users forget; that's why memory exists
-AGENTS
+write_json "$HOME/.config/opencode/opencode.jsonc" \
+  "\$schema" "https://opencode.ai/config.json" \
+  "mcp.basemem-memory.type" "local" \
+  "mcp.basemem-memory.command" "[\"$MCP_PYTHON\",\"$MCP_SCRIPT\"]" \
+  "mcp.basemem-memory.enabled" "true" \
+  "mcp.basemem-memory.environment.BASEMEM_DB_PATH" "$BASEMEM_DB_PATH"
+printf "%s\n" "$AGENT_GUIDANCE" >"$HOME/.config/opencode/AGENTS.md"
 
 echo "Configuring MCP for Cursor..."
-mkdir -p "$HOME/.cursor"
-python3 - "$HOME/.cursor/mcp.json" "$MCP_PYTHON" "$MCP_SCRIPT" "$BASEMEM_DB_PATH" <<'PY'
-import json, sys
-from pathlib import Path
-path = Path(sys.argv[1])
-config = json.loads(path.read_text()) if path.exists() else {}
-config["mcpServers"] = config.get("mcpServers", {})
-config["mcpServers"]["basemem-memory"] = {
-    "command": sys.argv[2],
-    "args": [sys.argv[3]],
-    "env": {"BASEMEM_DB_PATH": sys.argv[4]}
-}
-path.write_text(json.dumps(config, indent=2) + "\n")
-PY
+write_json "$HOME/.cursor/mcp.json" \
+  "mcpServers.basemem-memory.command" "$MCP_PYTHON" \
+  "mcpServers.basemem-memory.args" "[\"$MCP_SCRIPT\"]" \
+  "mcpServers.basemem-memory.env.BASEMEM_DB_PATH" "$BASEMEM_DB_PATH"
 
 echo "Configuring MCP for Windsurf..."
 mkdir -p "$HOME/.windsurf"
-python3 - "$HOME/.windsurf/mcp_config.json" "$MCP_PYTHON" "$MCP_SCRIPT" "$BASEMEM_DB_PATH" <<'PY'
-import json, sys
-from pathlib import Path
-path = Path(sys.argv[1])
-config = json.loads(path.read_text()) if path.exists() else {}
-config["mcpServers"] = config.get("mcpServers", {})
-config["mcpServers"]["basemem-memory"] = {
-    "command": sys.argv[2],
-    "args": [sys.argv[3]],
-    "env": {"BASEMEM_DB_PATH": sys.argv[4]}
-}
-path.write_text(json.dumps(config, indent=2) + "\n")
-PY
+write_json "$HOME/.windsurf/mcp_config.json" \
+  "mcpServers.basemem-memory.command" "$MCP_PYTHON" \
+  "mcpServers.basemem-memory.args" "[\"$MCP_SCRIPT\"]" \
+  "mcpServers.basemem-memory.env.BASEMEM_DB_PATH" "$BASEMEM_DB_PATH"
 
-echo "Configuring shell aliases..."
-CURRENT_SHELL="$(basename "${SHELL:-bash}")"
-case "$CURRENT_SHELL" in
-  bash) CONF_FILE="$HOME/.bashrc" ;;
-  zsh) CONF_FILE="$HOME/.zshrc" ;;
-  fish) CONF_FILE="$HOME/.config/fish/config.fish" ;;
-  *) CONF_FILE="" ;;
+# --- Add bin to PATH ---
+SHELL_CONFIG=""
+case "$(basename "${SHELL:-bash}")" in
+  bash) SHELL_CONFIG="$HOME/.bashrc" ;;
+  zsh) SHELL_CONFIG="$HOME/.zshrc" ;;
+  fish) SHELL_CONFIG="$HOME/.config/fish/config.fish" ;;
 esac
+if [ -n "$SHELL_CONFIG" ] && [ -f "$SHELL_CONFIG" ]; then
+  if ! grep -q "$MEM_BIN_DIR" "$SHELL_CONFIG" 2>/dev/null; then
+    echo "export PATH=\"\$PATH:$MEM_BIN_DIR\"" >>"$SHELL_CONFIG"
+    echo "Added $MEM_BIN_DIR to PATH in $SHELL_CONFIG"
+  fi
+fi
 
 echo "------------------------------------------------"
-echo "UNIVERSAL GALAXY READY"
+echo "UNIVERSAL KNOWLEDGE GALAXY READY"
 echo ""
 echo "Installed:"
-echo "  MCP server            basemem-mcp (via venv)"
-echo "  kb                    CLI for BaseMem"
+echo "  MCP server            basemem-memory (via venv)"
+echo "  mem                   CLI ($MEM_BIN_DIR/mem)"
 echo ""
 echo "MCP configured for:"
 echo "  Gemini CLI      ~/.gemini/settings.json"
@@ -320,15 +292,19 @@ echo "  Claude Code     ~/.claude/settings.json"
 echo "  opencode        ~/.config/opencode/opencode.jsonc"
 echo "  Cursor          ~/.cursor/mcp.json"
 echo "  Windsurf        ~/.windsurf/mcp_config.json"
+echo "  Codex CLI       ~/.codex/config.toml"
 echo ""
-echo "Extensions & guidance:"
-echo "  Gemini          ~/.gemini/extensions/00-basemem/ (skills/ + hooks/)"
-echo "  Antigravity     ~/.gemini/config/plugins/basemem/ (plugin.json + skills/)"
+echo "Extensions, skills & guidance:"
+echo "  Gemini          ~/.gemini/extensions/00-basemem/"
+echo "  Antigravity     ~/.gemini/config/plugins/basemem/"
+echo "  Codex CLI       ~/.codex/skills/basemem/"
 echo "  Claude Code     ~/.claude/CLAUDE.md"
 echo "  Codex CLI       ~/.codex/CODEX.md"
 echo "  opencode        ~/.config/opencode/AGENTS.md"
 echo ""
 echo "Usage:"
-echo "  Agents with MCP auto-discovery will connect automatically."
-echo "  Gemini CLI loads BaseMem memory protocol via extension bootstrap."
+echo "  mem planet create my-project --goal 'Build X'"
+echo "  mem agent-context --topic my-project --query 'what are we doing?'"
+echo ""
+echo "NOTE: You may need to restart your shell for PATH changes."
 echo "------------------------------------------------"

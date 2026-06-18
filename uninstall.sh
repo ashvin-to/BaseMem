@@ -34,26 +34,21 @@ confirm() {
   esac
 }
 
-remove_managed_block() {
+remove_from_path() {
   local file="$1"
-  local marker="$2"
   [ -f "$file" ] || return 0
-  python3 - "$file" "$marker" <<'PY'
+  local dir="${2:-$HOME/.local/bin}"
+  python3 - "$file" "$dir" <<'PY'
 from pathlib import Path
-import sys
-
+import sys, re
 path = Path(sys.argv[1])
-marker = sys.argv[2]
-start = f"# >>> {marker} >>>"
-end = f"# <<< {marker} <<<"
+dir = sys.argv[2]
 text = path.read_text()
-if start in text and end in text:
-    prefix, rest = text.split(start, 1)
-    _, suffix = rest.split(end, 1)
-    new_text = (prefix.rstrip() + "\n" + suffix.lstrip()).strip()
-    if new_text:
-        new_text += "\n"
+pattern = re.compile(r'^\s*export\s+PATH=.*' + re.escape(dir) + r'.*$', re.MULTILINE)
+new_text = pattern.sub('', text)
+if new_text != text:
     path.write_text(new_text)
+    print(f"Removed {dir} from PATH in {path}")
 PY
 }
 
@@ -137,9 +132,17 @@ done
 echo "Removing MCP server entry point..."
 rm -f "$BASE_DIR/mem-mcp.py"
 
+echo "Removing Codex MCP registration..."
+codex mcp remove basemem-memory 2>/dev/null || true
+
+echo "Removing Codex skill..."
+rm -rf "$HOME/.codex/skills/basemem"
+
 echo "Removing MCP config entries from agent settings..."
 remove_mcp_entry "$HOME/.gemini/settings.json" "basemem-memory"
 remove_mcp_entry "$HOME/.gemini/config/mcp_config.json" "basemem-memory"
+claude mcp remove -s user basemem-memory 2>/dev/null || true
+# Also clean up the old incorrect file location
 remove_mcp_entry "$HOME/.claude/settings.json" "basemem-memory"
 remove_mcp_entry "$HOME/.config/opencode/opencode.jsonc" "basemem-memory"
 remove_mcp_entry "$HOME/.cursor/mcp.json" "basemem-memory"
@@ -149,6 +152,9 @@ echo "Removing host guidance files..."
 remove_if_contains_marker "$HOME/.codex/CODEX.md" "BaseMem"
 remove_if_contains_marker "$HOME/.claude/CLAUDE.md" "BaseMem"
 remove_if_contains_marker "$HOME/.config/opencode/AGENTS.md" "BaseMem"
+
+echo "Removing Gemini AGENTS.md..."
+rm -f "$HOME/.gemini/config/AGENTS.md"
 
 echo "Removing Gemini extension..."
 rm -rf "$HOME/.gemini/extensions/00-basemem"
@@ -176,9 +182,9 @@ else:
 PY
 fi
 
-remove_managed_block "$HOME/.bashrc" "BaseMem aliases"
-remove_managed_block "$HOME/.zshrc" "BaseMem aliases"
-remove_managed_block "$HOME/.config/fish/config.fish" "BaseMem aliases"
+remove_from_path "$HOME/.bashrc"
+remove_from_path "$HOME/.zshrc"
+remove_from_path "$HOME/.config/fish/config.fish"
 
 if [ "$PURGE_ENV" -eq 1 ] && [ -d "$BASE_DIR/venv" ]; then
   if confirm "Remove $BASE_DIR/venv?"; then
@@ -196,6 +202,6 @@ fi
 
 echo "------------------------------------------------"
 echo "BaseMem uninstall complete."
-echo "MCP configs cleaned from Claude Code, opencode, Cursor, Windsurf."
+echo "MCP configs cleaned from Claude Code, opencode, Cursor, Windsurf, Codex."
 echo "Open a new shell session to refresh aliases."
 echo "------------------------------------------------"

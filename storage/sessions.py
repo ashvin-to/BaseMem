@@ -1066,12 +1066,12 @@ class SessionManager:
 
 # ── Module-level helpers ──────────────────────────────────
 
-_SCHEMA_INITIALIZED: set = set()
+_SCHEMA_INITIALIZED = False
 
 
 def _ensure_schema(conn: sqlite3.Connection) -> None:
-    key = id(conn)
-    if key in _SCHEMA_INITIALIZED:
+    global _SCHEMA_INITIALIZED
+    if _SCHEMA_INITIALIZED:
         return
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS planets (
@@ -1136,7 +1136,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         except Exception:
             pass
     conn.commit()
-    _SCHEMA_INITIALIZED.add(key)
+    _SCHEMA_INITIALIZED = True
 
 
 def _get_planet_row(conn: sqlite3.Connection, topic: str) -> Optional[dict]:

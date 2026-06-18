@@ -1158,7 +1158,7 @@ def code_callees(project_root: str, symbol_name: str, file_path: str = "") -> st
     description=(
         "Trace call chain for a function (callers and callees). "
         "Returns a compact one-line chain. "
-        "Requires project_root for a project with an existing .graphrag.code.db."
+        "Requires project_root for a project with an existing .basemem.code.db."
     )
 )
 def code_trace(project_root: str, symbol_name: str, direction: str = "both") -> str:
@@ -1217,17 +1217,17 @@ def code_status(project_root: str) -> str:
     description=(
         "Scan the filesystem for all indexed code projects (.basemem.code.db files). "
         "Returns project names, root paths, and symbol/file counts. "
-        "Use this to discover what projects have been indexed."
+        "Use this to discover what projects have been indexed. "
+        "search_root: comma-separated paths (default: ~,/mnt,/media,/opt,/var/lib). "
+        "Pass empty string for multi-path default."
     )
 )
-def code_list_projects(search_root: str = "~") -> str:
+def code_list_projects(search_root: str = "") -> str:
     """Scan for all .basemem.code.db files on the system."""
-    import os
     from ..indexer.indexer import find_code_projects
-    root = os.path.abspath(os.path.expanduser(search_root))
-    projects = find_code_projects(root)
+    projects = find_code_projects(search_root)
     if not projects:
-        return f"No projects under {root}."
+        return "No projects found."
     parts = [f"{len(projects)} project(s):"]
     for p in sorted(projects, key=lambda x: x["name"]):
         parts.append(f"  {p['name']}: {p['symbols']}s {p['files']}f")
