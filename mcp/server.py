@@ -201,24 +201,18 @@ def get_agent_context(topic: str, query: str = "") -> str:
             if n["kind"] == "fact"
         ]
 
-        parts = [f"# Context for: {topic}"]
+        parts = [f"ctx: {topic}"]
         if planet:
             if planet["current_state"]:
-                parts.append(f"\n## Current State\n{planet['current_state']}")
+                parts.append(f"  state: {planet['current_state']}")
             if planet["next_step"]:
-                parts.append(f"\n## Next Steps\n{planet['next_step']}")
-        else:
-            parts.append("\n*No planet found for this topic.*")
-
+                parts.append(f"  next: {planet['next_step']}")
         if decisions:
-            parts.append("\n## Decisions")
-            parts.extend(f"- {d}" for d in decisions[-5:])
+            parts.extend(f"  dec: {d}" for d in decisions[-5:])
         if issues:
-            parts.append("\n## Issues")
-            parts.extend(f"- {i}" for i in issues[-5:])
+            parts.extend(f"  iss: {i}" for i in issues[-5:])
         if facts:
-            parts.append("\n## Facts")
-            parts.extend(f"- {f}" for f in facts[-5:])
+            parts.extend(f"  fact: {f}" for f in facts[-5:])
 
         return "\n".join(parts) + _REMINDER
     finally:
@@ -259,28 +253,22 @@ def read_planet(topic: str) -> str:
         files = json.loads(planet["files"] or "[]")
         commands = json.loads(planet["commands"] or "[]")
 
-        lines = [
-            f"# Planet: {display}",
-            f"\n**Topic slug:** {planet['topic']}",
-            f"\n**Status:** {planet['status'] or 'active'}",
-            f"\n**Goal:** {planet['goal'] or 'Not set'}",
-            f"\n**Current State:** {planet['current_state'] or 'Not set'}",
-            f"\n**Next Step:** {planet['next_step'] or 'Not set'}",
-        ]
+        lines = [f"{display} | {planet['status'] or 'active'}"]
+        lines.append(f"  goal: {planet['goal'] or '—'}")
+        lines.append(f"  state: {planet['current_state'] or '—'}")
+        lines.append(f"  next: {planet['next_step'] or '—'}")
         if next_steps:
-            lines.append(f"\n**All Next Steps:** {', '.join(next_steps)}")
+            lines.append(f"  steps: {', '.join(next_steps)}")
         if files:
-            lines.append(f"\n**Files:** {', '.join(files)}")
+            lines.append(f"  files: {', '.join(files)}")
         if commands:
-            lines.append(f"\n**Commands:** {', '.join(commands)}")
+            lines.append(f"  cmds: {', '.join(commands)}")
         if planet["handoff"]:
-            lines.append(f"\n**Handoff:** {planet['handoff']}")
+            lines.append(f"  handoff: {planet['handoff']}")
         if notes:
-            lines.append(f"\n## Notes ({len(notes)})")
-            for n in notes:
-                lines.append(
-                    f"\n### [{n['kind'].upper()}] (id={n['id']})\n{n['content']}\n"
-                )
+            lines.append(f"  notes ({len(notes)}):")
+            for n in notes[:10]:
+                lines.append(f"    [{n['kind'][:4]}] {n['content'][:200]}")
         return "\n".join(lines) + _REMINDER
     finally:
         conn.close()
@@ -339,6 +327,7 @@ def update_planet(
         return f"No knowledge base found at {db_path}."
 
     conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
     try:
         existing = conn.execute(
             "SELECT * FROM planets WHERE topic = ?", (topic,)
@@ -991,6 +980,14 @@ def code_init(project_root: str) -> str:
         indexer.close()
 
 
+def _fmt_loc(file_path: str, line: int) -> str:
+    """Short file path: strip common prefixes, keep last 2 dirs + filename."""
+    parts = file_path.replace("\\", "/").split("/")
+    if len(parts) > 3:
+        return "/".join(parts[-3:])
+    return file_path
+
+
 @server.tool(
     description=(
         "List all indexed code symbols in a project. "
@@ -1014,10 +1011,10 @@ def code_list(project_root: str, limit: int = 100, offset: int = 0) -> str:
         if not results:
             return "No symbols found."
         total = stats.get("symbol_count", 0)
-        parts = [f"Symbols {offset+1}-{offset+len(results)} of {total}:\n"]
+        parts = [f"sym {offset+1}-{offset+len(results)}/{total}"]
         for r in results:
-            loc = f"{r['file_path']}:{r['start_line']}-{r['end_line']}"
-            parts.append(f"  [{r['id']}] {r['symbol_type']} **{r['symbol_name']}**  ({loc})")
+            loc = _fmt_loc(r['file_path'], r['start_line'])
+            parts.append(f"  [{r['id']}] {r['symbol_name']} ({loc}) {r['symbol_type'][:4]}")
         return "\n".join(parts)
     finally:
         indexer.close()
@@ -1028,10 +1025,11 @@ def code_list(project_root: str, limit: int = 100, offset: int = 0) -> str:
         "Search code symbols by name or signature in a project. "
         "Returns matching functions, classes, methods with file locations and line numbers. "
         "Requires project_root for a project with an existing .basemem.code.db. "
-        "Run code_init first to index a project."
+        "Run code_init first to index a project. "
+        "Set use_regex=True to treat query as a Python regex pattern (slower but supports .*|etc)."
     )
 )
-def code_search(project_root: str, query: str, limit: int = 20) -> str:
+def code_search(project_root: str, query: str, limit: int = 20, use_regex: bool = False) -> str:
     """Search for code symbols in a project's .basemem.code.db."""
     import os
     from indexer import CodeIndexer, CODE_DB_FILENAME
@@ -1040,16 +1038,14 @@ def code_search(project_root: str, query: str, limit: int = 20) -> str:
         return f"No code index at {db_path}. Run `code_init` first."
     indexer = CodeIndexer(project_root)
     try:
-        results = indexer.search_symbols(query, limit=limit)
+        results = indexer.search_symbols(query, limit=limit, use_regex=use_regex)
         if not results:
-            return f"No symbols match '{query}' in that project."
-        parts = [f"Found {len(results)} symbol(s):\n"]
+            return f"No match for '{query}'."
+        parts = [f"{len(results)} match(es):"]
         for r in results:
-            loc = f"{r['file_path']}:{r['start_line']}-{r['end_line']}"
-            sig = f" {r['signature']}" if r.get('signature') else ""
-            parts.append(f"  [{r['id']}] {r['symbol_type']} **{r['symbol_name']}**{sig}  ({loc})")
-            if r.get('docstring'):
-                parts.append(f"       doc: {r['docstring'][:150]}")
+            loc = _fmt_loc(r['file_path'], r['start_line'])
+            sig = f" {r['signature'][:60]}" if r.get('signature') else ""
+            parts.append(f"  [{r['id']}] {r['symbol_name']} ({loc}){sig}")
         return "\n".join(parts)
     finally:
         indexer.close()
@@ -1080,34 +1076,30 @@ def code_node(project_root: str, symbol_identifier: str) -> str:
         if not sym:
             symbols = indexer.get_symbol_by_name(symbol_identifier)
             if not symbols:
-                return f"Symbol not found: {symbol_identifier}."
+                return f"Not found: {symbol_identifier}."
             sym = symbols[0]
             if len(symbols) > 1:
-                parts = [f"Multiple symbols named '{symbol_identifier}':\n"]
+                parts = [f"Multiple '{symbol_identifier}':"]
                 for s in symbols:
-                    parts.append(f"  [{s['id']}] {s['symbol_type']} in {s['file_path']}:{s['start_line']}")
+                    loc = _fmt_loc(s['file_path'], s['start_line'])
+                    parts.append(f"  [{s['id']}] ({loc})")
                 return "\n".join(parts)
 
         callers = indexer.get_callers(sym['symbol_name'])
         callees = indexer.get_callees(sym['symbol_name'], sym['file_path'])
+        loc = _fmt_loc(sym['file_path'], sym['start_line'])
 
-        parts = [
-            f"**{sym['symbol_type']}** `{sym['symbol_name']}`",
-            f"  File: {sym['file_path']}:{sym['start_line']}-{sym['end_line']}",
-            f"  Language: {sym['language']}",
-        ]
+        parts = [f"{sym['symbol_name']} ({loc}) {sym['language']}"]
         if sym.get('signature'):
-            parts.append(f"  Signature: {sym['signature']}")
+            parts.append(f"  sig: {sym['signature']}")
         if sym.get('docstring'):
-            parts.append(f"  Doc: {sym['docstring']}")
+            parts.append(f"  doc: {sym['docstring'][:200]}")
         if callers:
-            parts.append(f"\n  Callers ({len(callers)}):")
-            for c in callers[:10]:
-                parts.append(f"    {c['symbol_type']} {c['symbol_name']} ({c['edge_file']}:{c['line_number']})")
+            callers_str = ", ".join(f"{c['symbol_name']}:{c['line_number']}" for c in callers[:10])
+            parts.append(f"  callers: {callers_str}")
         if callees:
-            parts.append(f"\n  Calls ({len(callees)}):")
-            for c in callees[:10]:
-                parts.append(f"    {c['from_name']} (line {c['line_number']})")
+            callees_str = ", ".join(f"{c['from_name']}:{c['line_number']}" for c in callees[:10])
+            parts.append(f"  calls: {callees_str}")
         return "\n".join(parts)
     finally:
         indexer.close()
@@ -1131,11 +1123,9 @@ def code_callers(project_root: str, symbol_name: str) -> str:
     try:
         results = indexer.get_callers(symbol_name)
         if not results:
-            return f"No callers found for '{symbol_name}'."
-        parts = [f"Callers of `{symbol_name}` ({len(results)}):\n"]
-        for r in results:
-            parts.append(f"  {r['symbol_type']} `{r['symbol_name']}` in {r['edge_file']}:{r['line_number']}")
-        return "\n".join(parts)
+            return f"No callers for '{symbol_name}'."
+        callers_str = ", ".join(f"{r['symbol_name']}:{r['line_number']}" for r in results[:20])
+        return f"callers of {symbol_name}: {callers_str}"
     finally:
         indexer.close()
 
@@ -1157,11 +1147,41 @@ def code_callees(project_root: str, symbol_name: str, file_path: str = "") -> st
     try:
         results = indexer.get_callees(symbol_name, file_path)
         if not results:
-            return f"No callees found for '{symbol_name}'."
-        parts = [f"Callees of `{symbol_name}` ({len(results)}):\n"]
-        for r in results:
-            parts.append(f"  {r['from_name']} at {r['file_path']}:{r['line_number']}")
-        return "\n".join(parts)
+            return f"No callees for '{symbol_name}'."
+        callees_str = ", ".join(f"{r['from_name']}:{r['line_number']}" for r in results[:20])
+        return f"callees of {symbol_name}: {callees_str}"
+    finally:
+        indexer.close()
+
+
+@server.tool(
+    description=(
+        "Trace call chain for a function (callers and callees). "
+        "Returns a compact one-line chain. "
+        "Requires project_root for a project with an existing .graphrag.code.db."
+    )
+)
+def code_trace(project_root: str, symbol_name: str, direction: str = "both") -> str:
+    """Trace call chain: inbound (callers), outbound (callees), or both."""
+    import os
+    from indexer import CodeIndexer, CODE_DB_FILENAME
+    db_path = os.path.join(project_root, CODE_DB_FILENAME)
+    if not os.path.exists(db_path):
+        return f"No code index at {db_path}. Run `code_init` first."
+    indexer = CodeIndexer(project_root)
+    try:
+        out = []
+        if direction in ("inbound", "both"):
+            callers = indexer.get_callers(symbol_name)
+            if callers:
+                out.append(f"<- {', '.join(c['symbol_name'] for c in callers[:8])}")
+        if direction in ("outbound", "both"):
+            callees = indexer.get_callees(symbol_name)
+            if callees:
+                out.append(f"-> {', '.join(c['from_name'] for c in callees[:8])}")
+        if not out:
+            return f"{symbol_name}: no call chain"
+        return f"{symbol_name}: {'; '.join(out)}"
     finally:
         indexer.close()
 
@@ -1186,12 +1206,8 @@ def code_status(project_root: str) -> str:
         if not stats.get("indexed"):
             return "No code indexed."
         return (
-            f"Project: {stats.get('name', '?')}\n"
-            f"  Root: {stats.get('root_path', '?')}\n"
-            f"  Files: {stats['file_count']}\n"
-            f"  Symbols: {stats['symbol_count']}\n"
-            f"  Edges: {stats['edges']}\n"
-            f"  Last indexed: {stats.get('last_indexed', 'never')}"
+            f"{stats.get('name', '?')}: {stats['file_count']}f {stats['symbol_count']}s "
+            f"{stats['edges']}e | last: {stats.get('last_indexed', 'never')}"
         )
     finally:
         indexer.close()
@@ -1211,12 +1227,10 @@ def code_list_projects(search_root: str = "~") -> str:
     root = os.path.abspath(os.path.expanduser(search_root))
     projects = find_code_projects(root)
     if not projects:
-        return f"No indexed projects found under {root}."
-    parts = [f"Found {len(projects)} project(s) under {root}:\n"]
+        return f"No projects under {root}."
+    parts = [f"{len(projects)} project(s):"]
     for p in sorted(projects, key=lambda x: x["name"]):
-        parts.append(f"  **{p['name']}**")
-        parts.append(f"    Root: {p['root']}")
-        parts.append(f"    Symbols: {p['symbols']}  Files: {p['files']}")
+        parts.append(f"  {p['name']}: {p['symbols']}s {p['files']}f")
     return "\n".join(parts)
 
 

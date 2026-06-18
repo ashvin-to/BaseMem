@@ -25,7 +25,7 @@ dependencies = [
 ]
 
 [project.scripts]
-kb = "basemem.cli.main:cli"
+mem = "basemem.cli.main:cli"
 
 [project.optional-dependencies]
 # Heavy AI components (Optional)

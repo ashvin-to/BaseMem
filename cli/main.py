@@ -635,6 +635,11 @@ def code_init(project_root, workers, watch):
             indexer.close()
 
 
+def _fmt_loc(file_path: str, line: int) -> str:
+    parts = file_path.replace("\\", "/").split("/")
+    return "/".join(parts[-3:]) if len(parts) > 3 else file_path
+
+
 @code.command("list")
 @click.option('--root', default='.', help='Project root directory')
 @click.option('--limit', default=100, type=int, help='Max symbols')
@@ -654,10 +659,10 @@ def code_list(root, limit, offset):
             click.echo("No symbols found.")
             return
         total = stats.get('symbol_count', 0)
-        click.echo(f"Symbols {offset+1}-{offset+len(results)} of {total}:\n")
+        click.echo(f"sym {offset+1}-{offset+len(results)}/{total}")
         for r in results:
-            loc = f"{r['file_path']}:{r['start_line']}-{r['end_line']}"
-            click.echo(f"  [{r['id']}] {r['symbol_type']} {r['symbol_name']}  ({loc})")
+            loc = _fmt_loc(r['file_path'], r['start_line'])
+            click.echo(f"  [{r['id']}] {r['symbol_name']} ({loc}) {r['symbol_type'][:4]}")
     finally:
         indexer.close()
 
@@ -666,24 +671,22 @@ def code_list(root, limit, offset):
 @click.argument('query')
 @click.option('--root', default='.', help='Project root directory')
 @click.option('--limit', default=20, type=int)
-def code_search(query, root, limit):
+@click.option('--regex', is_flag=True, help='Interpret query as Python regex pattern')
+def code_search(query, root, limit, regex):
     """Search code symbols by name or signature."""
     indexer = _get_code_indexer(root)
     if indexer is None:
         return
     try:
-        results = indexer.search_symbols(query, limit=limit)
+        results = indexer.search_symbols(query, limit=limit, use_regex=regex)
         if not results:
-            click.echo(f"No symbols match '{query}'.")
+            click.echo(f"No match for '{query}'.")
             return
-        click.echo(f"Found {len(results)} symbol(s):\n")
+        click.echo(f"{len(results)} match(es):")
         for r in results:
-            loc = f"{r['file_path']}:{r['start_line']}-{r['end_line']}"
-            sig = f" {r['signature']}" if r.get('signature') else ""
-            click.echo(f"  [{r['id']}] {r['symbol_type']} {r['symbol_name']}{sig}")
-            click.echo(f"         {loc}")
-            if r.get('docstring'):
-                click.echo(f"         doc: {r['docstring'][:150]}")
+            loc = _fmt_loc(r['file_path'], r['start_line'])
+            sig = f" {r['signature'][:60]}" if r.get('signature') else ""
+            click.echo(f"  [{r['id']}] {r['symbol_name']} ({loc}){sig}")
     finally:
         indexer.close()
 
@@ -706,34 +709,32 @@ def code_node(identifier, root):
         if not sym:
             symbols = indexer.get_symbol_by_name(identifier)
             if not symbols:
-                click.echo(f"Symbol not found: {identifier}")
+                click.echo(f"Not found: {identifier}")
                 return
             if len(symbols) == 1:
                 sym = symbols[0]
             else:
-                click.echo(f"Multiple symbols named '{identifier}':")
+                click.echo(f"Multiple '{identifier}':")
                 for s in symbols:
-                    click.echo(f"  [{s['id']}] {s['symbol_type']} in {s['file_path']}:{s['start_line']}")
+                    loc = _fmt_loc(s['file_path'], s['start_line'])
+                    click.echo(f"  [{s['id']}] ({loc})")
                 return
 
         callers = indexer.get_callers(sym['symbol_name'])
         callees = indexer.get_callees(sym['symbol_name'], sym['file_path'])
+        loc = _fmt_loc(sym['file_path'], sym['start_line'])
 
-        click.echo(f"{sym['symbol_type']}: {sym['symbol_name']}")
-        click.echo(f"  File: {sym['file_path']}:{sym['start_line']}-{sym['end_line']}")
-        click.echo(f"  Language: {sym['language']}")
+        click.echo(f"{sym['symbol_name']} ({loc}) {sym['language']}")
         if sym.get('signature'):
-            click.echo(f"  Signature: {sym['signature']}")
+            click.echo(f"  sig: {sym['signature']}")
         if sym.get('docstring'):
-            click.echo(f"  Doc: {sym['docstring']}")
+            click.echo(f"  doc: {sym['docstring'][:200]}")
         if callers:
-            click.echo(f"  Callers ({len(callers)}):")
-            for c in callers[:10]:
-                click.echo(f"    {c['symbol_type']} {c['symbol_name']} ({c['edge_file']}:{c['line_number']})")
+            callers_str = ", ".join(f"{c['symbol_name']}:{c['line_number']}" for c in callers[:10])
+        click.echo(f"  callers: {callers_str}")
         if callees:
-            click.echo(f"  Calls ({len(callees)}):")
-            for c in callees[:10]:
-                click.echo(f"    {c['from_name']} (line {c['line_number']})")
+            callees_str = ", ".join(f"{c['from_name']}:{c['line_number']}" for c in callees[:10])
+            click.echo(f"  calls: {callees_str}")
     finally:
         indexer.close()
 
@@ -749,11 +750,10 @@ def code_callers(symbol_name, root):
     try:
         results = indexer.get_callers(symbol_name)
         if not results:
-            click.echo(f"No callers found for '{symbol_name}'.")
+            click.echo(f"No callers for '{symbol_name}'.")
             return
-        click.echo(f"Callers of {symbol_name} ({len(results)}):")
-        for r in results:
-            click.echo(f"  {r['symbol_type']} {r['symbol_name']} in {r['edge_file']}:{r['line_number']}")
+        results_str = ", ".join(f"{r['symbol_name']}:{r['line_number']}" for r in results[:20])
+        click.echo(f"callers of {symbol_name}: {results_str}")
     finally:
         indexer.close()
 
@@ -770,11 +770,41 @@ def code_callees(symbol_name, root, file_path):
     try:
         results = indexer.get_callees(symbol_name, file_path or "")
         if not results:
-            click.echo(f"No callees found for '{symbol_name}'.")
+            click.echo(f"No callees for '{symbol_name}'.")
             return
-        click.echo(f"Callees of {symbol_name} ({len(results)}):")
-        for r in results:
-            click.echo(f"  {r['from_name']} at {r['file_path']}:{r['line_number']}")
+        results_str = ", ".join(f"{r['from_name']}:{r['line_number']}" for r in results[:20])
+        click.echo(f"callees of {symbol_name}: {results_str}")
+    finally:
+        indexer.close()
+
+
+@code.command("trace")
+@click.argument('symbol_name')
+@click.option('--root', default='.', help='Project root directory')
+@click.option('--direction', default='both', type=click.Choice(['inbound', 'outbound', 'both']))
+def code_trace(symbol_name, root, direction):
+    """Trace call chain: inbound (callers), outbound (callees), or both."""
+    from indexer import CodeIndexer, CODE_DB_FILENAME
+    import os
+    db_path = os.path.join(os.path.abspath(root), CODE_DB_FILENAME)
+    if not os.path.exists(db_path):
+        click.echo(f"No code index at {db_path}. Run `kb code init {root}` first.")
+        return
+    indexer = CodeIndexer(root)
+    try:
+        out = []
+        if direction in ('inbound', 'both'):
+            callers = indexer.get_callers(symbol_name)
+            if callers:
+                out.append(f"<- {', '.join(c['symbol_name'] for c in callers[:8])}")
+        if direction in ('outbound', 'both'):
+            callees = indexer.get_callees(symbol_name)
+            if callees:
+                out.append(f"-> {', '.join(c['from_name'] for c in callees[:8])}")
+        if not out:
+            click.echo(f"{symbol_name}: no call chain")
+            return
+        click.echo(f"{symbol_name}: {'; '.join(out)}")
     finally:
         indexer.close()
 
@@ -791,13 +821,7 @@ def code_status(root):
         if not stats.get("indexed"):
             click.echo("No code indexed. Run `kb code init` first.")
             return
-        click.echo(f"Project: {stats.get('name', '?')}")
-        click.echo(f"  Root: {stats.get('root_path', '?')}")
-        click.echo(f"  DB: {indexer.db_path}")
-        click.echo(f"  Files: {stats['file_count']}")
-        click.echo(f"  Symbols: {stats['symbol_count']}")
-        click.echo(f"  Edges: {stats.get('edges', 0)}")
-        click.echo(f"  Last indexed: {stats.get('last_indexed', 'never')}")
+        click.echo(f"{stats.get('name', '?')}: {stats['file_count']}f {stats['symbol_count']}s {stats.get('edges', 0)}e")
     finally:
         indexer.close()
 

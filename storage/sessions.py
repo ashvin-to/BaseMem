@@ -487,7 +487,7 @@ class SessionManager:
         for nb in rows:
             if nb.get("source") == "auto" and nb.get("link_type") == "auto":
                 self.reinforce_link(nid, nb["id"])
-        return [dict(r) for r in rows]
+        return [{k: r[k] for k in r.keys()} for r in rows]
 
     def _auto_link_note(self, note_id, topic_slug):
         cursor = self.storage.connection.cursor()
@@ -1142,7 +1142,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
 def _get_planet_row(conn: sqlite3.Connection, topic: str) -> Optional[dict]:
     cursor = conn.cursor()
     row = cursor.execute("SELECT * FROM planets WHERE topic = ?", (topic,)).fetchone()
-    return dict(row) if row else None
+    return {k: row[k] for k in row.keys()} if row else None
 
 
 def _get_notes(conn: sqlite3.Connection, topic: str) -> list:

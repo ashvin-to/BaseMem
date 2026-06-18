@@ -33,6 +33,16 @@ BaseMem tools are loaded lazily. Use `call_mcp_tool` with `ServerName: "basemem-
    *ALWAYS call this before your first answer*
 3. Review the returned context. Prefer existing decisions. Do NOT re-ask what's already recorded.
 
+### Mandatory Code-Graph Check (BEFORE reading any source file)
+
+Before you open any source file (`.py`, `.ts`, `.rs`, `.js`, etc.):
+
+1. Check if `.basemem.code.db` exists in the project root: `ls <project_root>/.basemem.code.db` or `execute_command`
+2. If it exists → use `code_search`/`code_node`/`code_callers`/`code_callees` instead of reading files
+3. If it doesn't exist → run `code_init(project_root)` first, then query
+
+**FAILURE MODE:** You will default to `Read` because it's the most basic tool. Do NOT. The code graph almost certainly exists — check it first. A single `code_search` call (~200 tokens) beats reading a source file (~4000+ tokens).
+
 ### Mandatory Write-Back (AFTER completing work)
 
 1. `call_mcp_tool(ServerName="basemem-memory", ToolName="add_note", Arguments={"topic": "...", "kind": "decision", "content": "..."})`
@@ -57,20 +67,40 @@ When you need to understand code structure (find a function, trace callers, chec
 
 **DO NOT**: Read source files directly — that dumps hundreds of lines into context
 
-**Why**: `code_node` returns the function's signature, docstring, file location, callers, and callees in ~500 tokens. Reading the same source file to extract this information costs 5-20x more tokens. The graph already knows the structure — use it.
+**Why**: Code MCP tools return compact output (1-10 lines). Reading source files costs 5-20x more tokens.
 
 **Workflow**:
 1. `code_search` to find the symbol
 2. `code_node` to get full details (signature, location, callers, callees)
 3. Only read the file if you actually need the full implementation body
 4. `code_callers` / `code_callees` to trace dependencies without reading anything
+5. `code_trace` for a single-line call chain
+
+### ⚠️ AGENT CONCISENESS: Output as few tokens as possible
+
+When responding to the user:
+- **Answer directly** in 1-4 lines when possible. No preamble, no explanation, no summary.
+- **One word is fine** for simple answers (yes/no, a value, a command).
+- **No "Here is what I did"** wrap-up text after completing work. Just stop.
+- **No "Let me" or "I'll"** planning language — just do it and return the result.
+- **No explaining your code** unless the user explicitly asks for an explanation.
+- **No emoji** unless the user uses them first.
+- This applies to both your responses AND your tool output formatting.
+
+The code MCP tools now use compact output formats. Example savings:
+- `get_agent_context`: ~67% fewer tokens
+- `code_node`: ~41% fewer tokens  
+- `code_search`: ~34% fewer tokens
+- `code_callers`/`code_callees`: single line vs multi-line
+- `code_trace`: ~7 tokens for a complete call chain
+- `agent response`: ~52% fewer tokens
 
 ### Per-Project Code DB
 Each project stores its own `.basemem.code.db` in the project root. **You must `code_init` a project before searching it.**
 
 ### Shell Commands (via `execute_command`)
 - `kb code init [path] [--watch]` — index a project; `--watch` auto-reindexes on file changes
-- `kb code search <query> --root <path>` — search symbols (defaults to cwd)
+- `kb code search <query> --root <path> [--regex]` — search symbols (defaults to cwd); `--regex` uses Python regex instead of FTS5
 - `kb code node <id|name> --root <path>` — file, signature, docstring, callers/callees
 - `kb code callers <function> --root <path>` — what calls a given symbol
 - `kb code callees <function> --root <path>` — what a symbol calls
@@ -80,7 +110,7 @@ Each project stores its own `.basemem.code.db` in the project root. **You must `
 
 ### MCP Tools (on basemem-memory server) — all require `project_root`
 - `code_init(project_root)` — index a project into `.basemem.code.db`
-- `code_search(project_root, query, limit)` — search symbols
+- `code_search(project_root, query, limit, use_regex=False)` — search symbols; `use_regex=True` for Python regex patterns
 - `code_node(project_root, symbol_identifier)` — symbol details
 - `code_callers(project_root, symbol_name)` — find callers
 - `code_callees(project_root, symbol_name)` — find callees
@@ -107,8 +137,11 @@ If you find yourself thinking any of the following, STOP and check memory instea
 | "I need to be helpful first" | Being helpful means not repeating past mistakes |
 | "I'll do it in the background" | You can't; check synchronously before your first response |
 | "This doesn't apply to coding tasks" | Memory applies to every topic |
-| "I'll read the file to find the function" | Use `code_search` + `code_node` instead — graph queries cost 5-20x fewer tokens than file reads |
-| "I need to see the source to understand it" | You need the signature + callers + callees, not the full implementation |
+| "I'll read the file to find the function" | Use `code_search` + `code_node` — graph queries cost 5-20x fewer tokens |
+| "I need to see the source to understand it" | Use `code_node` (signature + callers + callees) or `code_trace` (call chain in ~7 tokens) |
+| "I'll explain what I did" | No preamble, no wrap-up, no summary. Answer directly. |
+| "I'll just Read the file" | STOP. Check if `.basemem.code.db` exists first. `code_search` costs 200 tok vs Read costs 4000+ tok. |
+| "Read is the most basic tool" | That's why you reach for it by habit. Break the habit — check code graph first. |
 
 ## Instruction Priority
 

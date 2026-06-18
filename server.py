@@ -660,6 +660,7 @@ def code_search():
     if not query:
         return jsonify({"error": "Missing query"}), 400
     limit = int(request.args.get("limit", 20))
+    use_regex = request.args.get("regex", "").lower() in ("true", "1", "yes")
     from .indexer import CodeIndexer
     from .indexer.indexer import CODE_DB_FILENAME
     db_path = os.path.join(root, CODE_DB_FILENAME)
@@ -667,7 +668,7 @@ def code_search():
         return jsonify({"error": f"No index at {db_path}"}), 404
     indexer = CodeIndexer(root)
     try:
-        results = indexer.search_symbols(query, limit=limit)
+        results = indexer.search_symbols(query, limit=limit, use_regex=use_regex)
         return jsonify(results)
     finally:
         indexer.close()
