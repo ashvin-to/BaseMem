@@ -56,9 +56,6 @@ test-summary.md
 htmlcov/
 
 # Build
-dist/
-build/
-*.egg-info/
 
 # Logs
 logs/
@@ -66,7 +63,6 @@ logs/
 
 # md files
 AGENTS.md
-.basemem-*.md
 ARCHITECTURE.md
 IDEA.md
 IMPLEMENTATION.md

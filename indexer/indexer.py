@@ -82,6 +82,16 @@ class CodeIndexer:
     def close(self):
         self.conn.close()
 
+    @staticmethod
+    def _ensure_gitignore(project_root: str):
+        gitignore = Path(project_root) / ".gitignore"
+        if not gitignore.exists():
+            return
+        line = f"\n{CODE_DB_FILENAME}\n"
+        content = gitignore.read_text()
+        if CODE_DB_FILENAME not in content:
+            gitignore.write_text(content.rstrip() + line)
+
     def index_project(
         self,
         root_path: Optional[str] = None,
@@ -90,6 +100,7 @@ class CodeIndexer:
     ):
         """Index an entire project directory."""
         root = Path(root_path or self.project_root).resolve()
+        self._ensure_gitignore(str(root))
         if not root.is_dir():
             raise ValueError(f"Not a directory: {root}")
 
@@ -185,9 +196,34 @@ class CodeIndexer:
         return [dict(r) for r in cur.fetchall()]
 
     def search_symbols(
-        self, query: str, limit: int = 20
+        self, query: str, limit: int = 20, use_regex: bool = False
     ) -> list[dict]:
         """Full-text search across code symbols (name, signature, docstring, file_path, type, kind)."""
+        import re
+
+        if use_regex:
+            try:
+                pattern = re.compile(query)
+            except re.error as e:
+                return [{"error": f"Invalid regex: {e}"}]
+            cur = self.conn.execute(
+                """SELECT cs.id, cs.file_path, cs.symbol_name, cs.symbol_type,
+                          cs.language, cs.signature, cs.start_line, cs.end_line,
+                          cs.docstring, cs.kind
+                   FROM code_symbols cs
+                   ORDER BY cs.symbol_name"""
+            )
+            results = []
+            for r in cur.fetchall():
+                fields = [r["symbol_name"] or "", r["signature"] or "",
+                          r["docstring"] or "", r["file_path"] or "",
+                          r["symbol_type"] or "", r["kind"] or ""]
+                if any(pattern.search(f) for f in fields):
+                    results.append(dict(r))
+                    if len(results) >= limit:
+                        break
+            return results
+
         cur = self.conn.execute(
             """SELECT cs.id, cs.file_path, cs.symbol_name, cs.symbol_type,
                       cs.language, cs.signature, cs.start_line, cs.end_line,

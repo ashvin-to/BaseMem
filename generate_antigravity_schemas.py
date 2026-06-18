@@ -7,7 +7,7 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).parent.absolute()
 MCP_PYTHON = str(BASE_DIR / "venv" / "bin" / "python3")
-MCP_SCRIPT = str(BASE_DIR / "mcp-server.py")
+MCP_SCRIPT = str(BASE_DIR / "mem-mcp.py")
 
 db_path = os.environ.get("BASEMEM_DB_PATH", str(Path.home() / ".basemem" / "basemem.db"))
 env = os.environ.copy()

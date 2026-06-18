@@ -19,8 +19,8 @@ fi
 echo "Installing core engine..."
 "$BASE_DIR/venv/bin/pip" install -q -r "$BASE_DIR/requirements.txt"
 
-KB_BIN_DIR="${BASEMEM_BIN_DIR:-$HOME/.local/bin}"
-mkdir -p "$KB_BIN_DIR"
+MEM_BIN_DIR="${BASEMEM_BIN_DIR:-$HOME/.local/bin}"
+mkdir -p "$MEM_BIN_DIR"
 
 write_executable() {
   local target="$1"
@@ -65,13 +65,13 @@ path.write_text(new_text)
 PY
 }
 
-echo "Installing kb command..."
-KB_WRAPPER="#!/bin/bash
-$BASE_DIR/venv/bin/python3 $BASE_DIR/kb.py --db $DATA_DIR/basemem.db \"\$@\""
-write_executable "$KB_BIN_DIR/kb" "$KB_WRAPPER"
+echo "Installing mem command..."
+MEM_WRAPPER="#!/bin/bash
+$BASE_DIR/venv/bin/python3 $BASE_DIR/mem.py --db $DATA_DIR/basemem.db \"\$@\""
+write_executable "$MEM_BIN_DIR/mem" "$MEM_WRAPPER"
 
 echo "Installing MCP server entry point..."
-cat <<'PYEOF' >"$BASE_DIR/mcp-server.py"
+cat <<'PYEOF' >"$BASE_DIR/mem-mcp.py"
 #!/usr/bin/env python3
 """MCP server entry point for BaseMem agent memory."""
 import sys
@@ -82,14 +82,14 @@ from basemem.mcp.server import server
 if __name__ == "__main__":
     server.run()
 PYEOF
-chmod 755 "$BASE_DIR/mcp-server.py"
+chmod 755 "$BASE_DIR/mem-mcp.py"
 
 echo "Installing basemem package in venv..."
 "$BASE_DIR/venv/bin/pip" install -q -e "$BASE_DIR"
 
 
 MCP_PYTHON="$BASE_DIR/venv/bin/python3"
-MCP_SCRIPT="$BASE_DIR/mcp-server.py"
+MCP_SCRIPT="$BASE_DIR/mem-mcp.py"
 BASEMEM_DB_PATH="$DATA_DIR/basemem.db"
 
 echo "Installing Gemini extension..."

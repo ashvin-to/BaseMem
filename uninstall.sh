@@ -120,7 +120,7 @@ if changed:
 PY
 }
 
-for bin in "$HOME/.local/bin/kb" "/usr/local/bin/kb"; do
+for bin in "$HOME/.local/bin/mem" "/usr/local/bin/mem"; do
   [ -f "$bin" ] || continue
   if grep -q "$BASE_DIR" "$bin"; then
     if confirm "Remove $bin?"; then
@@ -135,7 +135,7 @@ for bin in "$HOME/.local/bin/kb" "/usr/local/bin/kb"; do
 done
 
 echo "Removing MCP server entry point..."
-rm -f "$BASE_DIR/mcp-server.py"
+rm -f "$BASE_DIR/mem-mcp.py"
 
 echo "Removing MCP config entries from agent settings..."
 remove_mcp_entry "$HOME/.gemini/settings.json" "basemem-memory"
