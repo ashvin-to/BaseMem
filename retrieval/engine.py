@@ -17,7 +17,7 @@ system falls back to BM25-only retrieval automatically.
 Complexity: O(k log k) where k is number of nodes
 """
 
-from typing import List, Dict, Set
+from typing import List
 import logging
 
 from modelsimport Node, RetrievalResult

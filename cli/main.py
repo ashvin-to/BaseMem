@@ -4,7 +4,6 @@ import click
 from pathlib import Path
 import logging
 import os
-import sys
 
 from storage.db import StorageManager
 

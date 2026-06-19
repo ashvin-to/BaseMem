@@ -1,6 +1,6 @@
 """BM25 retriever for keyword-based search"""
 
-from typing import List, Tuple, Dict, Set
+from typing import List, Tuple, Dict
 from collections import Counter
 import math
 import logging

@@ -23,7 +23,7 @@ Semantic Gravity Algorithm:
 Complexity: O(n) for new node auto-linking where n = existing nodes
 """
 
-from typing import List, Dict, Set, Tuple, Optional
+from typing import List, Dict, Set, Optional
 from collections import deque
 import logging
 import math

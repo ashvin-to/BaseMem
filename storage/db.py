@@ -20,7 +20,7 @@ import sqlite3
 import json
 import re
 from pathlib import Path
-from typing import List, Optional, Dict, Any, Set, Tuple
+from typing import List, Optional, Dict, Any
 from datetime import datetime
 import logging
 
@@ -393,24 +393,6 @@ class StorageManager:
 
         rows = cursor.fetchall()
         return [self._row_to_edge(row) for row in rows]
-
-    def log_node_usage(self, node_id: str, query: str, used_in_answer: bool) -> None:
-        """Log node usage for feedback loop"""
-        cursor = self.connection.cursor()
-        cursor.execute("""
-            INSERT INTO node_usage (node_id, query, used_in_answer, timestamp)
-            VALUES (?, ?, ?, ?)
-        """, (node_id, query, used_in_answer, datetime.utcnow().isoformat()))
-        self.connection.commit()
-
-    def update_node_weight(self, node_id: str, weight: float) -> None:
-        """Update node weight for ranking"""
-        cursor = self.connection.cursor()
-        cursor.execute("""
-            UPDATE nodes SET weight = ?, last_accessed = ?
-            WHERE id = ?
-        """, (weight, datetime.utcnow().isoformat(), node_id))
-        self.connection.commit()
 
     def delete_node(self, node_id: str) -> None:
         """Delete a node and its edges"""

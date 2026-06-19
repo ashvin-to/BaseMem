@@ -1066,13 +1066,7 @@ class SessionManager:
 
 # ── Module-level helpers ──────────────────────────────────
 
-_SCHEMA_INITIALIZED = False
-
-
 def _ensure_schema(conn: sqlite3.Connection) -> None:
-    global _SCHEMA_INITIALIZED
-    if _SCHEMA_INITIALIZED:
-        return
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS planets (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1124,7 +1118,6 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             UNIQUE(from_planet_id, to_planet_id, relation)
         );
     """)
-    # Migrate existing tables — add columns that may be missing
     for col, dtype in [("confidence", "REAL DEFAULT 1.0"), ("source", "TEXT DEFAULT 'auto'"), ("updated_at", "TEXT DEFAULT (datetime('now'))")]:
         try:
             conn.execute(f"ALTER TABLE note_links ADD COLUMN {col} {dtype}")
@@ -1136,7 +1129,6 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         except Exception:
             pass
     conn.commit()
-    _SCHEMA_INITIALIZED = True
 
 
 def _get_planet_row(conn: sqlite3.Connection, topic: str) -> Optional[dict]:

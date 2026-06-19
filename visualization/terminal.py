@@ -1,7 +1,7 @@
 """Terminal-based graph visualization using ASCII art"""
 
 import os
-from typing import Dict, List, Set
+from typing import Set
 from collections import defaultdict
 import textwrap
 from modelsimport Node

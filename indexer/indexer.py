@@ -1,6 +1,5 @@
 """Indexes a codebase into code_symbols/code_edges tables."""
 
-import hashlib
 import logging
 import os
 import sqlite3

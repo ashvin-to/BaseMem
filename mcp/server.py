@@ -12,9 +12,6 @@ def get_db_path() -> str:
     return path
 
 
-_NOT_FOUND = object()
-
-
 def _resolve_db_path() -> str:
     """Resolve DB path without side effects."""
     from_env = _env_path()
@@ -44,55 +41,16 @@ def _env_path() -> "str | None":
     return None
 
 
-def _get_note(topic: str, kind: str, content: str) -> "dict | None":
-    """Query notes by topic, kind, and content."""
-    import sqlite3
-
-    db_path = get_db_path()
-    if not os.path.isfile(db_path):
-        return None
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    try:
-        cur = conn.execute(
-            "SELECT id, topic, kind, content, created_at, updated_at FROM notes WHERE topic = ? AND kind = ? AND content = ? LIMIT 1",
-            (topic, kind, content),
-        )
-        row = cur.fetchone()
-        return dict(row) if row else None
-    finally:
-        conn.close()
-
-
-def _serialize_nodes(rows) -> "list[dict]":
-    """Convert node rows to dicts."""
-    return [
-        {
-            "id": r["id"],
-            "topic": r["topic"],
-            "content": r["content"],
-            "created_at": r["created_at"],
-            "updated_at": r["updated_at"],
-        }
-        for r in rows
-    ]
-
-
 import os
-import shutil
 import sqlite3
 
 from mcp.server.fastmcp import FastMCP
 
 server = FastMCP("basemem-mcp")
 
-_SCHEMA_INITIALIZED = False
 
 def _ensure_schema():
     """Create planets and notes tables if they don't exist."""
-    global _SCHEMA_INITIALIZED
-    if _SCHEMA_INITIALIZED:
-        return
     db_path = _resolve_db_path()
     if not os.path.isfile(db_path):
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
@@ -129,102 +87,240 @@ def _ensure_schema():
             );
         """)
         conn.commit()
-        _SCHEMA_INITIALIZED = True
     finally:
         conn.close()
 
-def _ensure_db_path():
-    """Ensure db dir exists; called from SessionManager."""
-    db_path = _resolve_db_path()
-    os.makedirs(os.path.dirname(db_path), exist_ok=True)
-    return db_path
 
 
-_REMINDER = "\n\n---\nAfter your response, call log_turn(topic=..., content=...) to persist this interaction."
+@server.tool(description="Index/refresh project code graph (tree-sitter).")
+def code_init(project_root: str) -> str:
+    """Index a project's source code into a per-project .basemem.code.db."""
+    import os
+    if not os.path.isdir(project_root):
+        return f"Directory not found: {project_root}"
+
+    from ..indexer import CodeIndexer
+    indexer = CodeIndexer(project_root)
+    try:
+        result = indexer.index_project(max_workers=4)
+        return (
+            f"Indexed {result['files']} files, {result['symbols']} symbols, "
+            f"{result['edges']} edges in {result['elapsed']:.1f}s\n"
+            f"DB: {indexer.db_path}"
+        )
+    finally:
+        indexer.close()
 
 
-@server.tool(
-    description=(
-        "Get the relevant agent context for a given topic. "
-        "Call this first before answering any user question. "
-        "Returns structured context about the topic including current state, next steps, and notes. "
-        "This is the primary entry point for agent memory lookup."
-    )
-)
-def get_agent_context(topic: str, query: str = "") -> str:
-    """Retrieve agent context for a given topic from the knowledge base."""
+def _detect_project_root() -> str:
+    """Walk up from CWD to find a project root with .basemem.code.db."""
+    import os
+    from ..indexer import CODE_DB_FILENAME
+    cwd = os.getcwd()
+    parent = cwd
+    while True:
+        if os.path.isdir(os.path.join(parent, ".git")) or os.path.isfile(os.path.join(parent, CODE_DB_FILENAME)):
+            return parent
+        new_parent = os.path.dirname(parent)
+        if new_parent == parent:
+            return cwd
+        parent = new_parent
+
+
+def _fmt_loc(file_path: str) -> str:
+    """Short file path: strip common prefixes, keep last 2 dirs + filename."""
+    parts = file_path.replace("\\", "/").split("/")
+    if len(parts) > 3:
+        return "/".join(parts[-3:])
+    return file_path
+
+
+@server.tool(description="Find code symbols by name/signature. Single match includes callers/callees. REPLACES grep/glob/Read for code exploration.")
+def code_find(query: str, project_root: str = "", limit: int = 20, use_regex: bool = False) -> str:
+    """Search for code symbols in a project's .basemem.code.db."""
+    import os
+    from ..indexer import CodeIndexer, CODE_DB_FILENAME
+    if not project_root:
+        project_root = _detect_project_root()
+    db_path = os.path.join(project_root, CODE_DB_FILENAME)
+    if not os.path.exists(db_path):
+        _ci = CodeIndexer(project_root)
+        try:
+            _ci.index_project(max_workers=4)
+        finally:
+            _ci.close()
+    indexer = CodeIndexer(project_root)
+    try:
+        sym = None
+        try:
+            sid = int(query)
+            sym = indexer.get_symbol(sid)
+        except ValueError:
+            pass
+
+        if not sym:
+            symbols = indexer.get_symbol_by_name(query)
+            if len(symbols) == 1:
+                sym = symbols[0]
+            elif len(symbols) > 1:
+                parts = [f"Multiple '{query}':"]
+                for s in symbols:
+                    loc = _fmt_loc(s['file_path'])
+                    sig = f" {s['signature'][:60]}" if s.get('signature') else ""
+                    parts.append(f"  [{s['id']}] {s['symbol_name']} ({loc}){sig}")
+                return "\n".join(parts)
+
+        if sym:
+            callers = indexer.get_callers(sym['symbol_name'])
+            callees = indexer.get_callees(sym['symbol_name'], sym['file_path'])
+            loc = _fmt_loc(sym['file_path'])
+            parts = [f"{sym['symbol_name']} ({loc}) {sym['language']}"]
+            if sym.get('signature'):
+                parts.append(f"  sig: {sym['signature']}")
+            if sym.get('docstring'):
+                parts.append(f"  doc: {sym['docstring'][:200]}")
+            if callers:
+                cstr = ", ".join(f"{c['symbol_name']}:{c['line_number']}" for c in callers[:10])
+                parts.append(f"  callers: {cstr}")
+            if callees:
+                cstr = ", ".join(f"{c['from_name']}:{c['line_number']}" for c in callees[:10])
+                parts.append(f"  calls: {cstr}")
+            return "\n".join(parts)
+
+        results = indexer.search_symbols(query, limit=limit, use_regex=use_regex)
+        if results:
+            parts = [f"{len(results)} match(es):"]
+            for r in results:
+                loc = _fmt_loc(r['file_path'])
+                sig = f" {r['signature'][:60]}" if r.get('signature') else ""
+                parts.append(f"  [{r['id']}] {r['symbol_name']} ({loc}){sig}")
+            return "\n".join(parts)
+
+        # Browse fallback — list all symbols grouped by file
+        import sqlite3
+        _c = indexer.conn
+        total = _c.execute("SELECT COUNT(*) FROM code_symbols").fetchone()[0]
+        files = _c.execute("SELECT COUNT(DISTINCT file_path) FROM code_symbols").fetchone()[0]
+        parts = [f"📁 {os.path.basename(project_root)} — {files}f {total}s\n"]
+        parts.append(f"No match for '{query}' — browse symbols by file (call code_find with an ID for callers):\n")
+        for row in _c.execute("""
+            SELECT file_path, id, symbol_name, symbol_type, start_line
+            FROM code_symbols
+            ORDER BY file_path, start_line
+            LIMIT 200
+        """):
+            typemark = "🧩" if row["symbol_type"] in ("function", "method") else "📦"
+            parts.append(f"  [{row['id']}] {typemark} {row['symbol_name']} ({row['file_path']}:{row['start_line']})")
+        if total > 200:
+            parts.append(f"\n  ... and {total - 200} more symbols (be more specific)")
+        return "\n".join(parts)
+    finally:
+        indexer.close()
+
+
+@server.tool(description="Scan for indexed code projects (comma-separated paths).")
+def code_list_projects(search_root: str = "") -> str:
+    """Scan for all .basemem.code.db files on the system."""
+    from ..indexer.indexer import find_code_projects
+    projects = find_code_projects(search_root)
+    if not projects:
+        return "No projects found."
+    parts = [f"{len(projects)} project(s):"]
+    for p in sorted(projects, key=lambda x: x["name"]):
+        parts.append(f"  {p['name']}: {p['symbols']}s {p['files']}f")
+    return "\n".join(parts)
+
+
+# ── End Code Graph Tools ──────────────────────────────────────────
+
+
+
+
+@server.tool(description="Get structured context for a topic (state, code stats, decisions, facts).")
+def get_agent_context(topic: str = "", project: str = "", query: str = "") -> str:
+    """Get session context for a topic — always returns something useful."""
     import sqlite3
+    from ..indexer import CODE_DB_FILENAME
+
+    if project and not topic:
+        topic = project
+    if not topic:
+        return "ctx: (unknown)\n  state: Provide `project='folder'` or `topic='name'`."
+
+    lines = [f"ctx: {topic}"]
+    q = query.strip().lower()
 
     db_path = get_db_path()
-
     if not os.path.isfile(db_path):
-        return (
-            f"No knowledge base found at {db_path}. "
-            f"Run `kb init` to create one."
-        )
+        lines.append("  state: (no memory db yet — will be created on first write)")
+        return "\n".join(lines)
 
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
-        # Auto-log this context retrieval as a turn
-        try:
-            conn.execute(
-                "INSERT INTO notes (topic, kind, content, agent_id, turn_index) VALUES (?, 'turn', ?, 'system', 0)",
-                (topic, f"Context retrieved (query: {query or 'none'})"),
-            )
-            conn.commit()
-        except Exception:
-            pass
+        conn.execute(
+            "INSERT OR IGNORE INTO notes (topic, kind, content, agent_id, turn_index) VALUES (?, 'turn', ?, 'system', 0)",
+            (topic, f"Context retrieved (query: {query or 'none'})"),
+        )
+        conn.commit()
+    except Exception:
+        pass
 
+    try:
         planet = conn.execute(
             "SELECT * FROM planets WHERE topic = ?", (topic,)
         ).fetchone()
 
-        notes = conn.execute(
-            "SELECT kind, content FROM notes WHERE topic = ? ORDER BY created_at DESC LIMIT 20",
-            (topic,),
-        ).fetchall()
-
-        decisions = [
-            n["content"]
-            for n in notes
-            if n["kind"] == "decision"
-        ]
-        issues = [
-            n["content"]
-            for n in notes
-            if n["kind"] == "issue"
-        ]
-        facts = [
-            n["content"]
-            for n in notes
-            if n["kind"] == "fact"
-        ]
-
-        parts = [f"ctx: {topic}"]
         if planet:
             if planet["current_state"]:
-                parts.append(f"  state: {planet['current_state']}")
+                lines.append(f"  state: {planet['current_state']}")
             if planet["next_step"]:
-                parts.append(f"  next: {planet['next_step']}")
-        if decisions:
-            parts.extend(f"  dec: {d}" for d in decisions[-5:])
-        if issues:
-            parts.extend(f"  iss: {i}" for i in issues[-5:])
-        if facts:
-            parts.extend(f"  fact: {f}" for f in facts[-5:])
+                lines.append(f"  next: {planet['next_step']}")
+        else:
+            lines.append("  state: (no context yet)")
+            topics = conn.execute(
+                "SELECT topic FROM planets WHERE topic LIKE ? LIMIT 5",
+                (f"%{topic}%",),
+            ).fetchall()
+            if topics:
+                names = ", ".join(r[0] for r in topics)
+                lines.append(f"  (did you mean: {names})")
 
-        return "\n".join(parts) + _REMINDER
+        limit = 20 if q else 5
+        notes = conn.execute(
+            "SELECT kind, content FROM notes WHERE topic = ? AND kind IN ('decision','issue','fact') ORDER BY created_at DESC LIMIT ?",
+            (topic, limit),
+        ).fetchall()
+        for n in notes:
+            if not q or q in n["content"].lower():
+                tag = {"decision": "dec", "issue": "iss", "fact": "fact"}[n["kind"]]
+                lines.append(f"  {tag}: {n['content']}")
     finally:
         conn.close()
 
+    try:
+        pr = _detect_project_root()
+        cdb = os.path.join(pr, CODE_DB_FILENAME)
+        if os.path.isfile(cdb):
+            import sqlite3 as _sc
+            _c = _sc.connect(cdb)
+            try:
+                count = _c.execute("SELECT COUNT(*) FROM code_symbols").fetchone()[0]
+                files = _c.execute("SELECT COUNT(DISTINCT file_path) FROM code_symbols").fetchone()[0]
+                lines.append(f"  code: {files} files, {count} symbols")
+            except Exception:
+                pass
+            finally:
+                _c.close()
+        else:
+            lines.append("  code: (no index yet — auto-indexes on first code_find)")
+    except Exception:
+        pass
 
-@server.tool(
-    description=(
-        "Read all details of a specific topic/planet, including its current state, next steps, decisions, and issues. "
-        "Use this when you need the full picture of a topic, not just a summary."
-    )
-)
+    return "\n".join(lines)
+
+
+@server.tool(description="Read full planet details (state, notes, metadata).")
 def read_planet(topic: str) -> str:
     """Read all details of a specific planet/topic."""
     import json
@@ -269,45 +365,79 @@ def read_planet(topic: str) -> str:
             lines.append(f"  notes ({len(notes)}):")
             for n in notes[:10]:
                 lines.append(f"    [{n['kind'][:4]}] {n['content'][:200]}")
-        return "\n".join(lines) + _REMINDER
+        return "\n".join(lines)
     finally:
         conn.close()
 
 
-@server.tool(
-    description=(
-        "Log a lightweight activity record for a topic. "
-        "Call this after completing a significant action or subtask. "
-        "Useful for tracking what was done across sessions without adding formal notes."
-    )
-)
-def log_turn(topic: str, content: str) -> str:
-    """Log a turn/activity record for a topic."""
+@server.tool(description="Log an interaction: add note(s), update planet state, log turn — all in one call.")
+def log_interaction(
+    topic: str,
+    decision: str = "",
+    fact: str = "",
+    summary: str = "",
+    current_state: str = "",
+    next_step: str = "",
+    activity: str = "",
+) -> str:
+    """Log an interaction: add notes + update planet + log turn in one call."""
     import sqlite3
+    import json
 
     db_path = get_db_path()
     if not os.path.isfile(db_path):
         return f"No knowledge base found at {db_path}."
 
     conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
     try:
-        conn.execute(
-            "INSERT INTO notes (topic, kind, content) VALUES (?, 'turn', ?)",
-            (topic, content),
-        )
+        parts = []
+        for kind, val in [("decision", decision), ("fact", fact), ("summary", summary)]:
+            if val:
+                conn.execute(
+                    "INSERT INTO notes (topic, kind, content) VALUES (?, ?, ?)",
+                    (topic, kind, val),
+                )
+                parts.append(f"note({kind})")
+
+        update_cols = {}
+        if current_state:
+            update_cols["current_state"] = current_state
+        if next_step:
+            update_cols["next_step"] = next_step
+
+        if update_cols:
+            existing = conn.execute(
+                "SELECT * FROM planets WHERE topic = ?", (topic,)
+            ).fetchone()
+            if existing:
+                updates = [f"{k} = ?" for k in update_cols]
+                params = list(update_cols.values()) + [topic]
+                conn.execute(
+                    f"UPDATE planets SET {', '.join(updates)} WHERE topic = ?",
+                    params,
+                )
+            else:
+                conn.execute(
+                    "INSERT INTO planets (topic, current_state, next_step, status, next_steps) VALUES (?, ?, ?, 'active', '[]')",
+                    (topic, update_cols.get("current_state", ""), update_cols.get("next_step", "")),
+                )
+            parts.append("planet_updated")
+
+        if activity:
+            conn.execute(
+                "INSERT INTO notes (topic, kind, content) VALUES (?, 'turn', ?)",
+                (topic, activity),
+            )
+            parts.append("turn_logged")
+
         conn.commit()
-        return f"Turn logged for '{topic}'."
+        return f"{' + '.join(parts) if parts else 'no changes'} for '{topic}'."
     finally:
         conn.close()
 
 
-@server.tool(
-    description=(
-        "Update or create a planet/topic with current state, next step, status, goal, "
-        "files, commands, and handoff notes. Use this to persist progress so future "
-        "sessions can pick up where you left off. Creates the planet if it doesn't exist yet."
-    )
-)
+@server.tool(description="Update or create a planet (state, next_step, goal, files, etc).")
 def update_planet(
     topic: str,
     current_state: str = "",
@@ -404,68 +534,24 @@ def update_planet(
         conn.close()
 
 
-@server.tool(
-    description=(
-        "Add a note to a topic. Use kind='decision' for architectural choices, 'fact' for things you learned, "
-        "'issue' for problems found, or 'turn' for lightweight activity tracking. "
-        "This is how you persist knowledge across sessions."
-    )
-)
-def add_note(topic: str, kind: str, content: str) -> str:
-    """Add a note to a topic (decision, fact, issue, turn)."""
-    import sqlite3
-
-    db_path = get_db_path()
-    if not os.path.isfile(db_path):
-        return f"No knowledge base found at {db_path}."
-
-    valid_kinds = {"decision", "fact", "issue", "turn", "summary"}
-    if kind not in valid_kinds:
-        return f"Invalid kind '{kind}'. Must be one of: {', '.join(sorted(valid_kinds))}"
-
-    dedup = _get_note(topic, kind, content)
-    if dedup:
-        return f"Duplicate note skipped (already exists as id={dedup['id']})."
-
-    conn = sqlite3.connect(db_path)
-    try:
-        conn.execute(
-            "INSERT INTO notes (topic, kind, content) VALUES (?, ?, ?)",
-            (topic, kind, content),
-        )
-        conn.commit()
-        return f"Note added to '{topic}' as a {kind}."
-    finally:
-        conn.close()
 
 
-@server.tool(
-    description=(
-        "Return all raw notes for a planet, formatted for an agent to synthesize into a summary. "
-        "After reading the output, call add_note(topic, 'summary', '<your summary>') to save the summary, "
-        "then call compact_planet to trim old notes."
-    )
-)
+
+@server.tool(description="Get raw notes for agent-driven summarization.")
 def summarize_planet(topic: str, limit: int = 50) -> str:
     """Return all notes for a planet formatted for agent summarization."""
-    from storage.sessions import SessionManager
-    from storage.db import StorageManager
+    from ..storage.sessions import SessionManager
+    from ..storage.db import StorageManager
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
     return manager.summarize_planet(topic, limit=limit)
 
 
-@server.tool(
-    description=(
-        "Trim old notes from a planet, keeping only summary notes and the 30 most recent non-summary notes. "
-        "Call this after summarize_planet + add_note to keep the planet manageable. "
-        "Only call this when the planet has a summary note (kind='summary') to preserve context."
-    )
-)
+@server.tool(description="Trim old notes, keep summaries + 30 recent.")
 def compact_planet(topic: str) -> str:
     """Compact a planet - keep summaries + 30 recent notes, delete the rest."""
-    from storage.sessions import SessionManager
-    from storage.db import StorageManager
+    from ..storage.sessions import SessionManager
+    from ..storage.db import StorageManager
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
     count_before = manager.get_note_count(topic)
@@ -474,13 +560,7 @@ def compact_planet(topic: str) -> str:
     return f"Compacted '{topic}': {count_before} notes -> {count_after} notes kept."
 
 
-@server.tool(
-    description=(
-        "List all available topics/planets in the knowledge base. "
-        "Use this to discover what topics exist before querying for context. "
-        "Returns a list of topic names with their current state summaries."
-    )
-)
+@server.tool(description="List all available planets/topics.")
 def list_planets() -> str:
     """List all topics/planets available in the knowledge base."""
     import sqlite3
@@ -500,23 +580,14 @@ def list_planets() -> str:
         lines = ["# Available Planets"]
         for p in planets:
             name = p["display_topic"] or p["topic"]
-            state = p["current_state"] or "No state set"
-            status_tag = f"[{p['status']}]" if p["status"] and p["status"] != "active" else ""
-            goal = p["goal"] or ""
-            goal_str = f" — {goal[:80]}" if goal else ""
-            lines.append(f"- **{name}** {status_tag}: {state[:120]}{goal_str}")
-        return "\n".join(lines) + _REMINDER
+            status_tag = f" [{p['status']}]" if p["status"] and p["status"] != "active" else ""
+            lines.append(f"- {name}{status_tag}")
+        return "\n".join(lines)
     finally:
         conn.close()
 
 
-@server.tool(
-    description=(
-        "Full-text search across planets, notes, and old nodes. "
-        "Returns matching items with their topic, content preview, and type. "
-        "Use this when you don't know which planet a piece of information belongs to."
-    )
-)
+@server.tool(description="Full-text search across planets, notes, and nodes.")
 def search_nodes(query: str, limit: int = 10) -> str:
     """Full-text search across planets, notes, and nodes."""
     import sqlite3
@@ -562,7 +633,7 @@ def search_nodes(query: str, limit: int = 10) -> str:
             count += 1
 
         # Old nodes
-        from storage.db import StorageManager
+        from ..storage.db import StorageManager
         storage = StorageManager(db_path)
         old_ids = storage.search_nodes_fts(query, limit=limit - count)
         for nid in old_ids:
@@ -580,18 +651,12 @@ def search_nodes(query: str, limit: int = 10) -> str:
         if count == 0:
             return "No matches found."
 
-        return "\n".join(lines) + _REMINDER
+        return "\n".join(lines)
     finally:
         conn.close()
 
 
-@server.tool(
-    description=(
-        "Search notes within a specific planet/topic, filtered by kind (decision/fact/issue/turn). "
-        "Use this when you want to find specific types of notes within a known topic. "
-        "The kind parameter filters to a specific note type."
-    )
-)
+@server.tool(description="Search notes by topic, kind, and text.")
 def search_notes(topic: str, kind: str = "", query: str = "", limit: int = 10) -> str:
     """Search notes by topic, kind, and text."""
     import sqlite3
@@ -628,18 +693,12 @@ def search_notes(topic: str, kind: str = "", query: str = "", limit: int = 10) -
             lines.append(
                 f"\n**[{r['kind'].upper()}] (id={r['id']})**\n{preview}"
             )
-        return "\n".join(lines) + _REMINDER
+        return "\n".join(lines)
     finally:
         conn.close()
 
 
-@server.tool(
-    description=(
-        "Read any node from the knowledge base by its unique node ID. "
-        "Use this after search_nodes returns results — it returns the full content of a specific node, "
-        "not just a preview. Node IDs are returned by search_nodes and search_notes."
-    )
-)
+@server.tool(description="Read a full node by its ID.")
 def get_node(node_id: str) -> str:
     """Read a full node by its ID."""
     import sqlite3
@@ -665,39 +724,27 @@ def get_node(node_id: str) -> str:
             f"**Created:** {row['created_at']}\n"
             f"**Updated:** {row.get('updated_at', 'N/A')}\n"
             f"\n**Content:**\n{row['content']}"
-        ) + _REMINDER
+        )
     finally:
         conn.close()
 
 
-@server.tool(
-    description=(
-        "Create an explicit link between two notes. "
-        "Note IDs are returned by add_note and search_notes (format: note-<number>). "
-        "Use link_type='related' for general connections, 'depends' for dependencies."
-    )
-)
+@server.tool(description="Link two notes with a type and weight.")
 def link_notes(from_note_id: str, to_note_id: str, link_type: str = "related", weight: float = 1.0) -> str:
     """Link two notes together."""
-    from storage.sessions import SessionManager
-    from storage.db import StorageManager
+    from ..storage.sessions import SessionManager
+    from ..storage.db import StorageManager
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
     ok, msg = manager.link_notes(from_note_id, to_note_id, link_type, weight)
     return msg
 
 
-@server.tool(
-    description=(
-        "Find all notes connected to a given note via links. "
-        "Returns the linked notes with their link type and weight. "
-        "Note IDs are in format note-<number>."
-    )
-)
+@server.tool(description="Find notes connected to a given note.")
 def get_note_neighbors(note_id: str) -> str:
     """Get neighbors of a note."""
-    from storage.sessions import SessionManager
-    from storage.db import StorageManager
+    from ..storage.sessions import SessionManager
+    from ..storage.db import StorageManager
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
     neighbors = manager.get_note_neighbors(note_id)
@@ -707,39 +754,28 @@ def get_note_neighbors(note_id: str) -> str:
     for n in neighbors:
         name = n["title"] or n["content"][:80]
         lines.append(f"- note-{n['id']} [{n['link_type']}] (w={n['weight']}) {name}")
-    return "\n".join(lines) + _REMINDER
+    return "\n".join(lines)
 
 
 # ── Planet links ─────────────────────────────────────────────
 
 
-@server.tool(
-    description=(
-        "Link two planets with a relation type. "
-        "Planets are high-level topics/workspaces. "
-        "Use relation='depends' for dependencies, 'related' for general connections."
-    )
-)
+@server.tool(description="Link two planets with a relation type.")
 def link_planets(from_planet: str, to_planet: str, relation: str = "related", weight: float = 1.0) -> str:
     """Link two planets together."""
-    from storage.sessions import SessionManager
-    from storage.db import StorageManager
+    from ..storage.sessions import SessionManager
+    from ..storage.db import StorageManager
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
     ok, msg = manager.link_planets(from_planet, to_planet, relation, weight)
     return msg
 
 
-@server.tool(
-    description=(
-        "Get all planets linked to a given planet. "
-        "Returns the linked planet names, relation types, and weights."
-    )
-)
+@server.tool(description="Get planets linked to a given planet.")
 def get_planet_links(planet: str) -> str:
     """Get planets linked to the given planet."""
-    from storage.sessions import SessionManager
-    from storage.db import StorageManager
+    from ..storage.sessions import SessionManager
+    from ..storage.db import StorageManager
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
     links = manager.get_planet_links(planet)
@@ -748,22 +784,17 @@ def get_planet_links(planet: str) -> str:
     lines = [f"Planets linked to '{planet}':\n"]
     for l in links:
         lines.append(f"- {l['planet']} [{l['relation']}] (w={l['weight']})")
-    return "\n".join(lines) + _REMINDER
+    return "\n".join(lines)
 
 
 # ── Memory tiers ──────────────────────────────────────────────
 
 
-@server.tool(
-    description=(
-        "Set the memory state of a planet: 'hot' (active working notes), "
-        "'warm' (stable knowledge), or 'compacted' (summarized and compressed)."
-    )
-)
+@server.tool(description="Set memory state: hot, warm, or compacted.")
 def set_memory_state(topic: str, state: str) -> str:
     """Set memory tier for a planet."""
-    from storage.sessions import SessionManager
-    from storage.db import StorageManager
+    from ..storage.sessions import SessionManager
+    from ..storage.db import StorageManager
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
     ok, msg = manager.set_memory_state(topic, state)
@@ -773,18 +804,11 @@ def set_memory_state(topic: str, state: str) -> str:
 # ── Graph-aware retrieval ─────────────────────────────────────
 
 
-@server.tool(
-    description=(
-        "Get neighbors of a note up to a given depth. "
-        "Performs weighted traversal returning all connected notes. "
-        "Use depth=1 for direct neighbors, depth=2 for neighbors-of-neighbors. "
-        "min_weight filters by minimum edge weight."
-    )
-)
+@server.tool(description="Weighted neighbor traversal with depth.")
 def get_neighbors_weighted(note_id: str, depth: int = 1, min_weight: float = 0.0) -> str:
     """Weighted neighbor traversal with configurable depth."""
-    from storage.sessions import SessionManager
-    from storage.db import StorageManager
+    from ..storage.sessions import SessionManager
+    from ..storage.db import StorageManager
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
     nid = manager._parse_note_id(note_id)
@@ -796,40 +820,29 @@ def get_neighbors_weighted(note_id: str, depth: int = 1, min_weight: float = 0.0
     lines = [f"Neighbors (depth={depth}, min_weight={min_weight}):\n"]
     for r in results:
         lines.append(f"  note-{r['id']} [{r['link_type']}] (w={r['weight']}, d={r['_depth']}) {r['title'] or r['content'][:60]}")
-    return "\n".join(lines) + _REMINDER
+    return "\n".join(lines)
 
 
-@server.tool(
-    description=(
-        "Extract a weighted subgraph around a note. "
-        "Returns structured JSON with nodes and edges for LLM summarization. "
-        "Use depth=2 for k-hop exploration, min_weight=0.2 to filter weak links."
-    )
-)
+@server.tool(description="Extract weighted subgraph as JSON.")
 def get_subgraph(note_id: str, depth: int = 2, min_weight: float = 0.2) -> str:
     """Extract weighted subgraph around a note."""
     import json
-    from storage.sessions import SessionManager
-    from storage.db import StorageManager
+    from ..storage.sessions import SessionManager
+    from ..storage.db import StorageManager
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
     nid = manager._parse_note_id(note_id)
     if nid is None:
         return f"Invalid note ID: {note_id}"
     result = manager.get_subgraph(nid, depth=depth, min_weight=min_weight)
-    return json.dumps(result, indent=2) + _REMINDER
+    return json.dumps(result, indent=2)
 
 
-@server.tool(
-    description=(
-        "Rank neighbors of a note by weight or confidence. "
-        "Returns neighbors sorted descending by the selected metric."
-    )
-)
+@server.tool(description="Rank neighbors by weight or confidence.")
 def rank_neighbors(note_id: str, by: str = "weight") -> str:
     """Rank neighbors by weight or confidence."""
-    from storage.sessions import SessionManager
-    from storage.db import StorageManager
+    from ..storage.sessions import SessionManager
+    from ..storage.db import StorageManager
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
     nid = manager._parse_note_id(note_id)
@@ -841,21 +854,17 @@ def rank_neighbors(note_id: str, by: str = "weight") -> str:
     lines = [f"Neighbors ranked by {by}:\n"]
     for i, r in enumerate(ranked, 1):
         lines.append(f"  {i}. note-{r['id']} (w={r['weight']}, c={r.get('confidence','?')}) {r['title'] or r['content'][:60]}")
-    return "\n".join(lines) + _REMINDER
+    return "\n".join(lines)
 
 
-@server.tool(
-    description=(
-        "Compute the similarity of the tool call's arguments, not the notes' content. "
-        "Returns both notes' content so the agent can judge similarity. "
-        "The agent should read both, decide a similarity score (0-1), "
-        "then call link_notes with the appropriate weight and confidence."
-    )
-)
+# ── Graph-aware retrieval (continued) ─────────────────────────
+
+
+@server.tool(description="Return two notes for agent similarity comparison.")
 def compute_similarity(note_id_a: str, note_id_b: str) -> str:
     """Return both notes for agent-driven semantic similarity comparison."""
-    from storage.sessions import SessionManager
-    from storage.db import StorageManager
+    from ..storage.sessions import SessionManager
+    from ..storage.db import StorageManager
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
     nid_a = manager._parse_note_id(note_id_a)
@@ -879,17 +888,11 @@ def compute_similarity(note_id_a: str, note_id_b: str) -> str:
     return "\n".join(result)
 
 
-@server.tool(
-    description=(
-        "Rerank a list of note IDs by relevance to a query. "
-        "Returns the query and each note's content so the agent can reorder them. "
-        "The agent should read all notes, then return them in relevance order."
-    )
-)
+@server.tool(description="Return notes for agent-driven reordering.")
 def rerank(query: str, note_ids: list) -> str:
     """Return query + note contents for agent-driven reranking."""
-    from storage.sessions import SessionManager
-    from storage.db import StorageManager
+    from ..storage.sessions import SessionManager
+    from ..storage.db import StorageManager
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
     ids = []
@@ -915,326 +918,29 @@ def rerank(query: str, note_ids: list) -> str:
     return "\n".join(parts)
 
 
-@server.tool(
-    description=(
-        "Decay edge weights by a factor. "
-        "All auto-link weights are multiplied by <factor> (default 0.9). "
-        "Optionally limit to a specific planet."
-    )
-)
+@server.tool(description="Decay auto-link weights by a factor.")
 def edge_decay(factor: float = 0.9, planet: str | None = None) -> str:
     """Apply weight decay to auto-links."""
-    from storage.sessions import SessionManager
-    from storage.db import StorageManager
+    from ..storage.sessions import SessionManager
+    from ..storage.db import StorageManager
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
     result = manager.edge_decay(factor=factor, planet=planet)
     return f"Decayed {result['decayed']} edge(s) by factor {result['factor']}."
 
 
-@server.tool(
-    description=(
-        "Prune edges below a weight threshold. "
-        "Removes auto-links with weight < threshold (default 0.05). "
-        "Optionally limit to a specific planet."
-    )
-)
+@server.tool(description="Prune edges below a weight threshold.")
 def edge_prune(threshold: float = 0.05, planet: str | None = None) -> str:
     """Remove auto-links below weight threshold."""
-    from storage.sessions import SessionManager
-    from storage.db import StorageManager
+    from ..storage.sessions import SessionManager
+    from ..storage.db import StorageManager
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
     result = manager.edge_prune(threshold=threshold, planet=planet)
     return f"Pruned {result['pruned']} edge(s) below threshold {result['threshold']}."
 
 
-# ── Code Graph MCP Tools ──────────────────────────────────────────
-
-
-@server.tool(
-    description=(
-        "Index or re-index a project's source code into a per-project .basemem.code.db. "
-        "Scans source files using tree-sitter (306 languages supported) "
-        "and builds a symbol graph of functions, classes, methods, calls, and imports. "
-        "Run this once per project (stored in <project_root>/.basemem.code.db) "
-        "to enable code_search, code_node, etc."
-    )
-)
-def code_init(project_root: str) -> str:
-    """Index a project's source code into a per-project .basemem.code.db."""
-    import os
-    if not os.path.isdir(project_root):
-        return f"Directory not found: {project_root}"
-
-    from indexer import CodeIndexer
-    indexer = CodeIndexer(project_root)
-    try:
-        result = indexer.index_project(max_workers=4)
-        return (
-            f"Indexed {result['files']} files, {result['symbols']} symbols, "
-            f"{result['edges']} edges in {result['elapsed']:.1f}s\n"
-            f"DB: {indexer.db_path}"
-        )
-    finally:
-        indexer.close()
-
-
-def _fmt_loc(file_path: str, line: int) -> str:
-    """Short file path: strip common prefixes, keep last 2 dirs + filename."""
-    parts = file_path.replace("\\", "/").split("/")
-    if len(parts) > 3:
-        return "/".join(parts[-3:])
-    return file_path
-
-
-@server.tool(
-    description=(
-        "List all indexed code symbols in a project. "
-        "Returns symbols with file locations and line numbers. "
-        "Requires project_root for a project with an existing .basemem.code.db."
-    )
-)
-def code_list(project_root: str, limit: int = 100, offset: int = 0) -> str:
-    """List all code symbols in a project's .basemem.code.db."""
-    import os
-    from indexer import CodeIndexer, CODE_DB_FILENAME
-    db_path = os.path.join(project_root, CODE_DB_FILENAME)
-    if not os.path.exists(db_path):
-        return f"No code index at {db_path}. Run `code_init(\"{project_root}\")` first."
-    indexer = CodeIndexer(project_root)
-    try:
-        stats = indexer.get_project_stats()
-        if not stats.get("indexed"):
-            return "No code indexed."
-        results = indexer.list_symbols(limit=limit, offset=offset)
-        if not results:
-            return "No symbols found."
-        total = stats.get("symbol_count", 0)
-        parts = [f"sym {offset+1}-{offset+len(results)}/{total}"]
-        for r in results:
-            loc = _fmt_loc(r['file_path'], r['start_line'])
-            parts.append(f"  [{r['id']}] {r['symbol_name']} ({loc}) {r['symbol_type'][:4]}")
-        return "\n".join(parts)
-    finally:
-        indexer.close()
-
-
-@server.tool(
-    description=(
-        "Search code symbols by name or signature in a project. "
-        "Returns matching functions, classes, methods with file locations and line numbers. "
-        "Requires project_root for a project with an existing .basemem.code.db. "
-        "Run code_init first to index a project. "
-        "Set use_regex=True to treat query as a Python regex pattern (slower but supports .*|etc)."
-    )
-)
-def code_search(project_root: str, query: str, limit: int = 20, use_regex: bool = False) -> str:
-    """Search for code symbols in a project's .basemem.code.db."""
-    import os
-    from indexer import CodeIndexer, CODE_DB_FILENAME
-    db_path = os.path.join(project_root, CODE_DB_FILENAME)
-    if not os.path.exists(db_path):
-        return f"No code index at {db_path}. Run `code_init` first."
-    indexer = CodeIndexer(project_root)
-    try:
-        results = indexer.search_symbols(query, limit=limit, use_regex=use_regex)
-        if not results:
-            return f"No match for '{query}'."
-        parts = [f"{len(results)} match(es):"]
-        for r in results:
-            loc = _fmt_loc(r['file_path'], r['start_line'])
-            sig = f" {r['signature'][:60]}" if r.get('signature') else ""
-            parts.append(f"  [{r['id']}] {r['symbol_name']} ({loc}){sig}")
-        return "\n".join(parts)
-    finally:
-        indexer.close()
-
-
-@server.tool(
-    description=(
-        "Get detailed information about a specific code symbol by its ID or name. "
-        "Returns source file, location, full signature, docstring, and caller/callee info. "
-        "Requires project_root for a project with an existing .basemem.code.db."
-    )
-)
-def code_node(project_root: str, symbol_identifier: str) -> str:
-    """Get details about a specific code symbol in a project."""
-    import os
-    from indexer import CodeIndexer, CODE_DB_FILENAME
-    db_path = os.path.join(project_root, CODE_DB_FILENAME)
-    if not os.path.exists(db_path):
-        return f"No code index at {db_path}. Run `code_init` first."
-    indexer = CodeIndexer(project_root)
-    try:
-        sym = None
-        try:
-            sid = int(symbol_identifier)
-            sym = indexer.get_symbol(sid)
-        except ValueError:
-            pass
-        if not sym:
-            symbols = indexer.get_symbol_by_name(symbol_identifier)
-            if not symbols:
-                return f"Not found: {symbol_identifier}."
-            sym = symbols[0]
-            if len(symbols) > 1:
-                parts = [f"Multiple '{symbol_identifier}':"]
-                for s in symbols:
-                    loc = _fmt_loc(s['file_path'], s['start_line'])
-                    parts.append(f"  [{s['id']}] ({loc})")
-                return "\n".join(parts)
-
-        callers = indexer.get_callers(sym['symbol_name'])
-        callees = indexer.get_callees(sym['symbol_name'], sym['file_path'])
-        loc = _fmt_loc(sym['file_path'], sym['start_line'])
-
-        parts = [f"{sym['symbol_name']} ({loc}) {sym['language']}"]
-        if sym.get('signature'):
-            parts.append(f"  sig: {sym['signature']}")
-        if sym.get('docstring'):
-            parts.append(f"  doc: {sym['docstring'][:200]}")
-        if callers:
-            callers_str = ", ".join(f"{c['symbol_name']}:{c['line_number']}" for c in callers[:10])
-            parts.append(f"  callers: {callers_str}")
-        if callees:
-            callees_str = ", ".join(f"{c['from_name']}:{c['line_number']}" for c in callees[:10])
-            parts.append(f"  calls: {callees_str}")
-        return "\n".join(parts)
-    finally:
-        indexer.close()
-
-
-@server.tool(
-    description=(
-        "Find all code symbols that call a given function or method name. "
-        "Returns the callers with their file locations. "
-        "Requires project_root for a project with an existing .basemem.code.db."
-    )
-)
-def code_callers(project_root: str, symbol_name: str) -> str:
-    """Find what calls a given symbol in a project."""
-    import os
-    from indexer import CodeIndexer, CODE_DB_FILENAME
-    db_path = os.path.join(project_root, CODE_DB_FILENAME)
-    if not os.path.exists(db_path):
-        return f"No code index at {db_path}. Run `code_init` first."
-    indexer = CodeIndexer(project_root)
-    try:
-        results = indexer.get_callers(symbol_name)
-        if not results:
-            return f"No callers for '{symbol_name}'."
-        callers_str = ", ".join(f"{r['symbol_name']}:{r['line_number']}" for r in results[:20])
-        return f"callers of {symbol_name}: {callers_str}"
-    finally:
-        indexer.close()
-
-
-@server.tool(
-    description=(
-        "Find what a given function or method calls. Shows callees with file locations. "
-        "Requires project_root for a project with an existing .basemem.code.db."
-    )
-)
-def code_callees(project_root: str, symbol_name: str, file_path: str = "") -> str:
-    """Find what a given symbol calls in a project."""
-    import os
-    from indexer import CodeIndexer, CODE_DB_FILENAME
-    db_path = os.path.join(project_root, CODE_DB_FILENAME)
-    if not os.path.exists(db_path):
-        return f"No code index at {db_path}. Run `code_init` first."
-    indexer = CodeIndexer(project_root)
-    try:
-        results = indexer.get_callees(symbol_name, file_path)
-        if not results:
-            return f"No callees for '{symbol_name}'."
-        callees_str = ", ".join(f"{r['from_name']}:{r['line_number']}" for r in results[:20])
-        return f"callees of {symbol_name}: {callees_str}"
-    finally:
-        indexer.close()
-
-
-@server.tool(
-    description=(
-        "Trace call chain for a function (callers and callees). "
-        "Returns a compact one-line chain. "
-        "Requires project_root for a project with an existing .basemem.code.db."
-    )
-)
-def code_trace(project_root: str, symbol_name: str, direction: str = "both") -> str:
-    """Trace call chain: inbound (callers), outbound (callees), or both."""
-    import os
-    from indexer import CodeIndexer, CODE_DB_FILENAME
-    db_path = os.path.join(project_root, CODE_DB_FILENAME)
-    if not os.path.exists(db_path):
-        return f"No code index at {db_path}. Run `code_init` first."
-    indexer = CodeIndexer(project_root)
-    try:
-        out = []
-        if direction in ("inbound", "both"):
-            callers = indexer.get_callers(symbol_name)
-            if callers:
-                out.append(f"<- {', '.join(c['symbol_name'] for c in callers[:8])}")
-        if direction in ("outbound", "both"):
-            callees = indexer.get_callees(symbol_name)
-            if callees:
-                out.append(f"-> {', '.join(c['from_name'] for c in callees[:8])}")
-        if not out:
-            return f"{symbol_name}: no call chain"
-        return f"{symbol_name}: {'; '.join(out)}"
-    finally:
-        indexer.close()
-
-
-@server.tool(
-    description=(
-        "Show code graph indexing status and stats for a project. "
-        "Returns how many files, symbols, and edges are indexed. "
-        "Requires project_root for a project with an existing .basemem.code.db."
-    )
-)
-def code_status(project_root: str) -> str:
-    """Show code graph indexing status for a project."""
-    import os
-    from indexer import CodeIndexer, CODE_DB_FILENAME
-    db_path = os.path.join(project_root, CODE_DB_FILENAME)
-    if not os.path.exists(db_path):
-        return f"No code index at {db_path}. Run `code_init` first."
-    indexer = CodeIndexer(project_root)
-    try:
-        stats = indexer.get_project_stats()
-        if not stats.get("indexed"):
-            return "No code indexed."
-        return (
-            f"{stats.get('name', '?')}: {stats['file_count']}f {stats['symbol_count']}s "
-            f"{stats['edges']}e | last: {stats.get('last_indexed', 'never')}"
-        )
-    finally:
-        indexer.close()
-
-
-@server.tool(
-    description=(
-        "Scan the filesystem for all indexed code projects (.basemem.code.db files). "
-        "Returns project names, root paths, and symbol/file counts. "
-        "Use this to discover what projects have been indexed. "
-        "search_root: comma-separated paths (default: ~,/mnt,/media,/opt,/var/lib). "
-        "Pass empty string for multi-path default."
-    )
-)
-def code_list_projects(search_root: str = "") -> str:
-    """Scan for all .basemem.code.db files on the system."""
-    from ..indexer.indexer import find_code_projects
-    projects = find_code_projects(search_root)
-    if not projects:
-        return "No projects found."
-    parts = [f"{len(projects)} project(s):"]
-    for p in sorted(projects, key=lambda x: x["name"]):
-        parts.append(f"  {p['name']}: {p['symbols']}s {p['files']}f")
-    return "\n".join(parts)
-
-
-# ── End Code Graph Tools ──────────────────────────────────────────
+# ── Code Graph MCP Tools ─────────────────────────────────
 
 def main():
     server.run()
