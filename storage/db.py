@@ -24,7 +24,7 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime
 import logging
 
-from modelsimport Node, Edge, NodeType, EdgeType, RetrievalResult
+from models import Node, Edge, NodeType, EdgeType, RetrievalResult
 
 logger = logging.getLogger(__name__)
 
@@ -156,7 +156,7 @@ class StorageManager:
         """)
 
         self.connection.commit()
-        logger.info(f"Storage initialized at {self.db_path}")
+        logger.debug(f"Storage initialized at {self.db_path}")
 
     def add_node(self, node: Node) -> None:
         """

@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import List, Optional, Dict, Any
 from pathlib import Path
 
-from modelsimport Node, Edge, NodeType, EdgeType
+from models import Node, Edge, NodeType, EdgeType
 from .db import StorageManager
 
 logger = logging.getLogger(__name__)
@@ -786,9 +786,6 @@ class SessionManager:
                 "weight": r["weight"],
             })
         return result
-
-    def remove_planet_link(self, link_id: int):
-        _exec(self.storage.connection, "DELETE FROM planet_links WHERE id = ?", (link_id,))
 
     # ── Edge reinforcement ────────────────────────────────────
 

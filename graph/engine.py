@@ -28,7 +28,7 @@ from collections import deque
 import logging
 import math
 
-from modelsimport Node, Edge, EdgeType
+from models import Node, Edge, EdgeType
 from storage.db import StorageManager
 
 logger = logging.getLogger(__name__)
@@ -131,18 +131,6 @@ class GraphEngine:
             unvisited -= visited
 
         return clusters
-
-    def calculate_importance(self, node_id: str) -> float:
-        """Calculate node importance based on centrality and weight"""
-        node = self.storage.get_node(node_id)
-        if not node:
-            return 0.0
-
-        neighbor_count = len(self.storage.get_neighbors(node_id))
-        
-        # Simple formula: weight × log(1 + degree) × recency
-        importance = node.weight * math.log2(2 + neighbor_count) * node.decay_score
-        return min(importance, 10.0)
 
     def auto_link_nodes(self, new_node_id: str, threshold: float = 0.3, limit: int = 3) -> List[Edge]:
         """

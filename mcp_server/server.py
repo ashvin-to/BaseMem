@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
+BASE_DIR = Path(__file__).resolve().parent.parent
 
 
 def get_db_path() -> str:
@@ -15,7 +15,7 @@ def get_db_path() -> str:
 def _resolve_db_path() -> str:
     """Resolve DB path without side effects."""
     from_env = _env_path()
-    return from_env or str(BASE_DIR / "basemem" / "basemem.db")
+    return from_env or str(BASE_DIR / "basemem.db")
 
 
 def _env_path() -> "str | None":
@@ -99,7 +99,7 @@ def code_init(project_root: str) -> str:
     if not os.path.isdir(project_root):
         return f"Directory not found: {project_root}"
 
-    from ..indexer import CodeIndexer
+    from indexer import CodeIndexer
     indexer = CodeIndexer(project_root)
     try:
         result = indexer.index_project(max_workers=4)
@@ -115,7 +115,7 @@ def code_init(project_root: str) -> str:
 def _detect_project_root() -> str:
     """Walk up from CWD to find a project root with .basemem.code.db."""
     import os
-    from ..indexer import CODE_DB_FILENAME
+    from indexer import CODE_DB_FILENAME
     cwd = os.getcwd()
     parent = cwd
     while True:
@@ -128,18 +128,32 @@ def _detect_project_root() -> str:
 
 
 def _fmt_loc(file_path: str) -> str:
-    """Short file path: strip common prefixes, keep last 2 dirs + filename."""
-    parts = file_path.replace("\\", "/").split("/")
-    if len(parts) > 3:
-        return "/".join(parts[-3:])
-    return file_path
+    """Short file path: strip common prefixes, keep last 3 parts."""
+    path = file_path.replace("\\", "/")
+    for prefix in ("src/basemem/", "basemem/"):
+        if path.startswith(prefix):
+            path = path.removeprefix(prefix)
+            break
+    parts = path.split("/")
+    return "/".join(parts[-3:]) if len(parts) > 3 else path
 
 
 @server.tool(description="Find code symbols by name/signature. Single match includes callers/callees. REPLACES grep/glob/Read for code exploration.")
-def code_find(query: str, project_root: str = "", limit: int = 20, use_regex: bool = False) -> str:
-    """Search for code symbols in a project's .basemem.code.db."""
+def code_find(
+    query: str = "",
+    project_root: str = "",
+    limit: int = 20,
+    use_regex: bool = False,
+    dead: bool = False,
+    file_path: str = "",
+) -> str:
+    """Search for code symbols in a project's .basemem.code.db.
+
+    dead=True  — find files never imported by other files (import-chain analysis).
+    file_path  — filter results to a specific file (e.g. 'indexer.py').
+    """
     import os
-    from ..indexer import CodeIndexer, CODE_DB_FILENAME
+    from indexer import CodeIndexer, CODE_DB_FILENAME
     if not project_root:
         project_root = _detect_project_root()
     db_path = os.path.join(project_root, CODE_DB_FILENAME)
@@ -151,6 +165,27 @@ def code_find(query: str, project_root: str = "", limit: int = 20, use_regex: bo
             _ci.close()
     indexer = CodeIndexer(project_root)
     try:
+        # Dead code mode (import-chain analysis)
+        if dead:
+            results = indexer.find_dead_exports(limit=0)
+            if not results:
+                return "All files are reachable via imports."
+            parts = [f"{len(results)} file(s) never imported by other files:"]
+            for r in results:
+                parts.append(f"  {r['file_path']} ({r['symbol_count']} symbols)")
+            return "\n".join(parts)
+
+        # File-level browse mode
+        if file_path and (not query or query.strip() in (".", "*", "%", "")):
+            results = indexer.list_symbols_by_file(file_path, limit=limit)
+            if not results:
+                return f"No symbols in '{file_path}'."
+            parts = [f"{len(results)} symbol(s) in {file_path}:"]
+            for r in results:
+                sig = f" {r['signature'][:60]}" if r.get('signature') else ""
+                parts.append(f"  [{r['id']}] {r['symbol_name']} ({r['symbol_type'][:4]}){sig}")
+            return "\n".join(parts)
+
         sym = None
         try:
             sid = int(query)
@@ -163,12 +198,18 @@ def code_find(query: str, project_root: str = "", limit: int = 20, use_regex: bo
             if len(symbols) == 1:
                 sym = symbols[0]
             elif len(symbols) > 1:
-                parts = [f"Multiple '{query}':"]
-                for s in symbols:
-                    loc = _fmt_loc(s['file_path'])
-                    sig = f" {s['signature'][:60]}" if s.get('signature') else ""
-                    parts.append(f"  [{s['id']}] {s['symbol_name']} ({loc}){sig}")
-                return "\n".join(parts)
+                # Apply file filter
+                if file_path:
+                    symbols = [s for s in symbols if s['file_path'] == file_path]
+                    if len(symbols) == 1:
+                        sym = symbols[0]
+                if not sym:
+                    parts = [f"Multiple '{query}':"]
+                    for s in symbols:
+                        loc = _fmt_loc(s['file_path'])
+                        sig = f" {s['signature'][:60]}" if s.get('signature') else ""
+                        parts.append(f"  [{s['id']}] {s['symbol_name']} ({loc}){sig}")
+                    return "\n".join(parts)
 
         if sym:
             callers = indexer.get_callers(sym['symbol_name'])
@@ -183,11 +224,13 @@ def code_find(query: str, project_root: str = "", limit: int = 20, use_regex: bo
                 cstr = ", ".join(f"{c['symbol_name']}:{c['line_number']}" for c in callers[:10])
                 parts.append(f"  callers: {cstr}")
             if callees:
-                cstr = ", ".join(f"{c['from_name']}:{c['line_number']}" for c in callees[:10])
+                cstr = ", ".join(f"{c['to_name']}:{c['line_number']}" for c in callees[:10])
                 parts.append(f"  calls: {cstr}")
             return "\n".join(parts)
 
         results = indexer.search_symbols(query, limit=limit, use_regex=use_regex)
+        if file_path:
+            results = [r for r in results if r['file_path'] == file_path]
         if results:
             parts = [f"{len(results)} match(es):"]
             for r in results:
@@ -209,6 +252,8 @@ def code_find(query: str, project_root: str = "", limit: int = 20, use_regex: bo
             ORDER BY file_path, start_line
             LIMIT 200
         """):
+            if file_path and row['file_path'] != file_path:
+                continue
             typemark = "🧩" if row["symbol_type"] in ("function", "method") else "📦"
             parts.append(f"  [{row['id']}] {typemark} {row['symbol_name']} ({row['file_path']}:{row['start_line']})")
         if total > 200:
@@ -218,10 +263,59 @@ def code_find(query: str, project_root: str = "", limit: int = 20, use_regex: bo
         indexer.close()
 
 
+@server.tool(description="Trace call chain: inbound (callers), outbound (callees), or both, with configurable depth.")
+def code_trace(
+    symbol_name: str,
+    project_root: str = "",
+    direction: str = "both",
+    depth: int = 2,
+    limit: int = 10,
+) -> str:
+    """Trace call chains: who calls this symbol and what does it call?"""
+    import os
+    from indexer import CodeIndexer, CODE_DB_FILENAME
+    if not project_root:
+        project_root = _detect_project_root()
+    db_path = os.path.join(project_root, CODE_DB_FILENAME)
+    if not os.path.exists(db_path):
+        return f"No code index at {db_path}."
+    indexer = CodeIndexer(project_root)
+    try:
+        lines = []
+        seen = set()
+
+        def _trace(name: str, d: int, prefix: str = ""):
+            if d > depth or name in seen:
+                return
+            seen.add(name)
+            if direction in ("inbound", "both"):
+                callers = indexer.get_callers(name)
+                if callers:
+                    for c in callers[:limit]:
+                        loc = _fmt_loc(c['file_path'])
+                        lines.append(f"{prefix}  <- {c['symbol_name']} ({loc}:{c['line_number']})")
+                        _trace(c['symbol_name'], d + 1, prefix + "    ")
+            if direction in ("outbound", "both"):
+                callees = indexer.get_callees(name)
+                if callees:
+                    for c in callees[:limit]:
+                        loc = _fmt_loc(c['file_path'])
+                        lines.append(f"{prefix}  -> {c['to_name']} ({loc}:{c['line_number']})")
+                        _trace(c['to_name'], d + 1, prefix + "    ")
+
+        lines.append(f"Trace: {symbol_name} ({direction}, depth={depth})")
+        _trace(symbol_name, 1)
+        if len(lines) <= 1:
+            return f"{symbol_name}: no call chain found."
+        return "\n".join(lines)
+    finally:
+        indexer.close()
+
+
 @server.tool(description="Scan for indexed code projects (comma-separated paths).")
 def code_list_projects(search_root: str = "") -> str:
     """Scan for all .basemem.code.db files on the system."""
-    from ..indexer.indexer import find_code_projects
+    from indexer.indexer import find_code_projects
     projects = find_code_projects(search_root)
     if not projects:
         return "No projects found."
@@ -229,6 +323,102 @@ def code_list_projects(search_root: str = "") -> str:
     for p in sorted(projects, key=lambda x: x["name"]):
         parts.append(f"  {p['name']}: {p['symbols']}s {p['files']}f")
     return "\n".join(parts)
+
+
+@server.tool(description="Show project file structure from the index with symbol counts per file.")
+def code_files(project_root: str = "", prefix: str = "", limit: int = 100) -> str:
+    """List indexed files with symbol counts in a project."""
+    import os
+    from indexer import CodeIndexer, CODE_DB_FILENAME
+    if not project_root:
+        project_root = _detect_project_root()
+    db_path = os.path.join(project_root, CODE_DB_FILENAME)
+    if not os.path.exists(db_path):
+        return f"No code index at {db_path}."
+    indexer = CodeIndexer(project_root)
+    try:
+        files = indexer.list_files(prefix=prefix, limit=limit)
+        if not files:
+            return "No files in index."
+        parts = [f"{len(files)} file(s):"]
+        for f in files:
+            parts.append(f"  {f['file_path']} ({f['symbol_count']}s)")
+        return "\n".join(parts)
+    finally:
+        indexer.close()
+
+
+@server.tool(description="Explore an area: relevant symbols' source + call paths in one shot.")
+def code_explore(query: str, project_root: str = "", max_files: int = 3, limit: int = 10) -> str:
+    """Search symbols and show their callers/callees + source code."""
+    import os
+    from indexer import CodeIndexer, CODE_DB_FILENAME
+    if not project_root:
+        project_root = _detect_project_root()
+    db_path = os.path.join(project_root, CODE_DB_FILENAME)
+    if not os.path.exists(db_path):
+        return f"No code index at {db_path}."
+    indexer = CodeIndexer(project_root)
+    try:
+        symbols = indexer.search_symbols(query, limit=limit)
+        if not symbols:
+            return f"No matches for '{query}'."
+        parts = []
+        shown_files = set()
+        for sym in symbols[:limit]:
+            loc = _fmt_loc(sym['file_path'])
+            parts.append(f"\n── {sym['symbol_name']} ({loc}) {sym['symbol_type']} ──")
+            if sym.get('signature'):
+                parts.append(f"  sig: {sym['signature']}")
+            callers = indexer.get_callers(sym['symbol_name'])
+            if callers:
+                cstr = ", ".join(f"{c['symbol_name']}:{c['line_number']}" for c in callers[:5])
+                parts.append(f"  callers: {cstr}")
+            callees = indexer.get_callees(sym['symbol_name'], sym['file_path'])
+            if callees:
+                cstr = ", ".join(f"{c['to_name']}:{c['line_number']}" for c in callees[:5])
+                parts.append(f"  calls: {cstr}")
+            # Show source
+            if sym['file_path'] not in shown_files and len(shown_files) < max_files:
+                shown_files.add(sym['file_path'])
+                abs_fp = os.path.join(project_root, sym['file_path'])
+                if os.path.isfile(abs_fp):
+                    with open(abs_fp) as f:
+                        lines = f.read().splitlines()
+                    start = max(0, sym['start_line'] - 2)
+                    end = min(len(lines), sym['end_line'] + 1)
+                    parts.append(f"  source ({sym['start_line']}-{sym['end_line']}):")
+                    for i in range(start, end):
+                        marker = "→" if i == sym['start_line'] - 1 else " "
+                        parts.append(f"    {marker} L{i+1}: {lines[i]}")
+        return "\n".join(parts) if parts else "No results."
+    finally:
+        indexer.close()
+
+
+@server.tool(description="Analyze what code is affected by changing a symbol (transitive reverse deps).")
+def code_impact(symbol_name: str, project_root: str = "", depth: int = 2, limit: int = 30) -> str:
+    """Trace transitive reverse dependencies for a symbol."""
+    import os
+    from indexer import CodeIndexer, CODE_DB_FILENAME
+    if not project_root:
+        project_root = _detect_project_root()
+    db_path = os.path.join(project_root, CODE_DB_FILENAME)
+    if not os.path.exists(db_path):
+        return f"No code index at {db_path}."
+    indexer = CodeIndexer(project_root)
+    try:
+        results = indexer.get_impact(symbol_name, depth=depth, limit=limit)
+        if not results:
+            return f"No impact found for '{symbol_name}'."
+        parts = [f"Impact analysis for '{symbol_name}' (depth={depth}):"]
+        for r in results:
+            loc = _fmt_loc(r['file_path'])
+            via = f" (via {r['via']})" if r.get('via') else ""
+            parts.append(f"  [{r['id']}] {r['symbol_name']} ({loc}:{r['line_number']}){via}")
+        return "\n".join(parts)
+    finally:
+        indexer.close()
 
 
 # ── End Code Graph Tools ──────────────────────────────────────────
@@ -240,7 +430,7 @@ def code_list_projects(search_root: str = "") -> str:
 def get_agent_context(topic: str = "", project: str = "", query: str = "") -> str:
     """Get session context for a topic — always returns something useful."""
     import sqlite3
-    from ..indexer import CODE_DB_FILENAME
+    from indexer import CODE_DB_FILENAME
 
     if project and not topic:
         topic = project
@@ -540,8 +730,8 @@ def update_planet(
 @server.tool(description="Get raw notes for agent-driven summarization.")
 def summarize_planet(topic: str, limit: int = 50) -> str:
     """Return all notes for a planet formatted for agent summarization."""
-    from ..storage.sessions import SessionManager
-    from ..storage.db import StorageManager
+    from storage.sessions import SessionManager
+    from storage.db import StorageManager
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
     return manager.summarize_planet(topic, limit=limit)
@@ -550,8 +740,8 @@ def summarize_planet(topic: str, limit: int = 50) -> str:
 @server.tool(description="Trim old notes, keep summaries + 30 recent.")
 def compact_planet(topic: str) -> str:
     """Compact a planet - keep summaries + 30 recent notes, delete the rest."""
-    from ..storage.sessions import SessionManager
-    from ..storage.db import StorageManager
+    from storage.sessions import SessionManager
+    from storage.db import StorageManager
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
     count_before = manager.get_note_count(topic)
@@ -633,7 +823,7 @@ def search_nodes(query: str, limit: int = 10) -> str:
             count += 1
 
         # Old nodes
-        from ..storage.db import StorageManager
+        from storage.db import StorageManager
         storage = StorageManager(db_path)
         old_ids = storage.search_nodes_fts(query, limit=limit - count)
         for nid in old_ids:
@@ -732,8 +922,8 @@ def get_node(node_id: str) -> str:
 @server.tool(description="Link two notes with a type and weight.")
 def link_notes(from_note_id: str, to_note_id: str, link_type: str = "related", weight: float = 1.0) -> str:
     """Link two notes together."""
-    from ..storage.sessions import SessionManager
-    from ..storage.db import StorageManager
+    from storage.sessions import SessionManager
+    from storage.db import StorageManager
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
     ok, msg = manager.link_notes(from_note_id, to_note_id, link_type, weight)
@@ -743,8 +933,8 @@ def link_notes(from_note_id: str, to_note_id: str, link_type: str = "related", w
 @server.tool(description="Find notes connected to a given note.")
 def get_note_neighbors(note_id: str) -> str:
     """Get neighbors of a note."""
-    from ..storage.sessions import SessionManager
-    from ..storage.db import StorageManager
+    from storage.sessions import SessionManager
+    from storage.db import StorageManager
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
     neighbors = manager.get_note_neighbors(note_id)
@@ -763,8 +953,8 @@ def get_note_neighbors(note_id: str) -> str:
 @server.tool(description="Link two planets with a relation type.")
 def link_planets(from_planet: str, to_planet: str, relation: str = "related", weight: float = 1.0) -> str:
     """Link two planets together."""
-    from ..storage.sessions import SessionManager
-    from ..storage.db import StorageManager
+    from storage.sessions import SessionManager
+    from storage.db import StorageManager
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
     ok, msg = manager.link_planets(from_planet, to_planet, relation, weight)
@@ -774,8 +964,8 @@ def link_planets(from_planet: str, to_planet: str, relation: str = "related", we
 @server.tool(description="Get planets linked to a given planet.")
 def get_planet_links(planet: str) -> str:
     """Get planets linked to the given planet."""
-    from ..storage.sessions import SessionManager
-    from ..storage.db import StorageManager
+    from storage.sessions import SessionManager
+    from storage.db import StorageManager
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
     links = manager.get_planet_links(planet)
@@ -793,8 +983,8 @@ def get_planet_links(planet: str) -> str:
 @server.tool(description="Set memory state: hot, warm, or compacted.")
 def set_memory_state(topic: str, state: str) -> str:
     """Set memory tier for a planet."""
-    from ..storage.sessions import SessionManager
-    from ..storage.db import StorageManager
+    from storage.sessions import SessionManager
+    from storage.db import StorageManager
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
     ok, msg = manager.set_memory_state(topic, state)
@@ -807,8 +997,8 @@ def set_memory_state(topic: str, state: str) -> str:
 @server.tool(description="Weighted neighbor traversal with depth.")
 def get_neighbors_weighted(note_id: str, depth: int = 1, min_weight: float = 0.0) -> str:
     """Weighted neighbor traversal with configurable depth."""
-    from ..storage.sessions import SessionManager
-    from ..storage.db import StorageManager
+    from storage.sessions import SessionManager
+    from storage.db import StorageManager
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
     nid = manager._parse_note_id(note_id)
@@ -827,8 +1017,8 @@ def get_neighbors_weighted(note_id: str, depth: int = 1, min_weight: float = 0.0
 def get_subgraph(note_id: str, depth: int = 2, min_weight: float = 0.2) -> str:
     """Extract weighted subgraph around a note."""
     import json
-    from ..storage.sessions import SessionManager
-    from ..storage.db import StorageManager
+    from storage.sessions import SessionManager
+    from storage.db import StorageManager
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
     nid = manager._parse_note_id(note_id)
@@ -841,8 +1031,8 @@ def get_subgraph(note_id: str, depth: int = 2, min_weight: float = 0.2) -> str:
 @server.tool(description="Rank neighbors by weight or confidence.")
 def rank_neighbors(note_id: str, by: str = "weight") -> str:
     """Rank neighbors by weight or confidence."""
-    from ..storage.sessions import SessionManager
-    from ..storage.db import StorageManager
+    from storage.sessions import SessionManager
+    from storage.db import StorageManager
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
     nid = manager._parse_note_id(note_id)
@@ -863,8 +1053,8 @@ def rank_neighbors(note_id: str, by: str = "weight") -> str:
 @server.tool(description="Return two notes for agent similarity comparison.")
 def compute_similarity(note_id_a: str, note_id_b: str) -> str:
     """Return both notes for agent-driven semantic similarity comparison."""
-    from ..storage.sessions import SessionManager
-    from ..storage.db import StorageManager
+    from storage.sessions import SessionManager
+    from storage.db import StorageManager
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
     nid_a = manager._parse_note_id(note_id_a)
@@ -891,8 +1081,8 @@ def compute_similarity(note_id_a: str, note_id_b: str) -> str:
 @server.tool(description="Return notes for agent-driven reordering.")
 def rerank(query: str, note_ids: list) -> str:
     """Return query + note contents for agent-driven reranking."""
-    from ..storage.sessions import SessionManager
-    from ..storage.db import StorageManager
+    from storage.sessions import SessionManager
+    from storage.db import StorageManager
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
     ids = []
@@ -921,8 +1111,8 @@ def rerank(query: str, note_ids: list) -> str:
 @server.tool(description="Decay auto-link weights by a factor.")
 def edge_decay(factor: float = 0.9, planet: str | None = None) -> str:
     """Apply weight decay to auto-links."""
-    from ..storage.sessions import SessionManager
-    from ..storage.db import StorageManager
+    from storage.sessions import SessionManager
+    from storage.db import StorageManager
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
     result = manager.edge_decay(factor=factor, planet=planet)
@@ -932,8 +1122,8 @@ def edge_decay(factor: float = 0.9, planet: str | None = None) -> str:
 @server.tool(description="Prune edges below a weight threshold.")
 def edge_prune(threshold: float = 0.05, planet: str | None = None) -> str:
     """Remove auto-links below weight threshold."""
-    from ..storage.sessions import SessionManager
-    from ..storage.db import StorageManager
+    from storage.sessions import SessionManager
+    from storage.db import StorageManager
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
     result = manager.edge_prune(threshold=threshold, planet=planet)

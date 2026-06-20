@@ -27,6 +27,7 @@ venv/
 ENV/
 env/
 .venv
+.venv/
 
 # IDE
 .vscode/
@@ -40,7 +41,7 @@ env/
 *.db
 *.sqlite
 *.sqlite3
-demo_basemem.db
+demo_*.db
 
 # BaseMem Sessions
 .basemem-*.md
@@ -70,6 +71,7 @@ DEVELOPMENT.md
 BOOKMARKLET.md
 
 .codex
+.codegraph/
 
 # Frontend (removed)
 *.html

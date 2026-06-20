@@ -8,9 +8,9 @@ from pathlib import Path
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 
-from .storage.db import StorageManager
-from .graph.engine import GraphEngine
-from .storage.sessions import SessionManager
+from storage.db import StorageManager
+from graph.engine import GraphEngine
+from storage.sessions import SessionManager
 
 logging.basicConfig(
     level=logging.INFO,
@@ -274,7 +274,7 @@ def create_node():
     """Manually create a new knowledge node"""
     try:
         data = request.get_json()
-        from src.basemem.models import Node, NodeType
+        from models import Node, NodeType
         import uuid
         
         node = Node(
@@ -641,7 +641,7 @@ def code_init():
     root = data.get("root_path", "")
     if not root or not os.path.isdir(root):
         return jsonify({"error": "Invalid root_path"}), 400
-    from .indexer import CodeIndexer
+    from indexer import CodeIndexer
     indexer = CodeIndexer(root)
     try:
         result = indexer.index_project()
@@ -661,8 +661,8 @@ def code_search():
         return jsonify({"error": "Missing query"}), 400
     limit = int(request.args.get("limit", 20))
     use_regex = request.args.get("regex", "").lower() in ("true", "1", "yes")
-    from .indexer import CodeIndexer
-    from .indexer.indexer import CODE_DB_FILENAME
+    from indexer import CodeIndexer
+    from indexer.indexer import CODE_DB_FILENAME
     db_path = os.path.join(root, CODE_DB_FILENAME)
     if not os.path.exists(db_path):
         return jsonify({"error": f"No index at {db_path}"}), 404
@@ -680,8 +680,8 @@ def code_symbol(symbol_id: int):
     root = request.args.get("root", "")
     if not root or not os.path.isdir(root):
         return jsonify({"error": "Missing or invalid root param"}), 400
-    from .indexer import CodeIndexer
-    from .indexer.indexer import CODE_DB_FILENAME
+    from indexer import CodeIndexer
+    from indexer.indexer import CODE_DB_FILENAME
     db_path = os.path.join(root, CODE_DB_FILENAME)
     if not os.path.exists(db_path):
         return jsonify({"error": f"No index at {db_path}"}), 404
@@ -703,8 +703,8 @@ def code_status():
     root = request.args.get("root", "")
     if not root or not os.path.isdir(root):
         return jsonify({"error": "Missing or invalid root param"}), 400
-    from .indexer import CodeIndexer
-    from .indexer.indexer import CODE_DB_FILENAME
+    from indexer import CodeIndexer
+    from indexer.indexer import CODE_DB_FILENAME
     db_path = os.path.join(root, CODE_DB_FILENAME)
     if not os.path.exists(db_path):
         return jsonify({"error": f"No index at {db_path}"}), 404

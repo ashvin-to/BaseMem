@@ -76,7 +76,7 @@ Running `./setup.sh` installs `mem` and configures MCP for Claude Code, Cursor, 
 
 ### MCP Tools
 
-If your host supports MCP, the server at `src/basemem/mcp/server.py` exposes these tools:
+If your host supports MCP, the server at `mcp_server/server.py` exposes these tools:
 
 **Context & Discovery**
 - `get_agent_context(topic, query)` — compact pre-answer memory block
@@ -107,12 +107,11 @@ If your host supports MCP, the server at `src/basemem/mcp/server.py` exposes the
 
 **Code Intelligence** (tree-sitter powered, per-project `.basemem.code.db`)
 - `code_init(project_root)` — index a project; stores `.basemem.code.db` in project root
-- `code_search(project_root, query, limit)` — search code symbols by name or signature
-- `code_node(project_root, symbol_identifier)` — get full details of a code symbol
-- `code_callers(project_root, symbol_name)` — find all callers of a function
-- `code_callees(project_root, symbol_name, file_path)` — find what a function calls
-- `code_list(project_root, limit, offset)` — list all indexed symbols
-- `code_status(project_root)` — show indexing stats
+- `code_find(query, root, dead, file_path, limit)` — find symbols by name, detail, dead code, or file filter
+- `code_explore(query, root)` — one-shot: search + source code + call paths
+- `code_files(prefix, root)` — project file tree with symbol counts
+- `code_impact(symbol, root, depth)` — transitive reverse dependency graph
+- `code_trace(symbol, root, direction, depth)` — recursive inbound/outbound call chain
 - `code_list_projects(search_root)` — scan filesystem for all indexed projects
 
 **Graph Lifecycle**
@@ -160,7 +159,7 @@ When `add_note` is called, the new note is automatically linked to existing note
    - Schema: planets, notes, note_links, planet_links
 
 2. **MCP Server** (`mcp/server.py`)
-   - 31 MCP tools for agent integration
+   - 28 MCP tools (19 memory + 9 code)
    - Shares same DB path as CLI and Flask
 
 3. **Web Hub** (`server.py`)
@@ -181,53 +180,63 @@ When `add_note` is called, the new note is automatically linked to existing note
    - `mem export` / `mem import` — multi-device sync
 
 5. **Code Intelligence** (`indexer/`) — per-project `.basemem.code.db` in project root
-   - `mem code init [path] [--watch]` — index a project; `--watch` auto-reindexes on file changes
-   - `mem code search <query> --root <path>` — search code symbols (defaults to cwd)
-   - `mem code node <id|name> --root <path>` — full symbol details with callers/callees
-   - `mem code callers <symbol> --root <path>` — find what calls a function
-   - `mem code callees <symbol> --root <path>` — find what a function calls
-   - `mem code list --root <path>` — list all indexed symbols (pagination via `--limit`/`--offset`)
-   - `mem code status --root <path>` — show indexing stats
-   - `mem code list-projects [--search-root]` — scan filesystem for all indexed projects
+   - `mem code init [--watch]` / `mem code sync` — index or incrementally re-index a project
+   - `mem code find <query> [--dead] [--file-path]` — find symbols by name, detail, dead code, or file
+   - `mem code explore <query>` — one-shot: search + source + call paths
+   - `mem code files` — project file tree with symbol counts
+   - `mem code impact <symbol> [--depth]` — transitive reverse dependency graph
+   - `mem code trace <symbol> [--direction both] [--depth]` — recursive call chain
+   - `mem code query <query> [--kind] [--json]` — raw symbol search with optional filtering
+   - `mem code callers / callees / node / list / status / list-projects / search`
    - Run `mem code init` once per project before searching; `list-projects` discovers them
 
 ## Project Structure
 
 ```
 BaseMem/
-├── src/basemem/
-│   ├── storage/
-│   │   ├── db.py              # SQLite storage manager
-│   │   └── sessions.py        # SessionManager — planets/notes/links (shared by all interfaces)
-│   ├── indexer/                # Code intelligence module (tree-sitter)
-│   │   ├── parser.py          # Code parser: custom queries for 5 langs, fallback for 300+ (tree-sitter)
-│   │   ├── indexer.py         # Directory walker, symbol/edge persistence, FTS5 search
-│   │   ├── schema.py          # code_symbols / code_edges / code_projects tables
-│   │   ├── watcher.py         # Watchdog-based auto-sync on file changes
-│   │   └── __init__.py
-│   ├── mcp/
-│   │   └── server.py          # Model Context Protocol server (31 tools)
-│   ├── cli/
-│   │   └── main.py            # CLI commands (same planets/notes tables)
-│   ├── server.py               # Flask REST API + D3 visualization
-│   ├── _entry.py               # mem entry point
+├── cli/
+│   ├── __init__.py
+│   └── main.py              # CLI commands
+├── graph/
+│   ├── __init__.py
+│   └── engine.py            # Graph engine
+├── indexer/                  # Code intelligence module (tree-sitter)
+│   ├── __init__.py
+│   ├── parser.py            # Code parser with tree-sitter
+│   ├── indexer.py           # Directory walker, symbol/edge persistence, FTS5
+│   ├── schema.py            # code tables
+│   └── watcher.py           # Watchdog auto-sync
+├── mcp_server/
+│   ├── __init__.py
+│   └── server.py            # Model Context Protocol server (28 tools)
+├── processing/
 │   └── __init__.py
-├── graph_visualization.html    # Interactive D3 Web UI
-├── bookmarklet-inject.html     # Drag-to-bookmarks memory injector
-├── log-chat.html               # Drag-to-bookmarks chat logger
-├── AGENTS.md                   # Universal AI Agent instructions
-├── setup.sh                    # One-command install
-├── uninstall.sh                # Clean removal
-├── extensions/gemini/          # Gemini-specific config
-├── pyproject.toml              # Project metadata
-└── README.md
+├── storage/
+│   ├── __init__.py
+│   ├── db.py                # SQLite storage manager
+│   └── sessions.py          # SessionManager
+├── models.py                # Data models
+├── server.py                # Flask REST API + D3 visualization
+├── mem.py                   # CLI entry point
+├── mem-mcp.py               # MCP entry point
+├── pyproject.toml
+├── setup.sh
+├── setup.ps1
+├── uninstall.sh
+├── uninstall.ps1
+├── extensions/gemini/
+├── tests/
+├── README.md
+└── LICENSE
 ```
 
-### Summary of Changes from Legacy
+### Removed Modules
 
-- **Processing pipeline removed** — LocalSummarizer, IngestWorker, ProcessingPipeline were never used in production. All summarization is agent-driven via `summarize_planet` + `add_note(topic, 'summary', ...)`.
+- **Processing pipeline** — `LocalSummarizer`, `IngestWorker`, `ProcessingPipeline`. All summarization is agent-driven via `summarize_planet` + `add_note(topic, 'summary', ...)`.
+- **Retrieval module** (`retrieval/`) — `BM25Retriever`, `VectorRetriever`, `RetrievalEngine`. Agent-driven retrieval replaced local ML.
+- **Orchestrator module** (`orchestrator/`) — `ContextOrchestrator` with `orchestrate()`. All context building is now agent-driven.
+- **Visualization module** (`visualization/`) — `TerminalVisualizer` with ASCII graph output. Not used in production.
 - **Old `nodes`/`edges` tables** — retained for backward compatibility but no longer the primary model. All new data goes to `planets`/`notes`/`note_links`.
-- **Retrieval, graph, orchestrator modules** — legacy code that was built for local ML processing. The system now uses agent-driven retrieval, not local BM25/vector.
 
 ## Data Models
 

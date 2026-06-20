@@ -147,6 +147,9 @@ class CodeIndexer:
         self.conn.execute("INSERT INTO code_symbols_fts(code_symbols_fts) VALUES('rebuild')")
         self.conn.commit()
 
+        # Resolve cross-file references
+        self._resolve_cross_file_references()
+
         # Update project record
         self.conn.execute(
             """INSERT OR REPLACE INTO code_projects (id, root_path, name, file_count, symbol_count, last_indexed)
@@ -212,8 +215,16 @@ class CodeIndexer:
     def search_symbols(
         self, query: str, limit: int = 20, use_regex: bool = False
     ) -> list[dict]:
-        """Full-text search across code symbols (name, signature, docstring, file_path, type, kind)."""
+        """Full-text search across code symbols (name, signature, docstring, file_path, type, kind).
+
+        Empty/trivial queries return no results (caller can fall through to browse mode).
+        FTS5 syntax errors fall through to LIKE fallback.
+        """
         import re
+
+        # Empty/trivial queries -> browse mode (no results, caller falls through)
+        if not query or query.strip() in (".", "*", "%"):
+            return []
 
         if use_regex:
             try:
@@ -238,31 +249,35 @@ class CodeIndexer:
                         break
             return results
 
-        cur = self.conn.execute(
-            """SELECT cs.id, cs.file_path, cs.symbol_name, cs.symbol_type,
-                      cs.language, cs.signature, cs.start_line, cs.end_line,
-                      cs.docstring
-               FROM code_symbols_fts fts
-               JOIN code_symbols cs ON cs.id = fts.rowid
-               WHERE code_symbols_fts MATCH ?
-               ORDER BY rank
-               LIMIT ?""",
-            (query, limit),
-        )
-        results = [dict(r) for r in cur.fetchall()]
-        if results:
-            return results
+        # FTS5 with error fallback
+        try:
+            cur = self.conn.execute(
+                """SELECT cs.id, cs.file_path, cs.symbol_name, cs.symbol_type,
+                          cs.language, cs.signature, cs.start_line, cs.end_line,
+                          cs.docstring
+                   FROM code_symbols_fts fts
+                   JOIN code_symbols cs ON cs.id = fts.rowid
+                   WHERE code_symbols_fts MATCH ?
+                   ORDER BY rank
+                   LIMIT ?""",
+                (query, limit),
+            )
+            results = [dict(r) for r in cur.fetchall()]
+            if results:
+                return results
+        except Exception:
+            pass
 
-        like = f"%{query}%"
+        like = f"%{query.strip()}%"
         cur = self.conn.execute(
             """SELECT cs.id, cs.file_path, cs.symbol_name, cs.symbol_type,
                       cs.language, cs.signature, cs.start_line, cs.end_line,
                       cs.docstring
                FROM code_symbols cs
-               WHERE cs.symbol_type LIKE ? OR cs.kind LIKE ?
+               WHERE cs.symbol_name LIKE ? OR cs.symbol_type LIKE ? OR cs.kind LIKE ?
                ORDER BY cs.symbol_name
                LIMIT ?""",
-            (like, like, limit),
+            (like, like, like, limit),
         )
         return [dict(r) for r in cur.fetchall()]
 
@@ -364,6 +379,270 @@ class CodeIndexer:
                     continue
                 if CodeParser.supported_extension(ext):
                     yield Path(dirpath) / fn
+
+    def list_symbols_by_file(self, file_path: str, limit: int = 100) -> list[dict]:
+        """List symbols defined in a specific file. Pass limit=0 for all results."""
+        limit_sql = "" if limit <= 0 else f" LIMIT {int(limit)}"
+        cur = self.conn.execute(
+            f"""SELECT cs.id, cs.file_path, cs.symbol_name, cs.symbol_type,
+                      cs.language, cs.signature, cs.start_line, cs.end_line,
+                      cs.docstring, cs.kind
+               FROM code_symbols cs
+               WHERE cs.file_path = ? AND cs.project_id = ?
+               ORDER BY cs.start_line
+               {limit_sql}""",
+            (file_path, self.project_id),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+    def find_dead_code(self, limit: int = 0, language: str = "") -> list[dict]:
+        """Symbols with zero incoming caller edges. Pass limit=0 for all results.
+        Pass language='qml' to scan only QML, or '' to exclude dynamic-dispatch langs.
+        """
+        limit_sql = "" if limit <= 0 else f" LIMIT {int(limit)}"
+        params: list = [self.project_id]
+
+        if language:
+            lang_filter = "AND cs.language = ?"
+            params.append(language)
+        else:
+            lang_filter = "AND cs.language NOT IN ('bash', 'shell', 'sh', 'lua', 'qml', 'qmljs', 'js')"
+
+        cur = self.conn.execute(
+            f"""SELECT cs.id, cs.file_path, cs.symbol_name, cs.symbol_type,
+                      cs.language, cs.signature, cs.start_line, cs.end_line,
+                      cs.docstring, cs.kind
+               FROM code_symbols cs
+               LEFT JOIN code_edges ce ON ce.to_name = cs.symbol_name
+                AND ce.edge_type = 'calls'
+                AND ce.project_id = cs.project_id
+               WHERE ce.id IS NULL
+                 AND cs.project_id = ?
+                 AND cs.symbol_type IN ('function', 'method')
+                 {lang_filter}
+                 AND cs.symbol_name NOT IN ('__init__', 'id', 'title', 'content', 'metadata', '__bool__')
+                 AND cs.file_path NOT LIKE '%/cli/%'
+                 AND cs.file_path NOT LIKE '%/mcp/%'
+                 AND cs.file_path NOT LIKE '%/watcher.py'
+                 AND cs.file_path NOT LIKE '%/server.py'
+                 AND cs.file_path NOT LIKE '%/tests/%'
+                 AND cs.file_path NOT LIKE 'tests/%'
+               ORDER BY cs.file_path, cs.start_line
+               {limit_sql}""",
+            params,
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+    def find_dead_exports(self, limit: int = 0) -> list[dict]:
+        """Files whose symbols are never imported or called from other files.
+        Converts module paths in import edges to file paths to detect cross-file references.
+        Pass limit=0 for all results.
+        """
+        limit_sql = "" if limit <= 0 else f" LIMIT {int(limit)}"
+        all_files = self.list_files(limit=0)
+
+        dead_files = []
+        for f in all_files:
+            fp = f["file_path"]
+
+            # Check 1: does any calls edge from another file target a symbol in this file?
+            has_cross_calls = self.conn.execute(
+                """SELECT 1 FROM code_edges ce
+                   JOIN code_symbols cs ON ce.to_name = cs.symbol_name
+                   WHERE cs.project_id = ? AND cs.file_path = ?
+                     AND ce.file_path != ? AND ce.edge_type = 'calls'
+                   LIMIT 1""",
+                (self.project_id, fp, fp),
+            ).fetchone()
+
+            if has_cross_calls:
+                continue
+
+            # Check 2: does any import edge reference this file?
+            # Convert file path to module-style: src/basemem/models.py → src.basemem.models
+            module_root = fp.replace("/", ".").replace(".py", "").replace(".lua", "").replace(".js", "")
+            has_imports = self.conn.execute(
+                """SELECT 1 FROM code_edges
+                   WHERE project_id = ? AND edge_type = 'imports'
+                     AND from_name LIKE ?
+                     AND file_path != ?
+                   LIMIT 1""",
+                (self.project_id, f"{module_root}%", fp),
+            ).fetchone()
+
+            if has_imports:
+                continue
+
+            dead_files.append(f)
+
+        if not dead_files:
+            return []
+
+        combined = dead_files[:limit] if limit > 0 else dead_files
+        return combined
+
+    def list_files(self, prefix: str = "", limit: int = 200) -> list[dict]:
+        """List indexed files with symbol counts. Pass limit=0 for all results."""
+        limit_sql = "" if limit <= 0 else f" LIMIT {int(limit)}"
+        if prefix:
+            cur = self.conn.execute(
+                f"""SELECT file_path, COUNT(*) as symbol_count, MAX(language) as language
+                   FROM code_symbols WHERE file_path LIKE ? AND project_id = ?
+                   GROUP BY file_path ORDER BY file_path{limit_sql}""",
+                (f"%{prefix}%", self.project_id),
+            )
+        else:
+            cur = self.conn.execute(
+                f"""SELECT file_path, COUNT(*) as symbol_count, MAX(language) as language
+                   FROM code_symbols WHERE project_id = ?
+                   GROUP BY file_path ORDER BY file_path{limit_sql}""",
+                (self.project_id,),
+            )
+        return [dict(r) for r in cur.fetchall()]
+
+    def get_impact(self, symbol_name: str, depth: int = 2, limit: int = 50) -> list[dict]:
+        """Transitive closure of symbols that depend on this one.
+
+        Returns deduplicated list of symbols that call this symbol (directly or transitively).
+        """
+        results = []
+        seen = set()
+        queue = [(symbol_name, 0)]
+        while queue and len(results) < limit:
+            name, d = queue.pop(0)
+            if d >= depth:
+                continue
+            callers = self.conn.execute(
+                """SELECT DISTINCT cs.id, cs.symbol_name, cs.file_path, cs.symbol_type,
+                          cs.start_line, ce.line_number, ce.file_path AS edge_file
+                   FROM code_edges ce
+                   JOIN code_symbols cs ON cs.id = ce.from_symbol_id
+                   WHERE ce.edge_type = 'calls'
+                     AND ce.to_name = ?
+                     AND ce.from_symbol_id > 0
+                     AND cs.project_id = ?
+                   LIMIT 20""",
+                (name, self.project_id),
+            ).fetchall()
+            for c in callers:
+                drow = dict(c)
+                key = (drow["id"], name)
+                if key not in seen:
+                    seen.add(key)
+                    drow["via"] = name
+                    results.append(drow)
+                    if len(results) >= limit:
+                        break
+                    queue.append((drow["symbol_name"], d + 1))
+        return results
+
+    def sync_index(self, max_workers: int = 4) -> dict:
+        """Incremental re-index: only re-index files changed since last index.
+
+        Uses git diff (if available) or re-indexes all (fallback).
+        """
+        import subprocess
+        repo = Path(self.project_root)
+        git_dir = repo / ".git"
+        stats = self.get_project_stats()
+        if not stats.get("indexed"):
+            # No existing index — do full index
+            return self.index_project(max_workers=max_workers)
+
+        # Try git diff to find changed files
+        try:
+            result = subprocess.run(
+                ["git", "diff", "--name-only", "HEAD"],
+                capture_output=True, text=True, cwd=self.project_root, timeout=30,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                changed = [line.strip() for line in result.stdout.splitlines()
+                          if line.strip() and not line.startswith(".basemem")]
+            else:
+                changed = []
+        except Exception:
+            changed = []
+
+        if not changed:
+            # Also check unstaged/untracked
+            try:
+                result = subprocess.run(
+                    ["git", "ls-files", "--other", "--modified", "--exclude-standard"],
+                    capture_output=True, text=True, cwd=self.project_root, timeout=30,
+                )
+                if result.returncode == 0:
+                    changed = [line.strip() for line in result.stdout.splitlines()
+                              if line.strip() and not line.startswith(".basemem")]
+            except Exception:
+                pass
+
+        if not changed:
+            stat = self.get_project_stats()
+            return {"status": "unchanged", "files": 0, "symbols": stat.get("symbol_count", 0), "edges": 0}
+
+        # Re-index only changed files
+        removed = 0
+        added_symbols = 0
+        added_edges = 0
+        root = repo.resolve()
+        for cf in changed:
+            fp = root / cf
+            if not fp.is_file():
+                # File was deleted
+                self.remove_file(str(cf))
+                removed += 1
+                continue
+            # Remove old symbols for this file, then re-index
+            self.remove_file(str(cf))
+            try:
+                sc, ec = self._index_file(str(root), str(fp))
+                added_symbols += sc
+                added_edges += ec
+            except Exception as e:
+                logger.warning(f"Failed to sync {cf}: {e}")
+
+        if added_symbols or removed:
+            self.conn.execute("INSERT INTO code_symbols_fts(code_symbols_fts) VALUES('rebuild')")
+            self._resolve_cross_file_references()
+            stat = self.get_project_stats()
+            self.conn.execute(
+                """UPDATE code_projects SET file_count = ?, symbol_count = ?, last_indexed = datetime('now')
+                   WHERE id = ?""",
+                (stat.get("file_count", 0), stat.get("symbol_count", 0), self.project_id),
+            )
+            self.conn.commit()
+
+        return {"status": "synced", "files_changed": len(changed), "symbols_added": added_symbols, "edges_added": added_edges,
+                "files_removed": removed}
+
+    def _resolve_cross_file_references(self):
+        """Post-indexing pass: resolve to_symbol_id=0 and from_symbol_id=0 edges.
+
+        Per-file sym_id_map means cross-file calls get to_symbol_id=0.
+        Uses bulk UPDATE for efficiency.
+        """
+        resolved = 0
+        for col in ("to_symbol_id", "from_symbol_id"):
+            name_col = "to_name" if col == "to_symbol_id" else "from_name"
+            cur = self.conn.execute(
+                f"""UPDATE code_edges SET {col} = (
+                        SELECT cs.id FROM code_symbols cs
+                        WHERE cs.symbol_name = code_edges.{name_col}
+                          AND cs.project_id = code_edges.project_id
+                        LIMIT 1
+                    )
+                    WHERE code_edges.{col} = 0
+                      AND code_edges.project_id = ?
+                      AND code_edges.{name_col} IN (
+                          SELECT symbol_name FROM code_symbols
+                          WHERE project_id = code_edges.project_id
+                      )""",
+                (self.project_id,),
+            )
+            resolved += cur.rowcount
+        if resolved:
+            self.conn.commit()
+            logger.info(f"Resolved {resolved} cross-file symbol references")
 
     def _index_file(self, root_path: str, file_path: str) -> tuple[int, int]:
         rel_path = os.path.relpath(file_path, root_path)

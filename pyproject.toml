@@ -2,6 +2,9 @@
 requires = ["setuptools>=65.0"]
 build-backend = "setuptools.build_meta"
 
+[tool.setuptools.packages]
+find = {}
+
 [project]
 name = "basemem"
 version = "0.2.0"
@@ -25,7 +28,7 @@ dependencies = [
 ]
 
 [project.scripts]
-mem = "basemem.cli.main:cli"
+mem = "cli.main:cli"
 
 [project.optional-dependencies]
 # Heavy AI components (Optional)

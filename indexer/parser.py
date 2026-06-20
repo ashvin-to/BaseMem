@@ -5,25 +5,52 @@ Supported languages:
   - All others: uses tree-sitter-language-pack's process() for basic symbols
 """
 
+import ctypes
 import hashlib
+import warnings
 from pathlib import Path
 from typing import Optional
 
 from tree_sitter import Language, Node, Parser, Query, QueryCursor
-from tree_sitter_language_pack import get_language as _load_language, detect_language_from_extension, process, ProcessConfig
+from tree_sitter_language_pack import detect_language_from_extension, process, ProcessConfig
 
 # ── Language grammars ────────────────────────────────────────────────
 
 _GRAMMAR_CACHE = {}
 
+# Map our language names to the bundled .so filename and C export function.
+_LANGUAGE_SO = {
+    "python":     ("libtree_sitter_python.so",     "tree_sitter_python"),
+    "javascript": ("libtree_sitter_javascript.so", "tree_sitter_javascript"),
+    "typescript": ("libtree_sitter_typescript.so", "tree_sitter_typescript"),
+    "tsx":        ("libtree_sitter_tsx.so",        "tree_sitter_tsx"),
+    "rust":       ("libtree_sitter_rust.so",       "tree_sitter_rust"),
+}
+
 
 def _get_grammar(lang: str) -> Optional[Language]:
-    if lang not in _GRAMMAR_CACHE:
-        try:
-            _GRAMMAR_CACHE[lang] = _load_language(lang)
-        except Exception:
+    if lang in _GRAMMAR_CACHE:
+        return _GRAMMAR_CACHE[lang]
+    entry = _LANGUAGE_SO.get(lang)
+    if entry is None:
+        return None
+    so_name, c_fn_name = entry
+    try:
+        from tree_sitter_language_pack import cache_dir
+        so_path = Path(cache_dir()) / so_name
+        if not so_path.exists():
             return None
-    return _GRAMMAR_CACHE.get(lang)
+        lib = ctypes.CDLL(str(so_path))
+        fn = getattr(lib, c_fn_name)
+        fn.restype = ctypes.c_void_p
+        ptr = fn()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            lang_obj = Language(ptr)
+        _GRAMMAR_CACHE[lang] = lang_obj
+        return lang_obj
+    except Exception:
+        return None
 
 
 _SKIP_EXTENSIONS = frozenset({

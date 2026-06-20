@@ -12,11 +12,11 @@ from pathlib import Path
 BASE_DIR = Path(__file__).parent.absolute()
 
 # 2. Add the 'src' directory to the Python path
-sys.path.insert(0, str(BASE_DIR / "src"))
+sys.path.insert(0, str(BASE_DIR))
 
 # 3. Import and run the CLI
 try:
-    from basemem.cli import cli
+    from cli import cli
     if __name__ == '__main__':
         cli(prog_name='mem')
 except ImportError as e:

@@ -3,11 +3,10 @@
 import pytest
 import tempfile
 from pathlib import Path
-from src.basemem.models import Node, NodeType, Edge, EdgeType
-from src.basemem.storage.db import StorageManager
-from src.basemem.storage.sessions import SessionManager
-from src.basemem.retrieval.engine import RetrievalEngine
-from src.basemem.graph.engine import GraphEngine
+from models import Node, NodeType, Edge, EdgeType
+from storage.db import StorageManager
+from storage.sessions import SessionManager
+from graph.engine import GraphEngine
 
 
 @pytest.fixture
