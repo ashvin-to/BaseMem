@@ -25,10 +25,12 @@ description: BaseMem memory protocol
 | Find symbol | `code_find('sym')` |
 | Find + source | `code_find('sym', source=True)` |
 | All references | `code_find('sym', references=True)` |
+| Text search (all files) | `code_find('pattern', grep=True)` |
 | Read file | `code_read('path/file.py', offset=10, limit=50)` |
 | Browse all | `code_find('')` |
 | Explore area | `code_explore('sym')` |
 | Show files | `code_files(prefix='src/')` |
+| Glob files | `code_files(pattern='**/*.json')` |
 | Trace calls | `code_trace('func')` |
 | Impact analysis | `code_impact('sym')` |
 

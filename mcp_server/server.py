@@ -8,7 +8,14 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 def get_db_path() -> str:
     """Resolve DB path and ensure schema exists."""
     path = _resolve_db_path()
-    _ensure_schema()
+    if not os.path.isfile(path):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+    from storage.sessions import _ensure_schema as _ensure_all_schema
+    conn = sqlite3.connect(path)
+    try:
+        _ensure_all_schema(conn)
+    finally:
+        conn.close()
     return path
 
 
@@ -48,47 +55,6 @@ from mcp.server.fastmcp import FastMCP
 
 server = FastMCP("mem")
 
-
-def _ensure_schema():
-    """Create planets and notes tables if they don't exist."""
-    db_path = _resolve_db_path()
-    if not os.path.isfile(db_path):
-        os.makedirs(os.path.dirname(db_path), exist_ok=True)
-    conn = sqlite3.connect(db_path)
-    try:
-        conn.executescript("""
-            CREATE TABLE IF NOT EXISTS planets (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                topic TEXT UNIQUE NOT NULL,
-                display_topic TEXT DEFAULT '',
-                status TEXT DEFAULT 'active',
-                goal TEXT DEFAULT '',
-                current_state TEXT DEFAULT '',
-                next_step TEXT DEFAULT '',
-                next_steps TEXT DEFAULT '[]',
-                files TEXT DEFAULT '[]',
-                commands TEXT DEFAULT '[]',
-                handoff TEXT DEFAULT '',
-                aliases TEXT DEFAULT '[]',
-                created_at TEXT DEFAULT (datetime('now')),
-                updated_at TEXT DEFAULT (datetime('now'))
-            );
-            CREATE TABLE IF NOT EXISTS notes (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                topic TEXT NOT NULL,
-                kind TEXT NOT NULL DEFAULT 'fact',
-                content TEXT NOT NULL,
-                title TEXT DEFAULT '',
-                agent_id TEXT DEFAULT 'default',
-                status TEXT DEFAULT 'open',
-                turn_index INTEGER DEFAULT 0,
-                created_at TEXT DEFAULT (datetime('now')),
-                updated_at TEXT DEFAULT (datetime('now'))
-            );
-        """)
-        conn.commit()
-    finally:
-        conn.close()
 
 
 
@@ -138,7 +104,7 @@ def _fmt_loc(file_path: str) -> str:
     return "/".join(parts[-3:]) if len(parts) > 3 else path
 
 
-@server.tool(description="Find code symbols. references=True = find all usages across files. REPLACES grep.")
+@server.tool(description="Find code symbols. grep=True = raw text search across ALL files. references=True = find all usages across indexed files. REPLACES grep.")
 def code_find(
     query: str = "",
     project_root: str = "",
@@ -148,6 +114,7 @@ def code_find(
     file_path: str = "",
     source: bool = False,
     references: bool = False,
+    grep: bool = False,
 ) -> str:
     """Search for code symbols. Single match = detail + callers/callees + source.
        Empty query = file overview.
@@ -155,8 +122,40 @@ def code_find(
        dead=True = find files never imported by other files.
        source=True = include source code lines (for edit workflow: code_find → edit).
        references=True = find all references/occurrences across indexed files.
+       grep=True = raw ripgrep search across ALL files (non-code too), replaces native grep.
     """
     import os
+
+    # Grep mode — raw text search across all files via ripgrep (no indexer needed)
+    if grep and query:
+        import subprocess
+        cmd = ["rg", "-n", "--no-heading"]
+        if use_regex:
+            cmd.append("--regexp")
+        else:
+            cmd.extend(["--fixed-strings"])
+        if file_path:
+            cmd.extend(["--glob", file_path])
+        cmd.extend([query, project_root])
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            if result.returncode not in (0, 1):
+                return f"grep error: {result.stderr.strip()}"
+            if not result.stdout.strip():
+                return f"No matches for '{query}'."
+            lines = result.stdout.strip().splitlines()
+            shown = lines[:limit]
+            parts = [f"{len(lines)} match(es) for '{query}':"]
+            for line in shown:
+                parts.append(f"  {line}")
+            if len(lines) > limit:
+                parts.append(f"  ... and {len(lines) - limit} more")
+            return "\n".join(parts)
+        except FileNotFoundError:
+            return "ripgrep (rg) not found. Install it or use references=True for indexed files."
+        except subprocess.TimeoutExpired:
+            return f"Search timed out for '{query}'."
+
     from indexer import CodeIndexer, CODE_DB_FILENAME
     if not project_root:
         project_root = _detect_project_root()
@@ -347,10 +346,25 @@ def code_list_projects(search_root: str = "") -> str:
     return "\n".join(parts)
 
 
-@server.tool(description="Show project files with symbol counts per file. Use prefix='src/' to filter.")
-def code_files(project_root: str = "", prefix: str = "", limit: int = 100) -> str:
-    """List indexed files with symbol counts in a project."""
+@server.tool(description="Show project files. pattern='**/*.json' = glob wildcard search. Use prefix='src/' to filter indexed files.")
+def code_files(project_root: str = "", prefix: str = "", pattern: str = "", limit: int = 100) -> str:
+    """List indexed files with symbol counts, or glob files by pattern. Replaces native glob."""
     import os
+    import glob as _glob
+    if pattern:
+        if not project_root:
+            project_root = _detect_project_root()
+        matches = sorted(_glob.glob(os.path.join(project_root, pattern), recursive=True))
+        if not matches:
+            return f"No files matching '{pattern}'."
+        rels = [os.path.relpath(m, project_root) for m in matches]
+        parts = [f"{len(rels)} file(s) matching '{pattern}':"]
+        for r in rels[:limit]:
+            parts.append(f"  {r}")
+        if len(rels) > limit:
+            parts.append(f"  ... and {len(rels) - limit} more")
+        return "\n".join(parts)
+
     from indexer import CodeIndexer, CODE_DB_FILENAME
     if not project_root:
         project_root = _detect_project_root()
@@ -466,8 +480,8 @@ def code_impact(symbol_name: str, project_root: str = "", depth: int = 2, limit:
 @server.tool(description="CALL FIRST — load session memory: state, decisions, facts, code stats.")
 def getContext(topic: str = "", project: str = "", query: str = "") -> str:
     """Call at session start to load past state, decisions, facts for a topic."""
-    import sqlite3
-    from indexer import CODE_DB_FILENAME
+    from storage.db import StorageManager
+    from storage.sessions import SessionManager
 
     if project and not topic:
         topic = project
@@ -475,57 +489,29 @@ def getContext(topic: str = "", project: str = "", query: str = "") -> str:
         return "ctx: (unknown)\n  state: Provide `project='folder'` or `topic='name'`."
 
     lines = [f"ctx: {topic}"]
-    q = query.strip().lower()
 
     db_path = get_db_path()
     if not os.path.isfile(db_path):
         lines.append("  state: (no memory db yet — will be created on first write)")
         return "\n".join(lines)
 
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
+    storage = StorageManager(db_path)
+    manager = SessionManager(storage)
+
     try:
-        conn.execute(
+        storage.connection.execute(
             "INSERT OR IGNORE INTO notes (topic, kind, content, agent_id, turn_index) VALUES (?, 'turn', ?, 'system', 0)",
-            (topic, f"Context retrieved (query: {query or 'none'})"),
+            (SessionManager.normalize_topic(topic), f"Context retrieved (query: {query or 'none'})"),
         )
-        conn.commit()
+        storage.connection.commit()
     except Exception:
         pass
 
-    try:
-        planet = conn.execute(
-            "SELECT * FROM planets WHERE topic = ?", (topic,)
-        ).fetchone()
-
-        if planet:
-            if planet["current_state"]:
-                lines.append(f"  state: {planet['current_state']}")
-            if planet["next_step"]:
-                lines.append(f"  next: {planet['next_step']}")
-        else:
-            lines.append("  state: (no context yet)")
-            topics = conn.execute(
-                "SELECT topic FROM planets WHERE topic LIKE ? LIMIT 5",
-                (f"%{topic}%",),
-            ).fetchall()
-            if topics:
-                names = ", ".join(r[0] for r in topics)
-                lines.append(f"  (did you mean: {names})")
-
-        limit = 20 if q else 5
-        notes = conn.execute(
-            "SELECT kind, content FROM notes WHERE topic = ? AND kind IN ('decision','issue','fact') ORDER BY created_at DESC LIMIT ?",
-            (topic, limit),
-        ).fetchall()
-        for n in notes:
-            if not q or q in n["content"].lower():
-                tag = {"decision": "dec", "issue": "iss", "fact": "fact"}[n["kind"]]
-                lines.append(f"  {tag}: {n['content']}")
-    finally:
-        conn.close()
+    ctx = manager.get_context(topic, query=query)
+    lines.extend(ctx.splitlines()[1:])  # skip the "ctx:" line already added
 
     try:
+        from indexer import CODE_DB_FILENAME
         pr = _detect_project_root()
         cdb = os.path.join(pr, CODE_DB_FILENAME)
         if os.path.isfile(cdb):
@@ -550,51 +536,44 @@ def getContext(topic: str = "", project: str = "", query: str = "") -> str:
 @server.tool(description="Full planet details: state, notes, files, commands.")
 def read_planet(topic: str) -> str:
     """Read all details of a specific planet/topic."""
-    import json
-    import sqlite3
+    from storage.db import StorageManager
+    from storage.sessions import SessionManager, _get_notes
 
     db_path = get_db_path()
     if not os.path.isfile(db_path):
         return f"No knowledge base found at {db_path}."
 
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    try:
-        planet = conn.execute(
-            "SELECT * FROM planets WHERE topic = ?", (topic,)
-        ).fetchone()
-        if not planet:
-            return f"No planet found for topic '{topic}'."
+    storage = StorageManager(db_path)
+    manager = SessionManager(storage)
+    proxy = manager.get_planet(topic)
+    if not proxy:
+        return f"No planet found for topic '{topic}'."
 
-        notes = conn.execute(
-            "SELECT * FROM notes WHERE topic = ? ORDER BY created_at DESC LIMIT 50",
-            (topic,),
-        ).fetchall()
+    m = proxy.metadata
+    notes = _get_notes(storage.connection, manager.normalize_topic(topic))
 
-        display = planet["display_topic"] or planet["topic"]
-        next_steps = json.loads(planet["next_steps"] or "[]")
-        files = json.loads(planet["files"] or "[]")
-        commands = json.loads(planet["commands"] or "[]")
+    display = m.get("display_topic") or m.get("topic") or topic
+    next_steps = m.get("next_steps", [])
+    files = m.get("files", [])
+    commands = m.get("commands", [])
 
-        lines = [f"{display} | {planet['status'] or 'active'}"]
-        lines.append(f"  goal: {planet['goal'] or '—'}")
-        lines.append(f"  state: {planet['current_state'] or '—'}")
-        lines.append(f"  next: {planet['next_step'] or '—'}")
-        if next_steps:
-            lines.append(f"  steps: {', '.join(next_steps)}")
-        if files:
-            lines.append(f"  files: {', '.join(files)}")
-        if commands:
-            lines.append(f"  cmds: {', '.join(commands)}")
-        if planet["handoff"]:
-            lines.append(f"  handoff: {planet['handoff']}")
-        if notes:
-            lines.append(f"  notes ({len(notes)}):")
-            for n in notes[:10]:
-                lines.append(f"    [{n['kind'][:4]}] {n['content'][:200]}")
-        return "\n".join(lines)
-    finally:
-        conn.close()
+    lines = [f"{display} | {m.get('status') or 'active'}"]
+    lines.append(f"  goal: {m.get('goal') or '—'}")
+    lines.append(f"  state: {m.get('current_state') or '—'}")
+    lines.append(f"  next: {m.get('next_step') or '—'}")
+    if next_steps:
+        lines.append(f"  steps: {', '.join(next_steps)}")
+    if files:
+        lines.append(f"  files: {', '.join(files)}")
+    if commands:
+        lines.append(f"  cmds: {', '.join(commands)}")
+    if m.get("handoff"):
+        lines.append(f"  handoff: {m['handoff']}")
+    if notes:
+        lines.append(f"  notes ({len(notes)}):")
+        for n in notes[:10]:
+            lines.append(f"    [{n['kind'][:4]}] {n['content'][:200]}")
+    return "\n".join(lines)
 
 
 @server.tool(description="Persist session: decisions, facts, state, activity — all in one call.")
@@ -608,60 +587,35 @@ def log_interaction(
     activity: str = "",
 ) -> str:
     """Log an interaction: add notes + update planet + log turn in one call. Call during session for decisions/facts and at session end for summary."""
-    import sqlite3
-    import json
+    from storage.db import StorageManager
+    from storage.sessions import SessionManager
 
     db_path = get_db_path()
     if not os.path.isfile(db_path):
         return f"No knowledge base found at {db_path}."
 
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    try:
-        parts = []
-        for kind, val in [("decision", decision), ("fact", fact), ("summary", summary)]:
-            if val:
-                conn.execute(
-                    "INSERT INTO notes (topic, kind, content) VALUES (?, ?, ?)",
-                    (topic, kind, val),
-                )
-                parts.append(f"note({kind})")
+    storage = StorageManager(db_path)
+    manager = SessionManager(storage)
+    parts = []
 
-        update_cols = {}
-        if current_state:
-            update_cols["current_state"] = current_state
-        if next_step:
-            update_cols["next_step"] = next_step
+    for kind, val in [("decision", decision), ("fact", fact), ("summary", summary)]:
+        if val:
+            manager.add_note(topic, topic, kind, val)
+            parts.append(f"note({kind})")
 
-        if update_cols:
-            existing = conn.execute(
-                "SELECT * FROM planets WHERE topic = ?", (topic,)
-            ).fetchone()
-            if existing:
-                updates = [f"{k} = ?" for k in update_cols]
-                params = list(update_cols.values()) + [topic]
-                conn.execute(
-                    f"UPDATE planets SET {', '.join(updates)} WHERE topic = ?",
-                    params,
-                )
-            else:
-                conn.execute(
-                    "INSERT INTO planets (topic, current_state, next_step, status, next_steps) VALUES (?, ?, ?, 'active', '[]')",
-                    (topic, update_cols.get("current_state", ""), update_cols.get("next_step", "")),
-                )
-            parts.append("planet_updated")
+    if current_state or next_step:
+        manager.update_planet(
+            topic, topic,
+            current_state=current_state or None,
+            next_step=next_step or None,
+        )
+        parts.append("planet_updated")
 
-        if activity:
-            conn.execute(
-                "INSERT INTO notes (topic, kind, content) VALUES (?, 'turn', ?)",
-                (topic, activity),
-            )
-            parts.append("turn_logged")
+    if activity:
+        manager.log_chat_to_planet(topic, topic, activity, agent_id="system", sender="system")
+        parts.append("turn_logged")
 
-        conn.commit()
-        return f"{' + '.join(parts) if parts else 'no changes'} for '{topic}'."
-    finally:
-        conn.close()
+    return f"{' + '.join(parts) if parts else 'no changes'} for '{topic}'."
 
 
 @server.tool(description="Create or update a planet with goal, state, next step, files.")
@@ -676,89 +630,26 @@ def update_planet(
     handoff: str = "",
 ) -> str:
     """Update or create a planet with all supported fields."""
-    import sqlite3
-    import json
+    from storage.db import StorageManager
+    from storage.sessions import SessionManager
 
     db_path = get_db_path()
     if not os.path.isfile(db_path):
         return f"No knowledge base found at {db_path}."
 
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    try:
-        existing = conn.execute(
-            "SELECT * FROM planets WHERE topic = ?", (topic,)
-        ).fetchone()
-
-        fields = {
-            "current_state": current_state,
-            "next_step": next_step,
-            "status": status,
-            "goal": goal,
-            "handoff": handoff,
-        }
-
-        if existing:
-            updates = []
-            params = []
-            for col, val in fields.items():
-                if val:
-                    updates.append(f"{col} = ?")
-                    params.append(val)
-
-            if file_path:
-                files = set(json.loads(existing["files"] or "[]"))
-                files.add(file_path)
-                updates.append("files = ?")
-                params.append(json.dumps(sorted(files)))
-
-            if command:
-                commands = set(json.loads(existing["commands"] or "[]"))
-                commands.add(command)
-                updates.append("commands = ?")
-                params.append(json.dumps(sorted(commands)))
-
-            if next_step:
-                steps = set(json.loads(existing["next_steps"] or "[]"))
-                steps.add(next_step)
-                updates.append("next_steps = ?")
-                params.append(json.dumps(sorted(steps)))
-
-            if updates:
-                params.append(topic)
-                conn.execute(
-                    f"UPDATE planets SET {', '.join(updates)} WHERE topic = ?",
-                    params,
-                )
-        else:
-            next_steps_set = set()
-            if next_step:
-                next_steps_set.add(next_step)
-            files_set = set()
-            if file_path:
-                files_set.add(file_path)
-            commands_set = set()
-            if command:
-                commands_set.add(command)
-
-            conn.execute(
-                "INSERT INTO planets (topic, current_state, next_step, status, goal, files, commands, handoff, next_steps) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    topic,
-                    current_state or "",
-                    next_step or "",
-                    status or "active",
-                    goal or "",
-                    json.dumps(sorted(files_set)),
-                    json.dumps(sorted(commands_set)),
-                    handoff or "",
-                    json.dumps(sorted(next_steps_set)),
-                ),
-            )
-        conn.commit()
-        return f"Planet '{topic}' updated."
-    finally:
-        conn.close()
+    storage = StorageManager(db_path)
+    manager = SessionManager(storage)
+    manager.update_planet(
+        topic, topic,
+        current_state=current_state or None,
+        next_step=next_step or None,
+        status=status or None,
+        goal=goal or None,
+        file_path=file_path or None,
+        command=command or None,
+        handoff=handoff or None,
+    )
+    return f"Planet '{topic}' updated."
 
 
 
@@ -790,173 +681,137 @@ def compact_planet(topic: str) -> str:
 @server.tool(description="List all planets/topics.")
 def list_planets() -> str:
     """List all topics/planets available in the knowledge base."""
-    import sqlite3
+    from storage.db import StorageManager
+    from storage.sessions import SessionManager
 
     db_path = get_db_path()
     if not os.path.isfile(db_path):
         return "No knowledge base found."
 
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    try:
-        planets = conn.execute(
-            "SELECT topic, display_topic, status, goal, current_state FROM planets ORDER BY topic"
-        ).fetchall()
-        if not planets:
-            return "No planets found. Create one with update_planet."
-        lines = ["# Available Planets"]
-        for p in planets:
-            name = p["display_topic"] or p["topic"]
-            status_tag = f" [{p['status']}]" if p["status"] and p["status"] != "active" else ""
-            lines.append(f"- {name}{status_tag}")
-        return "\n".join(lines)
-    finally:
-        conn.close()
+    storage = StorageManager(db_path)
+    manager = SessionManager(storage)
+    planets = manager.list_planets()
+    if not planets:
+        return "No planets found. Create one with update_planet."
+    lines = ["# Available Planets"]
+    for p in planets:
+        name = p["display_topic"] or p["topic"]
+        status_tag = f" [{p['status']}]" if p["status"] and p["status"] != "active" else ""
+        lines.append(f"- {name}{status_tag}")
+    return "\n".join(lines)
 
 
 @server.tool(description="Full-text search across planets, notes, nodes.")
 def search_nodes(query: str, limit: int = 10) -> str:
     """Full-text search across planets, notes, and nodes."""
-    import sqlite3
+    from storage.db import StorageManager
+    from storage.sessions import SessionManager
 
     db_path = get_db_path()
-
     if not os.path.isfile(db_path):
         return "No knowledge base found."
 
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    try:
-        like = f"%{query}%"
-        lines = [f"# Search results for: '{query}'\n"]
-        count = 0
+    storage = StorageManager(db_path)
+    manager = SessionManager(storage)
+    results = manager.search_all(query, limit=limit)
+    lines = [f"# Search results for: '{query}'\n"]
+    count = 0
 
-        # Planets
-        for r in conn.execute(
-            "SELECT topic, display_topic, current_state FROM planets WHERE topic LIKE ? OR display_topic LIKE ? OR current_state LIKE ? OR goal LIKE ?",
-            (like, like, like, like),
-        ):
-            if count >= limit:
-                break
-            name = r["display_topic"] or r["topic"]
-            preview = (r["current_state"] or "")[:200]
-            lines.append(f"🪐 **Planet: {name}**")
-            if preview:
-                lines.append(f"   {preview}")
-            lines.append("")
-            count += 1
+    for r in results.get("planets", []):
+        if count >= limit:
+            break
+        name = r.get("display_topic") or r["topic"]
+        preview = (r.get("current_state") or "")[:200]
+        lines.append(f"🪐 **Planet: {name}**")
+        if preview:
+            lines.append(f"   {preview}")
+        lines.append("")
+        count += 1
 
-        # Notes
-        for r in conn.execute(
-            "SELECT topic, kind, content FROM notes WHERE content LIKE ? OR title LIKE ?",
-            (like, like),
-        ):
-            if count >= limit:
-                break
-            preview = (r["content"] or "")[:200]
-            lines.append(f"[note] **{r['topic']} [{r['kind']}]**")
+    for r in results.get("notes", []):
+        if count >= limit:
+            break
+        preview = (r.get("content") or "")[:200]
+        lines.append(f"[note] **{r['topic']} [{r['kind']}]**")
+        lines.append(f"   {preview}")
+        lines.append("")
+        count += 1
+
+    # Old nodes from StorageManager FTS
+    old_ids = storage.search_nodes_fts(query, limit=limit - count)
+    for nid in old_ids:
+        if count >= limit:
+            break
+        n = storage.get_node(nid)
+        if n:
+            preview = (n.content or "")[:200]
+            lines.append(f"○ **{n.title}** ({n.node_type.value})")
             lines.append(f"   {preview}")
             lines.append("")
             count += 1
 
-        # Old nodes
-        from storage.db import StorageManager
-        storage = StorageManager(db_path)
-        old_ids = storage.search_nodes_fts(query, limit=limit - count)
-        for nid in old_ids:
-            if count >= limit:
-                break
-            n = storage.get_node(nid)
-            if n:
-                preview = (n.content or "")[:200]
-                lines.append(f"○ **{n.title}** ({n.node_type.value})")
-                lines.append(f"   {preview}")
-                lines.append("")
-                count += 1
-        storage.close()
+    if count == 0:
+        return "No matches found."
 
-        if count == 0:
-            return "No matches found."
-
-        return "\n".join(lines)
-    finally:
-        conn.close()
+    return "\n".join(lines)
 
 
 @server.tool(description="Search notes by topic, kind, text.")
 def search_notes(topic: str, kind: str = "", query: str = "", limit: int = 10) -> str:
     """Search notes by topic, kind, and text."""
-    import sqlite3
+    from storage.db import StorageManager
+    from storage.sessions import SessionManager
 
     db_path = get_db_path()
-
     if not os.path.isfile(db_path):
         return "No knowledge base found."
 
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    try:
-        sql = "SELECT id, topic, kind, content, created_at FROM notes WHERE topic = ?"
-        params: list[str | int] = [topic]
-        if kind:
-            sql += " AND kind = ?"
-            params.append(kind)
-        sql += " ORDER BY created_at DESC LIMIT ?"
-        params.append(limit)
+    storage = StorageManager(db_path)
+    manager = SessionManager(storage)
+    rows = manager.search_notes(topic, kind=kind, query=query, limit=limit)
 
-        cur = conn.execute(sql, params)
-        rows = cur.fetchall()
+    if not rows:
+        return "No matching notes found."
 
-        if query:
-            query_lower = query.lower()
-            rows = [r for r in rows if query_lower in (r["content"] or "").lower()]
-
-        if not rows:
-            return "No matching notes found."
-
-        lines = [f"# Notes for '{topic}'" + (f" (kind: {kind})" if kind else "")]
-        for r in rows:
-            preview = (r["content"] or "")[:200]
-            lines.append(
-                f"\n**[{r['kind'].upper()}] (id={r['id']})**\n{preview}"
-            )
-        return "\n".join(lines)
-    finally:
-        conn.close()
+    lines = [f"# Notes for '{topic}'" + (f" (kind: {kind})" if kind else "")]
+    for r in rows:
+        preview = (r.get("content") or "")[:200]
+        lines.append(
+            f"\n**[{r['kind'].upper()}] (id={r['id']})**\n{preview}"
+        )
+    return "\n".join(lines)
 
 
 @server.tool(description="Read a full node by ID.")
 def get_node(node_id: str) -> str:
     """Read a full node by its ID."""
-    import sqlite3
+    from storage.db import StorageManager
+    from storage.sessions import SessionManager
 
     db_path = get_db_path()
-
     if not os.path.isfile(db_path):
         return "No knowledge base found."
 
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    try:
-        row = conn.execute(
-            "SELECT id, topic, kind, content, title, created_at, updated_at FROM notes WHERE id = ?",
-            (node_id,),
-        ).fetchone()
-        if not row:
-            return f"No node found with id '{node_id}'."
+    nid = SessionManager._parse_note_id(node_id)
+    if nid is None:
+        return f"Invalid node ID: {node_id}"
 
-        updated = row['updated_at'] or 'N/A'
-        return (
-            f"**ID:** {row['id']}\n"
-            f"**Topic:** {row['topic']}\n"
-            f"**Kind:** {row['kind']}\n"
-            f"**Title:** {row['title']}\n"
-            f"**Created:** {row['created_at']}\n"
-            f"**Updated:** {updated}\n"
-            f"\n**Content:**\n{row['content']}"
-        )
-    finally:
-        conn.close()
+    storage = StorageManager(db_path)
+    manager = SessionManager(storage)
+    row = manager.get_note(nid)
+    if not row:
+        return f"No node found with id '{node_id}'."
+
+    updated = row.get("updated_at") or "N/A"
+    return (
+        f"**ID:** {row['id']}\n"
+        f"**Topic:** {row['topic']}\n"
+        f"**Kind:** {row['kind']}\n"
+        f"**Title:** {row.get('title', '')}\n"
+        f"**Created:** {row['created_at']}\n"
+        f"**Updated:** {updated}\n"
+        f"\n**Content:**\n{row['content']}"
+    )
 
 
 @server.tool(description="Link two notes with type and weight.")

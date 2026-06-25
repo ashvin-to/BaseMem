@@ -171,10 +171,12 @@ $AgentGuidance = @'
 | Find symbol | `mem_code_find('sym')` |
 | Find + source | `mem_code_find('sym', source=True)` |
 | All references | `mem_code_find('sym', references=True)` |
+| Text search (all files) | `mem_code_find('pattern', grep=True)` |
 | Read file | `mem_code_read('path/file.py', offset=10, limit=50)` |
 | Browse | `mem_code_find('')` |
 | Explore | `mem_code_explore('sym')` |
 | Files | `mem_code_files(prefix='src/')` |
+| Glob files | `mem_code_files(pattern='**/*.json')` |
 | Trace | `mem_code_trace('func')` |
 | Impact | `mem_code_impact('sym')` |
 
