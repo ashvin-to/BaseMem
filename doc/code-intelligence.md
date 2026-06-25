@@ -8,6 +8,9 @@ Tree-sitter powered code indexing per project. Each indexed project stores a `.b
 # Index a project (run once per project)
 mem code init /path/to/project
 
+# Watch mode: auto-re-index on file changes
+mem code init --watch /path/to/project
+
 # Find a symbol
 mem code find "getContext"
 
@@ -32,9 +35,10 @@ mem code list-projects
 | Tool | Description |
 |------|-------------|
 | `code_init(project_root)` | Index a project; stores `.basemem.code.db` in project root |
-| `code_find(query, root, dead, file_path, limit, source)` | Find symbols by name, detail, dead code, file filter. `source=True` returns source lines with line numbers |
+| `code_find(query, root, dead, file_path, limit, source, references, grep)` | Find symbols. `source=True` returns lines. `references=True` finds usages. `grep=True` raw text search across ALL files |
+| `code_read(file_path, offset, limit)` | Read file contents with line numbers |
 | `code_explore(query, root, limit)` | One-shot: search + source code + call paths |
-| `code_files(prefix, root, limit)` | Project file tree with symbol counts per file |
+| `code_files(prefix, root, pattern, limit)` | List indexed files, or `pattern='**/*.json'` for glob wildcard search |
 | `code_impact(symbol, root, depth, limit)` | Transitive reverse dependency graph |
 | `code_trace(symbol, root, direction, depth, limit)` | Recursive inbound/outbound call chain |
 | `code_list_projects(search_root)` | Scan filesystem for all indexed projects |

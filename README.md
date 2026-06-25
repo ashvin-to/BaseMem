@@ -12,9 +12,9 @@ mem agent-context --topic "my-project" --query "what did we decide?"
 ```
 
 ## Docs
+- **[doc/memory.md](./doc/memory.md)** — planets, notes, graphs, CLI, data models, auto-linking, memory tiers
 
-- **[MEMORY.md](./MEMORY.md)** — planets, notes, graphs, CLI, data models, auto-linking, memory tiers
-- **[CODE_INTELLIGENCE.md](./CODE_INTELLIGENCE.md)** — tree-sitter code indexing, code tools, zero-read edit workflow
+- **[doc/code-intelligence.md](./doc/code-intelligence.md)** — tree-sitter code indexing, code tools, zero-read edit workflow
 
 ## Architecture
 
@@ -25,7 +25,7 @@ All interfaces (CLI, MCP, Flask) read and write the same SQLite tables — no sy
 ### Core Components
 
 1. **Storage Layer** (`storage/`) — SQLite + FTS5, `SessionManager`, schema: planets, notes, note_links, planet_links
-2. **MCP Server** (`mcp_server/server.py`) — 28 MCP tools (memory + code)
+2. **MCP Server** (`mcp_server/server.py`) — 30 MCP tools (memory + code)
 3. **Web Hub** (`server.py`) — Flask REST API, D3.js graph visualization
 4. **CLI** (`cli/main.py`) — all planet, note, code commands
 5. **Code Intelligence** (`indexer/`) — tree-sitter powered, per-project `.basemem.code.db`
@@ -43,7 +43,7 @@ BaseMem/
 ├── cli/              # CLI commands
 ├── graph/            # Graph engine
 ├── indexer/          # Code intelligence (tree-sitter)
-├── mcp_server/       # MCP server (28 tools)
+├── mcp_server/       # MCP server (30 tools)
 ├── storage/          # SQLite storage
 ├── models.py         # Data models
 ├── server.py         # Flask REST API + D3 viz
@@ -53,9 +53,10 @@ BaseMem/
 ├── extensions/gemini/
 ├── tests/
 ├── README.md
-├── MEMORY.md
-├── CODE_INTELLIGENCE.md
-└── LICENSE
+├── doc/
+│   ├── memory.md
+│   └── code-intelligence.md
+├── LICENSE
 ```
 
 ## Development

@@ -423,7 +423,7 @@ class SessionManager:
     }
 
     @staticmethod
-    def _parse_note_id(note_id):
+    def _parse_note_id(note_id: int | str) -> int | None:
         if isinstance(note_id, int):
             return note_id
         if isinstance(note_id, str):
@@ -439,12 +439,14 @@ class SessionManager:
         return None
 
     @staticmethod
-    def _tokenize(text):
+    def _tokenize(text: str) -> set[str]:
         import re
         words = re.findall(r"[a-zA-Z]{3,}", text.lower())
         return {w for w in words if w not in SessionManager.STOPWORDS}
 
-    def link_notes(self, from_note_id, to_note_id, link_type="related", weight=1.0):
+    def link_notes(
+        self, from_note_id: int | str, to_note_id: int | str, link_type: str = "related", weight: float = 1.0
+    ) -> tuple[bool, str]:
         from_id = self._parse_note_id(from_note_id)
         to_id = self._parse_note_id(to_note_id)
         if from_id is None or to_id is None:
@@ -459,7 +461,7 @@ class SessionManager:
         )
         return True, f"Linked note-{from_id} -> note-{to_id} ({link_type})"
 
-    def get_note_neighbors(self, note_id, link_type=None):
+    def get_note_neighbors(self, note_id: int | str, link_type: str | None = None) -> list[dict]:
         nid = self._parse_note_id(note_id)
         if nid is None:
             return []
@@ -489,7 +491,7 @@ class SessionManager:
                 self.reinforce_link(nid, nb["id"])
         return rows
 
-    def _auto_link_note(self, note_id, topic_slug):
+    def _auto_link_note(self, note_id: int, topic_slug: str) -> None:
         cursor = self.storage.connection.cursor()
         new_row = cursor.execute(
             "SELECT id, content FROM notes WHERE id = ?", (note_id,)
@@ -736,12 +738,12 @@ class SessionManager:
 
         return moon_node
 
-    def get_neighbors(self, node_id: str):
+    def get_neighbors(self, node_id: str) -> list[str]:
         return self.storage.get_neighbors(node_id)
 
     # ── Planet links ──────────────────────────────────────────
 
-    def link_planets(self, from_topic: str, to_topic: str, relation: str = "related", weight: float = 1.0):
+    def link_planets(self, from_topic: str, to_topic: str, relation: str = "related", weight: float = 1.0) -> tuple[bool, str]:
         from_slug = self.normalize_topic(from_topic)
         to_slug = self.normalize_topic(to_topic)
         if from_slug == to_slug:
@@ -760,7 +762,7 @@ class SessionManager:
         )
         return True, f"Linked planet '{from_slug}' -> '{to_slug}' ({relation})"
 
-    def get_planet_links(self, topic: str):
+    def get_planet_links(self, topic: str) -> list[dict]:
         slug = self.normalize_topic(topic)
         row = _get_planet_row(self.storage.connection, slug)
         if not row:
@@ -787,6 +789,93 @@ class SessionManager:
             })
         return result
 
+    # ── Planet listing ──────────────────────────────────────────
+
+    def get_context(self, topic: str, query: str = "") -> str:
+        """Compact pre-answer context: state, next step, decisions, facts."""
+        topic_slug = self.normalize_topic(topic)
+        conn = self.storage.connection
+        lines = [f"ctx: {topic_slug}"]
+        q = query.strip().lower()
+
+        row = _get_planet_row(conn, topic_slug)
+        if row:
+            if row.get("current_state"):
+                lines.append(f"  state: {row['current_state']}")
+            if row.get("next_step"):
+                lines.append(f"  next: {row['next_step']}")
+        else:
+            lines.append("  state: (no context yet)")
+            cursor = conn.cursor()
+            topics = cursor.execute(
+                "SELECT topic FROM planets WHERE topic LIKE ? LIMIT 5",
+                (f"%{topic_slug}%",),
+            ).fetchall()
+            if topics:
+                names = ", ".join(r[0] for r in topics)
+                lines.append(f"  (did you mean: {names})")
+
+        notes = _get_notes(conn, topic_slug)
+        for n in notes:
+            if n.get("kind") in ("decision", "issue", "fact"):
+                if not q or q in (n.get("content") or "").lower():
+                    tag = {"decision": "dec", "issue": "iss", "fact": "fact"}.get(n["kind"], "note")
+                    lines.append(f"  {tag}: {n['content'][:300]}")
+
+        return "\n".join(lines)
+
+    def list_planets(self) -> list[dict]:
+        """List all planets as dicts."""
+        cursor = self.storage.connection.cursor()
+        rows = cursor.execute(
+            "SELECT topic, display_topic, status, goal, current_state FROM planets ORDER BY topic"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_note(self, note_id: int) -> Optional[dict]:
+        """Get a single note by id as dict."""
+        cursor = self.storage.connection.cursor()
+        row = cursor.execute("SELECT * FROM notes WHERE id = ?", (note_id,)).fetchone()
+        return dict(row) if row else None
+
+    def search_notes(
+        self, topic: str, kind: str = "", query: str = "", limit: int = 10
+    ) -> list[dict]:
+        """Search notes by topic, kind, and optional text filter."""
+        cursor = self.storage.connection.cursor()
+        sql = "SELECT id, topic, kind, content, created_at FROM notes WHERE topic = ?"
+        params: list = [self.normalize_topic(topic)]
+        if kind:
+            sql += " AND kind = ?"
+            params.append(kind)
+        if query:
+            like = f"%{query}%"
+            sql += " AND (content LIKE ? OR title LIKE ?)"
+            params.extend([like, like])
+        sql += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+        rows = cursor.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
+
+    def search_all(self, query: str, limit: int = 10) -> dict:
+        """Full-text search across planets and notes. Returns {'planets': [...], 'notes': [...]}."""
+        like = f"%{query}%"
+        cursor = self.storage.connection.cursor()
+
+        planet_rows = cursor.execute(
+            "SELECT topic, display_topic, current_state FROM planets WHERE topic LIKE ? OR display_topic LIKE ? OR current_state LIKE ? OR goal LIKE ?",
+            (like, like, like, like),
+        ).fetchall()
+        planets = [dict(r) for r in planet_rows]
+
+        note_rows = cursor.execute(
+            "SELECT topic, kind, content FROM notes WHERE content LIKE ? OR title LIKE ? LIMIT ?",
+            (like, like, limit),
+        ).fetchall()
+        notes = [dict(r) for r in note_rows]
+
+        return {"planets": planets, "notes": notes}
+
     # ── Edge reinforcement ────────────────────────────────────
 
     def reinforce_link(self, from_note_id: int, to_note_id: int, increment: float = 0.05):
@@ -806,7 +895,7 @@ class SessionManager:
 
     # ── Background similarity recomputation ────────────────────
 
-    def recompute_links(self, topic: str = None, threshold: float = 0.1, min_weight: float = 0.05):
+    def recompute_links(self, topic: str | None = None, threshold: float = 0.1, min_weight: float = 0.05) -> dict:
         cursor = self.storage.connection.cursor()
         if topic:
             notes = cursor.execute(
@@ -857,7 +946,7 @@ class SessionManager:
 
     # ── Memory tiers ──────────────────────────────────────────
 
-    def set_memory_state(self, topic: str, state: str):
+    def set_memory_state(self, topic: str, state: str) -> tuple[bool, str]:
         if state not in ("hot", "warm", "compacted"):
             return False, "State must be hot, warm, or compacted"
         slug = self.normalize_topic(topic)
@@ -870,7 +959,7 @@ class SessionManager:
 
     # ── Graph-aware retrieval ─────────────────────────────────
 
-    def get_neighbors_weighted(self, note_id: int, depth: int = 1, min_weight: float = 0.0):
+    def get_neighbors_weighted(self, note_id: int, depth: int = 1, min_weight: float = 0.0) -> list[dict]:
         visited = set()
         results = []
         def traverse(nid, current_depth):
@@ -885,7 +974,7 @@ class SessionManager:
         traverse(note_id, 1)
         return results
 
-    def get_subgraph(self, note_id: int, depth: int = 2, min_weight: float = 0.2):
+    def get_subgraph(self, note_id: int, depth: int = 2, min_weight: float = 0.2) -> dict:
         cursor = self.storage.connection.cursor()
         nid = self._parse_note_id(note_id)
         if nid is None:
@@ -911,7 +1000,7 @@ class SessionManager:
                 nodes.append(dict(row))
         return {"nodes": nodes, "edges": edges}
 
-    def rank_neighbors(self, note_id: int, by: str = "weight"):
+    def rank_neighbors(self, note_id: int, by: str = "weight") -> list[dict]:
         neighbors = self.get_note_neighbors(note_id)
         if by == "confidence":
             neighbors.sort(key=lambda x: x.get("confidence", 0) or 0, reverse=True)
@@ -921,7 +1010,7 @@ class SessionManager:
 
     # ── Edge lifecycle ────────────────────────────────────────
 
-    def edge_decay(self, factor: float = 0.9, planet: str | None = None):
+    def edge_decay(self, factor: float = 0.9, planet: str | None = None) -> dict:
         cursor = self.storage.connection.cursor()
         if planet:
             slug = self.normalize_topic(planet)
@@ -932,7 +1021,7 @@ class SessionManager:
                 ).fetchall()
             ]
             if not note_ids:
-                return {"decayed": 0, "message": "No notes in planet"}
+                return {"decayed": 0, "factor": factor, "message": "No notes in planet"}
             placeholders = ",".join("?" for _ in note_ids)
             affected = cursor.execute(
                 f"UPDATE note_links SET weight = ROUND(weight * ?, 3), updated_at = ? "
@@ -947,7 +1036,7 @@ class SessionManager:
         self.storage.connection.commit()
         return {"decayed": affected, "factor": factor}
 
-    def edge_prune(self, threshold: float = 0.05, planet: str | None = None):
+    def edge_prune(self, threshold: float = 0.05, planet: str | None = None) -> dict:
         cursor = self.storage.connection.cursor()
         if planet:
             slug = self.normalize_topic(planet)
@@ -958,7 +1047,7 @@ class SessionManager:
                 ).fetchall()
             ]
             if not note_ids:
-                return {"pruned": 0, "message": "No notes in planet"}
+                return {"pruned": 0, "threshold": threshold, "message": "No notes in planet"}
             placeholders = ",".join("?" for _ in note_ids)
             affected = cursor.execute(
                 f"DELETE FROM note_links WHERE weight < ? AND source = 'auto' "
@@ -975,7 +1064,7 @@ class SessionManager:
 
     # ── Export / Import ──────────────────────────────────────
 
-    def export_kb(self, planet: str | None = None):
+    def export_kb(self, planet: str | None = None) -> dict:
         cursor = self.storage.connection.cursor()
         data = {"version": 1, "planets": [], "notes": [], "note_links": [], "planet_links": []}
         rows = cursor.execute("SELECT * FROM planets").fetchall()
