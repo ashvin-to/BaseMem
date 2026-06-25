@@ -46,7 +46,7 @@ import sqlite3
 
 from mcp.server.fastmcp import FastMCP
 
-server = FastMCP("basemem-mcp")
+server = FastMCP("mem")
 
 
 def _ensure_schema():
@@ -92,7 +92,7 @@ def _ensure_schema():
 
 
 
-@server.tool(description="Index/refresh project code graph (tree-sitter).")
+@server.tool(description="Index project code (tree-sitter). Auto-runs on first code_find.")
 def code_init(project_root: str) -> str:
     """Index a project's source code into a per-project .basemem.code.db."""
     import os
@@ -138,7 +138,7 @@ def _fmt_loc(file_path: str) -> str:
     return "/".join(parts[-3:]) if len(parts) > 3 else path
 
 
-@server.tool(description="Find code symbols by name/signature. Single match includes callers/callees. REPLACES grep/glob/Read for code exploration.")
+@server.tool(description="Find code symbols. references=True = find all usages across files. REPLACES grep.")
 def code_find(
     query: str = "",
     project_root: str = "",
@@ -146,11 +146,15 @@ def code_find(
     use_regex: bool = False,
     dead: bool = False,
     file_path: str = "",
+    source: bool = False,
+    references: bool = False,
 ) -> str:
-    """Search for code symbols in a project's .basemem.code.db.
-
-    dead=True  — find files never imported by other files (import-chain analysis).
-    file_path  — filter results to a specific file (e.g. 'indexer.py').
+    """Search for code symbols. Single match = detail + callers/callees + source.
+       Empty query = file overview.
+       file_path='indexer.py' = filter to file.
+       dead=True = find files never imported by other files.
+       source=True = include source code lines (for edit workflow: code_find → edit).
+       references=True = find all references/occurrences across indexed files.
     """
     import os
     from indexer import CodeIndexer, CODE_DB_FILENAME
@@ -173,6 +177,16 @@ def code_find(
             parts = [f"{len(results)} file(s) never imported by other files:"]
             for r in results:
                 parts.append(f"  {r['file_path']} ({r['symbol_count']} symbols)")
+            return "\n".join(parts)
+
+        # References mode — find all occurrences across indexed files
+        if references and query:
+            refs = indexer.find_references(query, limit=limit)
+            if not refs:
+                return f"No references to '{query}' found."
+            parts = [f"{len(refs)} reference(s) to '{query}':"]
+            for r in refs:
+                parts.append(f"  {r['file_path']}:{r['line_number']}: {r['content']}")
             return "\n".join(parts)
 
         # File-level browse mode
@@ -226,6 +240,16 @@ def code_find(
             if callees:
                 cstr = ", ".join(f"{c['to_name']}:{c['line_number']}" for c in callees[:10])
                 parts.append(f"  calls: {cstr}")
+            if source:
+                abs_fp = os.path.join(project_root, sym['file_path'])
+                if os.path.isfile(abs_fp):
+                    with open(abs_fp) as _f:
+                        lines = _f.read().splitlines()
+                    start = max(0, sym['start_line'] - 1)
+                    end = min(len(lines), sym['end_line'])
+                    parts.append(f"  source ({sym['start_line']}:{sym['end_line']}):")
+                    for i in range(start, end):
+                        parts.append(f"    L{i+1}: {lines[i]}")
             return "\n".join(parts)
 
         results = indexer.search_symbols(query, limit=limit, use_regex=use_regex)
@@ -239,31 +263,29 @@ def code_find(
                 parts.append(f"  [{r['id']}] {r['symbol_name']} ({loc}){sig}")
             return "\n".join(parts)
 
-        # Browse fallback — list all symbols grouped by file
+        # Browse fallback — show file overview with symbol counts
         import sqlite3
         _c = indexer.conn
         total = _c.execute("SELECT COUNT(*) FROM code_symbols").fetchone()[0]
         files = _c.execute("SELECT COUNT(DISTINCT file_path) FROM code_symbols").fetchone()[0]
-        parts = [f"📁 {os.path.basename(project_root)} — {files}f {total}s\n"]
-        parts.append(f"No match for '{query}' — browse symbols by file (call code_find with an ID for callers):\n")
+        parts = [f"{os.path.basename(project_root)} — {files}f {total}s"]
+        parts.append(f"No match for '{query}' — show files (use code_find(file_path=...) or code_find('sym') to drill in):\n")
         for row in _c.execute("""
-            SELECT file_path, id, symbol_name, symbol_type, start_line
-            FROM code_symbols
-            ORDER BY file_path, start_line
-            LIMIT 200
+            SELECT file_path, COUNT(*) as cnt, MAX(symbol_type) as type
+            FROM code_symbols GROUP BY file_path ORDER BY file_path
+            LIMIT 100
         """):
             if file_path and row['file_path'] != file_path:
                 continue
-            typemark = "🧩" if row["symbol_type"] in ("function", "method") else "📦"
-            parts.append(f"  [{row['id']}] {typemark} {row['symbol_name']} ({row['file_path']}:{row['start_line']})")
-        if total > 200:
-            parts.append(f"\n  ... and {total - 200} more symbols (be more specific)")
+            parts.append(f"  {row['file_path']} ({row['cnt']} sym)")
+        if files > 100:
+            parts.append(f"\n  ... and {files - 100} more files (use prefix filter)")
         return "\n".join(parts)
     finally:
         indexer.close()
 
 
-@server.tool(description="Trace call chain: inbound (callers), outbound (callees), or both, with configurable depth.")
+@server.tool(description="Trace call chain: who calls this symbol and what does it call?")
 def code_trace(
     symbol_name: str,
     project_root: str = "",
@@ -312,7 +334,7 @@ def code_trace(
         indexer.close()
 
 
-@server.tool(description="Scan for indexed code projects (comma-separated paths).")
+@server.tool(description="Scan for indexed code projects.")
 def code_list_projects(search_root: str = "") -> str:
     """Scan for all .basemem.code.db files on the system."""
     from indexer.indexer import find_code_projects
@@ -325,7 +347,7 @@ def code_list_projects(search_root: str = "") -> str:
     return "\n".join(parts)
 
 
-@server.tool(description="Show project file structure from the index with symbol counts per file.")
+@server.tool(description="Show project files with symbol counts per file. Use prefix='src/' to filter.")
 def code_files(project_root: str = "", prefix: str = "", limit: int = 100) -> str:
     """List indexed files with symbol counts in a project."""
     import os
@@ -348,9 +370,11 @@ def code_files(project_root: str = "", prefix: str = "", limit: int = 100) -> st
         indexer.close()
 
 
-@server.tool(description="Explore an area: relevant symbols' source + call paths in one shot.")
-def code_explore(query: str, project_root: str = "", max_files: int = 3, limit: int = 10) -> str:
-    """Search symbols and show their callers/callees + source code."""
+@server.tool(description="Explore: view source + call paths in one shot. Use symbol name from code_find.")
+def code_explore(query: str, project_root: str = "", limit: int = 10) -> str:
+    """View source code and callers/callees for a symbol or area.
+    Tries exact symbol name/ID first, then full-text search.
+    """
     import os
     from indexer import CodeIndexer, CODE_DB_FILENAME
     if not project_root:
@@ -360,11 +384,26 @@ def code_explore(query: str, project_root: str = "", max_files: int = 3, limit: 
         return f"No code index at {db_path}."
     indexer = CodeIndexer(project_root)
     try:
-        symbols = indexer.search_symbols(query, limit=limit)
+        # Try exact symbol name or ID first (from code_find)
+        symbols = []
+        try:
+            sid = int(query)
+            sym = indexer.get_symbol(sid)
+            if sym:
+                symbols = [sym]
+        except ValueError:
+            exact = indexer.get_symbol_by_name(query)
+            if len(exact) == 1:
+                symbols = exact
+            elif len(exact) > 1:
+                # Multiple exact matches — prefer the one with most context
+                symbols = exact[:limit]
+
+        if not symbols:
+            symbols = indexer.search_symbols(query, limit=limit)
         if not symbols:
             return f"No matches for '{query}'."
         parts = []
-        shown_files = set()
         for sym in symbols[:limit]:
             loc = _fmt_loc(sym['file_path'])
             parts.append(f"\n── {sym['symbol_name']} ({loc}) {sym['symbol_type']} ──")
@@ -378,25 +417,23 @@ def code_explore(query: str, project_root: str = "", max_files: int = 3, limit: 
             if callees:
                 cstr = ", ".join(f"{c['to_name']}:{c['line_number']}" for c in callees[:5])
                 parts.append(f"  calls: {cstr}")
-            # Show source
-            if sym['file_path'] not in shown_files and len(shown_files) < max_files:
-                shown_files.add(sym['file_path'])
-                abs_fp = os.path.join(project_root, sym['file_path'])
-                if os.path.isfile(abs_fp):
-                    with open(abs_fp) as f:
-                        lines = f.read().splitlines()
-                    start = max(0, sym['start_line'] - 2)
-                    end = min(len(lines), sym['end_line'] + 1)
-                    parts.append(f"  source ({sym['start_line']}-{sym['end_line']}):")
-                    for i in range(start, end):
-                        marker = "→" if i == sym['start_line'] - 1 else " "
-                        parts.append(f"    {marker} L{i+1}: {lines[i]}")
+            # Show source — always show for the matched symbol
+            abs_fp = os.path.join(project_root, sym['file_path'])
+            if os.path.isfile(abs_fp):
+                with open(abs_fp) as f:
+                    lines = f.read().splitlines()
+                start = max(0, sym['start_line'] - 1)
+                end = min(len(lines), sym['end_line'])
+                parts.append(f"  source ({sym['start_line']}:{sym['end_line']}):")
+                for i in range(start, end):
+                    marker = "->" if i == sym['start_line'] - 1 else "  "
+                    parts.append(f"    {marker} L{i+1}: {lines[i]}")
         return "\n".join(parts) if parts else "No results."
     finally:
         indexer.close()
 
 
-@server.tool(description="Analyze what code is affected by changing a symbol (transitive reverse deps).")
+@server.tool(description="Analyze impact of changing a symbol (transitive reverse deps).")
 def code_impact(symbol_name: str, project_root: str = "", depth: int = 2, limit: int = 30) -> str:
     """Trace transitive reverse dependencies for a symbol."""
     import os
@@ -426,9 +463,9 @@ def code_impact(symbol_name: str, project_root: str = "", depth: int = 2, limit:
 
 
 
-@server.tool(description="Get structured context for a topic (state, code stats, decisions, facts).")
-def get_agent_context(topic: str = "", project: str = "", query: str = "") -> str:
-    """Get session context for a topic — always returns something useful."""
+@server.tool(description="CALL FIRST — load session memory: state, decisions, facts, code stats.")
+def getContext(topic: str = "", project: str = "", query: str = "") -> str:
+    """Call at session start to load past state, decisions, facts for a topic."""
     import sqlite3
     from indexer import CODE_DB_FILENAME
 
@@ -510,7 +547,7 @@ def get_agent_context(topic: str = "", project: str = "", query: str = "") -> st
     return "\n".join(lines)
 
 
-@server.tool(description="Read full planet details (state, notes, metadata).")
+@server.tool(description="Full planet details: state, notes, files, commands.")
 def read_planet(topic: str) -> str:
     """Read all details of a specific planet/topic."""
     import json
@@ -560,7 +597,7 @@ def read_planet(topic: str) -> str:
         conn.close()
 
 
-@server.tool(description="Log an interaction: add note(s), update planet state, log turn — all in one call.")
+@server.tool(description="Persist session: decisions, facts, state, activity — all in one call.")
 def log_interaction(
     topic: str,
     decision: str = "",
@@ -570,7 +607,7 @@ def log_interaction(
     next_step: str = "",
     activity: str = "",
 ) -> str:
-    """Log an interaction: add notes + update planet + log turn in one call."""
+    """Log an interaction: add notes + update planet + log turn in one call. Call during session for decisions/facts and at session end for summary."""
     import sqlite3
     import json
 
@@ -627,7 +664,7 @@ def log_interaction(
         conn.close()
 
 
-@server.tool(description="Update or create a planet (state, next_step, goal, files, etc).")
+@server.tool(description="Create or update a planet with goal, state, next step, files.")
 def update_planet(
     topic: str,
     current_state: str = "",
@@ -727,7 +764,7 @@ def update_planet(
 
 
 
-@server.tool(description="Get raw notes for agent-driven summarization.")
+@server.tool(description="Get raw notes for agent summarization.")
 def summarize_planet(topic: str, limit: int = 50) -> str:
     """Return all notes for a planet formatted for agent summarization."""
     from storage.sessions import SessionManager
@@ -750,7 +787,7 @@ def compact_planet(topic: str) -> str:
     return f"Compacted '{topic}': {count_before} notes -> {count_after} notes kept."
 
 
-@server.tool(description="List all available planets/topics.")
+@server.tool(description="List all planets/topics.")
 def list_planets() -> str:
     """List all topics/planets available in the knowledge base."""
     import sqlite3
@@ -777,7 +814,7 @@ def list_planets() -> str:
         conn.close()
 
 
-@server.tool(description="Full-text search across planets, notes, and nodes.")
+@server.tool(description="Full-text search across planets, notes, nodes.")
 def search_nodes(query: str, limit: int = 10) -> str:
     """Full-text search across planets, notes, and nodes."""
     import sqlite3
@@ -846,7 +883,7 @@ def search_nodes(query: str, limit: int = 10) -> str:
         conn.close()
 
 
-@server.tool(description="Search notes by topic, kind, and text.")
+@server.tool(description="Search notes by topic, kind, text.")
 def search_notes(topic: str, kind: str = "", query: str = "", limit: int = 10) -> str:
     """Search notes by topic, kind, and text."""
     import sqlite3
@@ -888,7 +925,7 @@ def search_notes(topic: str, kind: str = "", query: str = "", limit: int = 10) -
         conn.close()
 
 
-@server.tool(description="Read a full node by its ID.")
+@server.tool(description="Read a full node by ID.")
 def get_node(node_id: str) -> str:
     """Read a full node by its ID."""
     import sqlite3
@@ -902,24 +939,27 @@ def get_node(node_id: str) -> str:
     conn.row_factory = sqlite3.Row
     try:
         row = conn.execute(
-            "SELECT id, topic, content, created_at, updated_at FROM nodes WHERE id = ?",
+            "SELECT id, topic, kind, content, title, created_at, updated_at FROM notes WHERE id = ?",
             (node_id,),
         ).fetchone()
         if not row:
             return f"No node found with id '{node_id}'."
 
+        updated = row['updated_at'] or 'N/A'
         return (
             f"**ID:** {row['id']}\n"
             f"**Topic:** {row['topic']}\n"
+            f"**Kind:** {row['kind']}\n"
+            f"**Title:** {row['title']}\n"
             f"**Created:** {row['created_at']}\n"
-            f"**Updated:** {row.get('updated_at', 'N/A')}\n"
+            f"**Updated:** {updated}\n"
             f"\n**Content:**\n{row['content']}"
         )
     finally:
         conn.close()
 
 
-@server.tool(description="Link two notes with a type and weight.")
+@server.tool(description="Link two notes with type and weight.")
 def link_notes(from_note_id: str, to_note_id: str, link_type: str = "related", weight: float = 1.0) -> str:
     """Link two notes together."""
     from storage.sessions import SessionManager
@@ -930,7 +970,7 @@ def link_notes(from_note_id: str, to_note_id: str, link_type: str = "related", w
     return msg
 
 
-@server.tool(description="Find notes connected to a given note.")
+@server.tool(description="Find notes linked to a note.")
 def get_note_neighbors(note_id: str) -> str:
     """Get neighbors of a note."""
     from storage.sessions import SessionManager
@@ -961,7 +1001,7 @@ def link_planets(from_planet: str, to_planet: str, relation: str = "related", we
     return msg
 
 
-@server.tool(description="Get planets linked to a given planet.")
+@server.tool(description="Get planets linked to a planet.")
 def get_planet_links(planet: str) -> str:
     """Get planets linked to the given planet."""
     from storage.sessions import SessionManager
@@ -980,7 +1020,7 @@ def get_planet_links(planet: str) -> str:
 # ── Memory tiers ──────────────────────────────────────────────
 
 
-@server.tool(description="Set memory state: hot, warm, or compacted.")
+@server.tool(description="Set memory tier: hot, warm, compacted.")
 def set_memory_state(topic: str, state: str) -> str:
     """Set memory tier for a planet."""
     from storage.sessions import SessionManager
@@ -1050,7 +1090,7 @@ def rank_neighbors(note_id: str, by: str = "weight") -> str:
 # ── Graph-aware retrieval (continued) ─────────────────────────
 
 
-@server.tool(description="Return two notes for agent similarity comparison.")
+@server.tool(description="Two notes for agent similarity comparison.")
 def compute_similarity(note_id_a: str, note_id_b: str) -> str:
     """Return both notes for agent-driven semantic similarity comparison."""
     from storage.sessions import SessionManager
@@ -1078,7 +1118,7 @@ def compute_similarity(note_id_a: str, note_id_b: str) -> str:
     return "\n".join(result)
 
 
-@server.tool(description="Return notes for agent-driven reordering.")
+@server.tool(description="Notes + query for agent reranking.")
 def rerank(query: str, note_ids: list) -> str:
     """Return query + note contents for agent-driven reranking."""
     from storage.sessions import SessionManager
@@ -1131,6 +1171,50 @@ def edge_prune(threshold: float = 0.05, planet: str | None = None) -> str:
 
 
 # ── Code Graph MCP Tools ─────────────────────────────────
+
+@server.tool(description="Read file contents with line numbers. offset=start line, limit=max lines.")
+def code_read(file_path: str, project_root: str = "", offset: int = 0, limit: int = 200) -> str:
+    """Read a file from the indexed project. Replaces native Read tool.
+       offset (1-indexed): start line. limit: max lines. 0 = all lines.
+       Path traversal is prevented — must be within the project."""
+    import os
+    from indexer import CodeIndexer, CODE_DB_FILENAME
+    if not project_root:
+        project_root = _detect_project_root()
+    db_path = os.path.join(project_root, CODE_DB_FILENAME)
+    if not os.path.exists(db_path):
+        return f"No code index at {project_root}."
+
+    # Resolve file_path relative to project_root and prevent traversal
+    abs_fp = os.path.normpath(os.path.join(project_root, file_path))
+    abs_root = os.path.normpath(project_root)
+    if not abs_fp.startswith(abs_root + os.sep) and abs_fp != abs_root:
+        return f"File is outside project root: {file_path}"
+
+    if not os.path.isfile(abs_fp):
+        return f"File not found: {file_path}"
+
+    try:
+        with open(abs_fp, "r", errors="replace") as f:
+            lines = f.readlines()
+    except Exception as e:
+        return f"Error reading {file_path}: {e}"
+
+    total = len(lines)
+    start = offset - 1 if offset > 0 else 0
+    end = start + limit if limit > 0 else total
+    if start > total:
+        return f"Offset {offset} exceeds file length ({total} lines)."
+    if end > total:
+        end = total
+
+    parts = [f"--- {file_path} ({total} lines)"]
+    for i in range(start, end):
+        parts.append(f"  L{i+1}: {lines[i].rstrip()}")
+    if end < total:
+        parts.append(f"  ... {total - end} more lines")
+    return "\n".join(parts)
+
 
 def main():
     server.run()

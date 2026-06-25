@@ -44,17 +44,13 @@ export const BaseMemPlugin = async ({ client, directory }) => {
     const fullContent = fs.readFileSync(skillPath, 'utf8');
     const { content } = extractAndStripFrontmatter(fullContent);
 
-    const toolMapping = `**Tool Mapping for OpenCode:**
-BaseMem MCP tools are available in your MCP tool palette:
+    const toolMapping = `**BaseMem tools:**
+- \`getContext\` — load memory at session start
+- \`log_interaction\` — persist decisions, facts, state, activity
+- \`update_planet\` — create/update topic
+- \`read_planet\` — planet details
 - \`list_planets\` — discover topics
-- \`get_agent_context\` — get memory for a topic
-- \`add_note\` — persist decisions/facts
-- \`update_planet\` — save progress
-- \`log_turn\` — lightweight activity tracking
-- \`search_nodes\` — full-text search
-- \`search_notes\` — search by planet/type
-- \`get_node\` — read full node content
-- \`read_planet\` — read all details of a topic`;
+- \`search_nodes\` — full-text search`;
 
     _bootstrapCache = `<EXTREMELY_IMPORTANT>
 You have BaseMem memory available.

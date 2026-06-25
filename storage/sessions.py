@@ -483,11 +483,11 @@ class SessionManager:
                    WHERE (nl.from_note_id = ? OR nl.to_note_id = ?) AND n.id != ?""",
                 (nid, nid, nid),
             ).fetchall()
-        # Reinforce: increment weight for each auto-link returned (co-access)
+        rows = [dict(r) for r in rows]
         for nb in rows:
             if nb.get("source") == "auto" and nb.get("link_type") == "auto":
                 self.reinforce_link(nid, nb["id"])
-        return [{k: r[k] for k in r.keys()} for r in rows]
+        return rows
 
     def _auto_link_note(self, note_id, topic_slug):
         cursor = self.storage.connection.cursor()

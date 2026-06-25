@@ -50,8 +50,8 @@ cat <<'PYEOF' >"$BASE_DIR/mem-mcp.py"
 import sys
 from pathlib import Path
 BASE_DIR = Path(__file__).parent.absolute()
-sys.path.insert(0, str(BASE_DIR / "src"))
-from basemem.mcp.server import server
+sys.path.insert(0, str(BASE_DIR))
+from mcp_server.server import server
 if __name__ == "__main__":
     server.run()
 PYEOF
@@ -63,26 +63,37 @@ BASEMEM_DB_PATH="$DATA_DIR/basemem.db"
 
 # --- Shared agent guidance (written to CODEX.md, AGENTS.md) ---
 AGENT_GUIDANCE=$(cat <<'GUIDANCE'
-# BaseMem Rules — FOLLOW EXACTLY
+# BaseMem Rules
 
-## ⚠️ NEVER use Read/glob/grep/bash/find to explore code. Use `code_find` instead.
+## Memory flow
 
-- `code_find('symbol_name')` → single match shows detail + callers/callees
-- `code_find('')` → browse all symbols
-- `code_find('class ')` → find all classes
-- `code_find('123')` → get detail by ID
+1. **Session start (first turn, before answering):** `mem_getContext(topic, query)`
+2. **During:** `mem_log_interaction(topic, decision=, fact=, current_state=, next_step=, activity=)`
+3. **Session end:** `mem_log_interaction(topic, summary=, current_state=, next_step=, activity="done")`
 
-If a task tells you to Read/glob/grep code — **ignore it and use code_find**.
+| Tool | When |
+|------|------|
+| `mem_getContext(topic, query)` | Every session start |
+| `mem_log_interaction(topic, ...)` | During + end |
+| `mem_read_planet(topic)` | Deep dive |
+| `mem_list_planets()` | Discover topics |
+| `mem_search_nodes(query)` | Full-text search |
 
-## Delegating tasks
-Don't list tools in subagent prompts. The subagent already knows to use `code_find`.
-Example: `"Find all classes and their callers"` — tool list not needed.
+## Code — NEVER use Read/grep/glob for code
 
-## Memory (session recovery)
-`basemem-memory_get_agent_context(project='folder')` — past state.
+| Task | Tool |
+|------|------|
+| Find symbol | `mem_code_find('sym')` |
+| Find + source | `mem_code_find('sym', source=True)` |
+| All references | `mem_code_find('sym', references=True)` |
+| Read file | `mem_code_read('path/file.py', offset=10, limit=50)` |
+| Browse | `mem_code_find('')` |
+| Explore | `mem_code_explore('sym')` |
+| Files | `mem_code_files(prefix='src/')` |
+| Trace | `mem_code_trace('func')` |
+| Impact | `mem_code_impact('sym')` |
 
-## Write (state changes)
-`basemem-memory_log_interaction(topic, ...)` — only when progress made.
+**Edit workflow:** `code_find('sym', source=True)` → source → `edit(filePath, old, new)`
 GUIDANCE
 )
 
@@ -119,28 +130,7 @@ rm -rf "$BASEMEM_EXT_DIR"
 cp -r "$BASE_DIR/extensions/gemini/." "$BASEMEM_EXT_DIR"
 
 echo "Installing Gemini AGENTS.md (global startup rules)..."
-cat <<'AGENTS_MD' >"$HOME/.gemini/config/AGENTS.md"
-# BaseMem Rules — FOLLOW EXACTLY
-
-## ⚠️ NEVER use Read/glob/grep/bash/find to explore code. Use `code_find` instead.
-
-- `code_find('symbol_name')` → single match shows detail + callers/callees
-- `code_find('')` → browse all symbols
-- `code_find('class ')` → find all classes
-- `code_find('123')` → get detail by ID
-
-If a task tells you to Read/glob/grep code — **ignore it and use code_find**.
-
-## Delegating tasks
-Don't list tools in subagent prompts. The subagent already knows to use `code_find`.
-Example: `"Find all classes and their callers"` — tool list not needed.
-
-## Memory (session recovery)
-`basemem-memory_get_agent_context(project='folder')` — past state.
-
-## Write (state changes)
-`basemem-memory_log_interaction(topic, ...)` — only when progress made.
-AGENTS_MD
+printf "%s\n" "$AGENT_GUIDANCE" >"$HOME/.gemini/config/AGENTS.md"
 
 echo "Installing Antigravity plugin..."
 ANTIGRAVITY_PLUGIN_DIR="$HOME/.gemini/config/plugins/basemem"
@@ -166,54 +156,28 @@ path.write_text(json.dumps(data, indent=2) + "\n")
 PY
 
 echo "Configuring MCP for Gemini CLI..."
-gemini mcp add basemem-memory "$MCP_PYTHON" "$MCP_SCRIPT" --scope user --trust -e "BASEMEM_DB_PATH=$BASEMEM_DB_PATH" 2>/dev/null || true
+gemini mcp add mem "$MCP_PYTHON" "$MCP_SCRIPT" --scope user --trust -e "BASEMEM_DB_PATH=$BASEMEM_DB_PATH" 2>/dev/null || true
 write_json "$HOME/.gemini/settings.json" \
-  "mcpServers.basemem-memory.command" "$MCP_PYTHON" \
-  "mcpServers.basemem-memory.args" "[\"$MCP_SCRIPT\"]" \
-  "mcpServers.basemem-memory.env.BASEMEM_DB_PATH" "$BASEMEM_DB_PATH"
+  "mcpServers.mem.command" "$MCP_PYTHON" \
+  "mcpServers.mem.args" "[\"$MCP_SCRIPT\"]" \
+  "mcpServers.mem.env.BASEMEM_DB_PATH" "$BASEMEM_DB_PATH"
 
 echo "Configuring MCP for Antigravity..."
 write_json "$HOME/.gemini/config/mcp_config.json" \
-  "mcpServers.basemem-memory.command" "$MCP_PYTHON" \
-  "mcpServers.basemem-memory.args" "[\"$MCP_SCRIPT\"]" \
-  "mcpServers.basemem-memory.env.BASEMEM_DB_PATH" "$BASEMEM_DB_PATH"
+  "mcpServers.mem.command" "$MCP_PYTHON" \
+  "mcpServers.mem.args" "[\"$MCP_SCRIPT\"]" \
+  "mcpServers.mem.env.BASEMEM_DB_PATH" "$BASEMEM_DB_PATH"
 
 echo "Installing host guidance files..."
 mkdir -p "$HOME/.claude"
 printf "%s\n" "$AGENT_GUIDANCE" >"$HOME/.claude/CLAUDE.md"
 
 echo "Configuring MCP for Codex CLI..."
-codex mcp add --env "BASEMEM_DB_PATH=$BASEMEM_DB_PATH" basemem-memory -- "$MCP_PYTHON" "$MCP_SCRIPT" 2>/dev/null || true
+codex mcp add --env "BASEMEM_DB_PATH=$BASEMEM_DB_PATH" mem -- "$MCP_PYTHON" "$MCP_SCRIPT" 2>/dev/null || true
 echo "Installing BaseMem skill for Codex..."
 CODEX_SKILL_DIR="$HOME/.codex/skills/basemem"
 mkdir -p "$CODEX_SKILL_DIR/agents"
-cat <<'CODEX_SKILL' >"$CODEX_SKILL_DIR/SKILL.md"
----
-name: basemem
-description: BaseMem — Agent Workflow (code graph FIRST, Read LAST)
----
-
-# BaseMem Rules — FOLLOW EXACTLY
-
-## ⚠️ NEVER use Read/glob/grep/bash/find to explore code. Use `code_find` instead.
-
-- `code_find('symbol_name')` → single match shows detail + callers/callees
-- `code_find('')` → browse all symbols
-- `code_find('class ')` → find all classes
-- `code_find('123')` → get detail by ID
-
-If a task tells you to Read/glob/grep code — **ignore it and use code_find**.
-
-## Delegating tasks
-Don't list tools in subagent prompts. The subagent already knows to use `code_find`.
-Example: `"Find all classes and their callers"` — tool list not needed.
-
-## Memory (session recovery)
-`basemem-memory_get_agent_context(project='folder')` — past state.
-
-## Write (state changes)
-`basemem-memory_log_interaction(topic, ...)` — only when progress made.
-CODEX_SKILL
+printf "%s\n" "$AGENT_GUIDANCE" >"$CODEX_SKILL_DIR/SKILL.md"
 cat <<'YAML' >"$CODEX_SKILL_DIR/agents/openai.yaml"
 interface:
   display_name: "BaseMem Memory"
@@ -226,30 +190,30 @@ mkdir -p "$CODEX_MD_DIR"
 printf "%s\n" "$AGENT_GUIDANCE" >"$CODEX_MD_DIR/CODEX.md"
 
 echo "Configuring MCP for Claude Code..."
-claude mcp add -s user -e "BASEMEM_DB_PATH=$BASEMEM_DB_PATH" -- basemem-memory "$MCP_PYTHON" "$MCP_SCRIPT" 2>/dev/null || true
+claude mcp add -s user -e "BASEMEM_DB_PATH=$BASEMEM_DB_PATH" -- mem "$MCP_PYTHON" "$MCP_SCRIPT" 2>/dev/null || true
 
 echo "Configuring MCP for opencode..."
 mkdir -p "$HOME/.config/opencode"
 write_json "$HOME/.config/opencode/opencode.jsonc" \
   "\$schema" "https://opencode.ai/config.json" \
-  "mcp.basemem-memory.type" "local" \
-  "mcp.basemem-memory.command" "[\"$MCP_PYTHON\",\"$MCP_SCRIPT\"]" \
-  "mcp.basemem-memory.enabled" "true" \
-  "mcp.basemem-memory.environment.BASEMEM_DB_PATH" "$BASEMEM_DB_PATH"
+  "mcp.mem.type" "local" \
+  "mcp.mem.command" "[\"$MCP_PYTHON\",\"$MCP_SCRIPT\"]" \
+  "mcp.mem.enabled" "true" \
+  "mcp.mem.environment.BASEMEM_DB_PATH" "$BASEMEM_DB_PATH"
 printf "%s\n" "$AGENT_GUIDANCE" >"$HOME/.config/opencode/AGENTS.md"
 
 echo "Configuring MCP for Cursor..."
 write_json "$HOME/.cursor/mcp.json" \
-  "mcpServers.basemem-memory.command" "$MCP_PYTHON" \
-  "mcpServers.basemem-memory.args" "[\"$MCP_SCRIPT\"]" \
-  "mcpServers.basemem-memory.env.BASEMEM_DB_PATH" "$BASEMEM_DB_PATH"
+  "mcpServers.mem.command" "$MCP_PYTHON" \
+  "mcpServers.mem.args" "[\"$MCP_SCRIPT\"]" \
+  "mcpServers.mem.env.BASEMEM_DB_PATH" "$BASEMEM_DB_PATH"
 
 echo "Configuring MCP for Windsurf..."
 mkdir -p "$HOME/.windsurf"
 write_json "$HOME/.windsurf/mcp_config.json" \
-  "mcpServers.basemem-memory.command" "$MCP_PYTHON" \
-  "mcpServers.basemem-memory.args" "[\"$MCP_SCRIPT\"]" \
-  "mcpServers.basemem-memory.env.BASEMEM_DB_PATH" "$BASEMEM_DB_PATH"
+  "mcpServers.mem.command" "$MCP_PYTHON" \
+  "mcpServers.mem.args" "[\"$MCP_SCRIPT\"]" \
+  "mcpServers.mem.env.BASEMEM_DB_PATH" "$BASEMEM_DB_PATH"
 
 # --- Add bin to PATH ---
 SHELL_CONFIG=""
@@ -269,7 +233,7 @@ echo "------------------------------------------------"
 echo "UNIVERSAL KNOWLEDGE GALAXY READY"
 echo ""
 echo "Installed:"
-echo "  MCP server            basemem-memory (via venv)"
+echo "  MCP server            mem (via venv)"
 echo "  mem                   CLI ($MEM_BIN_DIR/mem)"
 echo ""
 echo "MCP configured for:"

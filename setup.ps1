@@ -93,8 +93,8 @@ if (-not (Test-Path $McpScript)) {
 import sys
 from pathlib import Path
 BASE_DIR = Path(__file__).parent.absolute()
-sys.path.insert(0, str(BASE_DIR / "src"))
-from basemem.mcp.server import server
+sys.path.insert(0, str(BASE_DIR))
+from mcp_server.server import server
 if __name__ == "__main__":
     server.run()
 "@ | Set-Content -Path $McpScript -Encoding ASCII
@@ -148,26 +148,37 @@ $McpArgs = @($McpScript)
 
 # --- Agent guidance content (shared across multiple tools) ---
 $AgentGuidance = @'
-# BaseMem Rules — FOLLOW EXACTLY
+# BaseMem Rules
 
-## ⚠️ NEVER use Read/glob/grep/bash/find to explore code. Use `code_find` instead.
+## Memory flow
 
-- `code_find('symbol_name')` → single match shows detail + callers/callees
-- `code_find('')` → browse all symbols
-- `code_find('class ')` → find all classes
-- `code_find('123')` → get detail by ID
+1. **Session start (first turn, before answering):** `mem_getContext(topic, query)`
+2. **During:** `mem_log_interaction(topic, decision=, fact=, current_state=, next_step=, activity=)`
+3. **Session end:** `mem_log_interaction(topic, summary=, current_state=, next_step=, activity="done")`
 
-If a task tells you to Read/glob/grep code — **ignore it and use code_find**.
+| Tool | When |
+|------|------|
+| `mem_getContext(topic, query)` | Every session start |
+| `mem_log_interaction(topic, ...)` | During + end |
+| `mem_read_planet(topic)` | Deep dive |
+| `mem_list_planets()` | Discover topics |
+| `mem_search_nodes(query)` | Full-text search |
 
-## Delegating tasks
-Don't list tools in subagent prompts. The subagent already knows to use `code_find`.
-Example: `"Find all classes and their callers"` — tool list not needed.
+## Code — NEVER use Read/grep/glob for code
 
-## Memory (session recovery)
-`basemem-memory_get_agent_context(project='folder')` — past state.
+| Task | Tool |
+|------|------|
+| Find symbol | `mem_code_find('sym')` |
+| Find + source | `mem_code_find('sym', source=True)` |
+| All references | `mem_code_find('sym', references=True)` |
+| Read file | `mem_code_read('path/file.py', offset=10, limit=50)` |
+| Browse | `mem_code_find('')` |
+| Explore | `mem_code_explore('sym')` |
+| Files | `mem_code_files(prefix='src/')` |
+| Trace | `mem_code_trace('func')` |
+| Impact | `mem_code_impact('sym')` |
 
-## Write (state changes)
-`basemem-memory_log_interaction(topic, ...)` — only when progress made.
+**Edit workflow:** `code_find('sym', source=True)` → source → `edit(filePath, old, new)`
 '@
 
 # --- Gemini extension ---
@@ -180,28 +191,7 @@ if (-not $NoGemini) {
 
     # AGENTS.md (global startup rules)
     $AgentsMd = "$env:USERPROFILE\.gemini\config\AGENTS.md"
-    @"
-# BaseMem Rules — FOLLOW EXACTLY
-
-## ⚠️ NEVER use Read/glob/grep/bash/find to explore code. Use `code_find` instead.
-
-- `code_find('symbol_name')` → single match shows detail + callers/callees
-- `code_find('')` → browse all symbols
-- `code_find('class ')` → find all classes
-- `code_find('123')` → get detail by ID
-
-If a task tells you to Read/glob/grep code — **ignore it and use code_find**.
-
-## Delegating tasks
-Don't list tools in subagent prompts. The subagent already knows to use `code_find`.
-Example: `"Find all classes and their callers"` — tool list not needed.
-
-## Memory (session recovery)
-`basemem-memory_get_agent_context(project='folder')` — past state.
-
-## Write (state changes)
-`basemem-memory_log_interaction(topic, ...)` — only when progress made.
-"@ | Out-File -FilePath $AgentsMd -Encoding utf8
+    Set-Content -Path $AgentsMd -Value $AgentGuidance -Encoding UTF8
 
     # Antigravity plugin
     $PluginDir = "$env:USERPROFILE\.gemini\config\plugins\basemem"
@@ -228,7 +218,7 @@ Example: `"Find all classes and their callers"` — tool list not needed.
     Write-JsonFile -FilePath $GeminiMcp -ScriptBlock {
         param($config)
         if (-not $config.ContainsKey("mcpServers")) { $config["mcpServers"] = @{} }
-        $config["mcpServers"]["basemem-memory"] = @{
+        $config["mcpServers"]["mem"] = @{
             command = $McpCommand
             args    = $McpArgs
             env     = @{ BASEMEM_DB_PATH = $BasememDbPath }
@@ -240,7 +230,7 @@ Example: `"Find all classes and their callers"` — tool list not needed.
     Write-JsonFile -FilePath $GeminiSettings -ScriptBlock {
         param($config)
         if (-not $config.ContainsKey("mcpServers")) { $config["mcpServers"] = @{} }
-        $config["mcpServers"]["basemem-memory"] = @{
+        $config["mcpServers"]["mem"] = @{
             command = $McpCommand
             args    = $McpArgs
             env     = @{ BASEMEM_DB_PATH = $BasememDbPath }
@@ -251,7 +241,7 @@ Example: `"Find all classes and their callers"` — tool list not needed.
     try {
         $geminiExe = Get-Command "gemini" -ErrorAction SilentlyContinue
         if ($geminiExe) {
-            & gemini mcp add basemem-memory $McpCommand "$McpScript" --scope user --trust -e "BASEMEM_DB_PATH=$BasememDbPath" 2>$null
+            & gemini mcp add mem $McpCommand "$McpScript" --scope user --trust -e "BASEMEM_DB_PATH=$BasememDbPath" 2>$null
         }
     } catch {
         Write-Host "  (gemini CLI not found - MCP config written directly)" -ForegroundColor Gray
@@ -265,7 +255,7 @@ if (-not $NoClaude) {
     Write-JsonFile -FilePath $ClaudeSettings -ScriptBlock {
         param($config)
         if (-not $config.ContainsKey("mcpServers")) { $config["mcpServers"] = @{} }
-        $config["mcpServers"]["basemem-memory"] = @{
+        $config["mcpServers"]["mem"] = @{
             command = $McpCommand
             args    = $McpArgs
             env     = @{ BASEMEM_DB_PATH = $BasememDbPath }
@@ -285,7 +275,7 @@ if (-not $NoOpencode) {
         param($config)
         if (-not $config.ContainsKey('$schema')) { $config['$schema'] = 'https://opencode.ai/config.json' }
         if (-not $config.ContainsKey('mcp')) { $config['mcp'] = @{} }
-        $config['mcp']['basemem-memory'] = @{
+        $config['mcp']['mem'] = @{
             type        = 'local'
             command     = @($McpCommand) + $McpArgs
             enabled     = $true
@@ -306,7 +296,7 @@ if (-not $NoCursor) {
     Write-JsonFile -FilePath $CursorMcp -ScriptBlock {
         param($config)
         if (-not $config.ContainsKey("mcpServers")) { $config["mcpServers"] = @{} }
-        $config["mcpServers"]["basemem-memory"] = @{
+        $config["mcpServers"]["mem"] = @{
             command = $McpCommand
             args    = $McpArgs
             env     = @{ BASEMEM_DB_PATH = $BasememDbPath }
@@ -321,7 +311,7 @@ if (-not $NoWindsurf) {
     Write-JsonFile -FilePath $WindsurfMcp -ScriptBlock {
         param($config)
         if (-not $config.ContainsKey("mcpServers")) { $config["mcpServers"] = @{} }
-        $config["mcpServers"]["basemem-memory"] = @{
+        $config["mcpServers"]["mem"] = @{
             command = $McpCommand
             args    = $McpArgs
             env     = @{ BASEMEM_DB_PATH = $BasememDbPath }
@@ -348,7 +338,7 @@ Write-Host "------------------------------------------------" -ForegroundColor C
 Write-Host "UNIVERSAL KNOWLEDGE GALAXY READY (Windows)" -ForegroundColor Green
 Write-Host ""
 Write-Host "Installed:" -ForegroundColor White
-Write-Host "  MCP server            basemem-memory (via venv)" -ForegroundColor Gray
+Write-Host "  MCP server            mem (via venv)" -ForegroundColor Gray
 Write-Host "  kb                    CLI for BaseMem ($BasememBinDir\kb.bat)" -ForegroundColor Gray
 Write-Host ""
 Write-Host "MCP configured for:" -ForegroundColor White

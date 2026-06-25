@@ -25,6 +25,9 @@ dependencies = [
     "numpy>=1.24.0",
     "tqdm>=4.66.0",
     "mcp>=1.0.0",
+    "tree-sitter>=0.25.0",
+    "tree-sitter-language-pack>=1.8.0",
+    "watchdog>=4.0.0",
 ]
 
 [project.scripts]

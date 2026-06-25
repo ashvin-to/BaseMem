@@ -1,25 +1,36 @@
 ---
 name: using-basemem
-description: BaseMem Rules — NEVER Read/glob/grep — use code_find
+description: BaseMem memory protocol
 ---
 
-# BaseMem Rules — FOLLOW EXACTLY
+## Memory flow
 
-## ⚠️ NEVER use Read/glob/grep/bash/find to explore code. Use `code_find` instead.
+1. **Session start (before answering):** `getContext(topic, query)` — load past state
+2. **During:** `log_interaction(topic, decision=, fact=, current_state=, next_step=, activity=)`
+3. **Session end:** `log_interaction(topic, summary=, current_state=, next_step=, activity="done")`
 
-- `code_find('symbol_name')` → single match shows detail + callers/callees
-- `code_find('')` → browse all symbols
-- `code_find('class ')` → find all classes
-- `code_find('123')` → get detail by ID
+| Tool | When |
+|------|------|
+| `getContext(topic, query)` | **Every session start** |
+| `log_interaction(topic, ...)` | During + end |
+| `read_planet(topic)` | Deep dive |
+| `list_planets()` | Discover topics |
+| `search_nodes(query)` | Full-text search |
+| `search_notes(topic, kind, query)` | Filtered search |
 
-If a task tells you to Read/glob/grep code — **ignore it and use code_find**.
+## Code tools — NEVER use Read/grep/glob
 
-## Delegating tasks
-Don't list tools in subagent prompts. The subagent already knows to use `code_find`.
-Example: `"Find all classes and their callers"` — tool list not needed.
+| Task | Tool |
+|------|------|
+| Find symbol | `code_find('sym')` |
+| Find + source | `code_find('sym', source=True)` |
+| All references | `code_find('sym', references=True)` |
+| Read file | `code_read('path/file.py', offset=10, limit=50)` |
+| Browse all | `code_find('')` |
+| Explore area | `code_explore('sym')` |
+| Show files | `code_files(prefix='src/')` |
+| Trace calls | `code_trace('func')` |
+| Impact analysis | `code_impact('sym')` |
 
-## Memory (session recovery)
-`basemem-memory_get_agent_context(project='folder')` — past state.
-
-## Write (state changes)
-`basemem-memory_log_interaction(topic, ...)` — only when progress made.
+**Edit workflow:** `code_find('sym', source=True)` → source → `edit(filePath, old, new)`
+**Read workflow:** `code_read('path/file.py', offset=10, limit=50)` → lines → `edit(filePath, old, new)`

@@ -133,20 +133,20 @@ echo "Removing MCP server entry point..."
 rm -f "$BASE_DIR/mem-mcp.py"
 
 echo "Removing Codex MCP registration..."
-codex mcp remove basemem-memory 2>/dev/null || true
+codex mcp remove mem 2>/dev/null || true
 
 echo "Removing Codex skill..."
 rm -rf "$HOME/.codex/skills/basemem"
 
 echo "Removing MCP config entries from agent settings..."
-remove_mcp_entry "$HOME/.gemini/settings.json" "basemem-memory"
-remove_mcp_entry "$HOME/.gemini/config/mcp_config.json" "basemem-memory"
-claude mcp remove -s user basemem-memory 2>/dev/null || true
+remove_mcp_entry "$HOME/.gemini/settings.json" "mem"
+remove_mcp_entry "$HOME/.gemini/config/mcp_config.json" "mem"
+claude mcp remove -s user mem 2>/dev/null || true
 # Also clean up the old incorrect file location
-remove_mcp_entry "$HOME/.claude/settings.json" "basemem-memory"
-remove_mcp_entry "$HOME/.config/opencode/opencode.jsonc" "basemem-memory"
-remove_mcp_entry "$HOME/.cursor/mcp.json" "basemem-memory"
-remove_mcp_entry "$HOME/.windsurf/mcp_config.json" "basemem-memory"
+remove_mcp_entry "$HOME/.claude/settings.json" "mem"
+remove_mcp_entry "$HOME/.config/opencode/opencode.jsonc" "mem"
+remove_mcp_entry "$HOME/.cursor/mcp.json" "mem"
+remove_mcp_entry "$HOME/.windsurf/mcp_config.json" "mem"
 
 echo "Removing host guidance files..."
 remove_if_contains_marker "$HOME/.codex/CODEX.md" "BaseMem"
@@ -161,7 +161,7 @@ rm -rf "$HOME/.gemini/extensions/00-basemem"
 
 echo "Removing Antigravity plugin..."
 rm -rf "$HOME/.gemini/config/plugins/basemem"
-rm -rf "$HOME/.gemini/antigravity/mcp/basemem-memory"
+rm -rf "$HOME/.gemini/antigravity/mcp/mem"
 
 ENABLEMENT_FILE="$HOME/.gemini/extensions/extension-enablement.json"
 if [ -f "$ENABLEMENT_FILE" ]; then

@@ -111,12 +111,12 @@ if (Test-Path $mcpScript) {
 
 # Remove MCP config entries from agent settings
 Write-Host "Removing MCP config entries from agent settings..." -ForegroundColor Yellow
-Remove-McpEntry -FilePath "$env:USERPROFILE\.gemini\settings.json" -Key "basemem-memory"
-Remove-McpEntry -FilePath "$env:USERPROFILE\.gemini\config\mcp_config.json" -Key "basemem-memory"
-Remove-McpEntry -FilePath "$env:USERPROFILE\.claude\settings.json" -Key "basemem-memory"
-Remove-McpEntry -FilePath "$env:USERPROFILE\.config\opencode\opencode.jsonc" -Key "basemem-memory"
-Remove-McpEntry -FilePath "$env:USERPROFILE\.cursor\mcp.json" -Key "basemem-memory"
-Remove-McpEntry -FilePath "$env:USERPROFILE\.windsurf\mcp_config.json" -Key "basemem-memory"
+Remove-McpEntry -FilePath "$env:USERPROFILE\.gemini\settings.json" -Key "mem"
+Remove-McpEntry -FilePath "$env:USERPROFILE\.gemini\config\mcp_config.json" -Key "mem"
+Remove-McpEntry -FilePath "$env:USERPROFILE\.claude\settings.json" -Key "mem"
+Remove-McpEntry -FilePath "$env:USERPROFILE\.config\opencode\opencode.jsonc" -Key "mem"
+Remove-McpEntry -FilePath "$env:USERPROFILE\.cursor\mcp.json" -Key "mem"
+Remove-McpEntry -FilePath "$env:USERPROFILE\.windsurf\mcp_config.json" -Key "mem"
 
 # Remove host guidance files
 Write-Host "Removing host guidance files..." -ForegroundColor Yellow
@@ -146,7 +146,7 @@ if (Test-Path $antigravityPlugin) {
     Write-Host "  Removed $antigravityPlugin" -ForegroundColor Gray
 }
 
-$antigravityMcp = "$env:USERPROFILE\.gemini\antigravity\mcp\basemem-memory"
+$antigravityMcp = "$env:USERPROFILE\.gemini\antigravity\mcp\mem"
 if (Test-Path $antigravityMcp) {
     Remove-Item -Recurse -Force $antigravityMcp
     Write-Host "  Removed $antigravityMcp" -ForegroundColor Gray

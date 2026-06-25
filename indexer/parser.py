@@ -284,13 +284,15 @@ class CodeParser:
         self.language = language
         self.queries = LANGUAGE_QUERIES.get(language, {})
         self._has_queries = bool(self.queries)
+        self._grammar_ok = False
         if self._has_queries:
-            self.grammar = _get_grammar(language)
-            if self.grammar is None:
-                raise ValueError(f"Unsupported or unavailable language: {language}")
-            self.parser = Parser()
-            self.parser.language = self.grammar
-            self._compiled_queries = {}
+            grammar = _get_grammar(language)
+            if grammar is not None:
+                self.grammar = grammar
+                self.parser = Parser()
+                self.parser.language = self.grammar
+                self._compiled_queries = {}
+                self._grammar_ok = True
 
     @classmethod
     def for_file(cls, file_path: str) -> Optional["CodeParser"]:
@@ -300,10 +302,7 @@ class CodeParser:
         lang = detect_language_from_extension(ext.lstrip("."))
         if not lang:
             return None
-        try:
-            return cls(lang)
-        except ValueError:
-            return None
+        return cls(lang)
 
     @classmethod
     def supported_extension(cls, ext: str) -> bool:
@@ -326,8 +325,10 @@ class CodeParser:
         """Parse source code and extract symbols and edges.
 
         Returns: (symbols, edges) as lists of dicts.
+        Falls back from query-based to process-based parsing if
+        the tree-sitter grammar is not available.
         """
-        if self._has_queries:
+        if self._has_queries and self._grammar_ok:
             return self._parse_with_queries(source_bytes, file_path)
         return self._parse_with_process(source_bytes, file_path)
 

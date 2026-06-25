@@ -1,2 +1,1 @@
-@./skills/using-basemem/SKILL.md
-@./references/gemini-tools.md
+BaseMem tools: getContext, log_interaction, update_planet, read_planet, list_planets, search_nodes, search_notes, code_find, code_read, code_explore, code_files, code_trace, code_impact, code_init, code_list_projects.

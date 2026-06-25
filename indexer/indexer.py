@@ -536,6 +536,46 @@ class CodeIndexer:
                     queue.append((drow["symbol_name"], d + 1))
         return results
 
+    def find_references(self, symbol_name: str, limit: int = 50) -> list[dict]:
+        """Find all references to a symbol across indexed files (source text search).
+        Returns file:line matches, excluding the symbol's own definition lines."""
+        import re
+        results = []
+        seen_defs = set()
+
+        # Get definition locations to exclude them
+        defs = self.conn.execute(
+            "SELECT file_path, start_line FROM code_symbols WHERE symbol_name = ? AND project_id = ?",
+            (symbol_name, self.project_id),
+        ).fetchall()
+        for d in defs:
+            seen_defs.add((d["file_path"], d["start_line"]))
+
+        pattern = re.compile(re.escape(symbol_name))
+        root = Path(self.project_root)
+
+        for f in self.list_files(limit=0):
+            fp = root / f["file_path"]
+            if not fp.is_file():
+                continue
+            try:
+                with open(fp, "r", errors="replace") as fh:
+                    for i, line in enumerate(fh, 1):
+                        if (f["file_path"], i) in seen_defs:
+                            continue
+                        if pattern.search(line):
+                            results.append({
+                                "file_path": f["file_path"],
+                                "line_number": i,
+                                "content": line.rstrip("\n"),
+                            })
+                            if len(results) >= limit:
+                                return results
+            except Exception:
+                continue
+
+        return results
+
     def sync_index(self, max_workers: int = 4) -> dict:
         """Incremental re-index: only re-index files changed since last index.
 
