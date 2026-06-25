@@ -133,7 +133,13 @@ def agent_context(ctx, topic, query):
 def stats(ctx):
     """Show database statistics: node and edge counts."""
     storage = ctx.obj['storage']
-    click.echo(f"\n[*] Galaxy Nodes: {len(storage.get_all_nodes())}")
+    from storage.sessions import SessionManager
+    mgr = SessionManager(storage)
+    planets = mgr.list_planets()
+    note_count = sum(mgr.get_note_count(p["topic"]) for p in planets)
+    click.echo(f"\n[*] Planets: {len(planets)}")
+    click.echo(f"[*] Notes: {note_count}")
+    click.echo(f"[*] Galaxy Nodes: {len(storage.get_all_nodes())}")
     click.echo(f"[*] Galaxy Bridges: {len(storage.get_edges())}")
 
 @cli.group()
@@ -143,6 +149,7 @@ def session():
 @session.command()
 @click.pass_context
 def last_topic(ctx):
+    """Show the most recently active planet/topic."""
     storage = ctx.obj['storage']
     from storage.sessions import SessionManager
     manager = SessionManager(storage)
@@ -196,6 +203,7 @@ def context(ctx):
 @click.option('--agent-id', default='default')
 @click.pass_context
 def turn(ctx, message, topic, agent_id):
+    """Log a conversation turn to a planet."""
     root_name = get_project_root()
     from storage.sessions import SessionManager
     manager = SessionManager(ctx.obj['storage'])
@@ -208,6 +216,7 @@ def turn(ctx, message, topic, agent_id):
 @click.option('--file', 'chat_file', type=click.Path(exists=True), help='Transcript file to archive')
 @click.pass_context
 def sync(ctx, agent_id, topic, chat_file):
+    """Archive a transcript file to a planet."""
     root_name = get_project_root()
     import json, glob
     if not chat_file:
@@ -279,6 +288,7 @@ def sync(ctx, agent_id, topic, chat_file):
 @click.option('--topic', '-t', help='Read a planet by topic instead of node id')
 @click.pass_context
 def read(ctx, node_id, topic):
+    """Read a planet or node details."""
     from storage.sessions import SessionManager
     manager = SessionManager(ctx.obj['storage'])
     node = manager.get_planet(topic) if topic else ctx.obj['storage'].get_node(node_id)
@@ -297,6 +307,7 @@ def planet():
 @click.option('--state', 'current_state')
 @click.pass_context
 def planet_create(ctx, topic, goal, status, current_state):
+    """Create a new planet/topic."""
     root_name = get_project_root()
     from storage.sessions import SessionManager
     manager = SessionManager(ctx.obj['storage'])
@@ -308,6 +319,7 @@ def planet_create(ctx, topic, goal, status, current_state):
 @click.argument('topic')
 @click.pass_context
 def planet_read(ctx, topic):
+    """Read a planet's full details."""
     from storage.sessions import SessionManager
     manager = SessionManager(ctx.obj['storage'])
     node = manager.get_planet(topic)
@@ -327,6 +339,7 @@ def planet_read(ctx, topic):
 @click.option('--handoff')
 @click.pass_context
 def planet_set(ctx, topic, status, goal, current_state, next_step, file_path, command, handoff):
+    """Update planet fields: status, goal, state, next, files, commands."""
     root_name = get_project_root()
     from storage.sessions import SessionManager
     manager = SessionManager(ctx.obj['storage'])
@@ -349,6 +362,7 @@ def planet_set(ctx, topic, status, goal, current_state, next_step, file_path, co
 @click.option('--summarize/--no-summarize', default=True, help='Generate a summary note before trimming')
 @click.pass_context
 def planet_compact(ctx, topic, agent_id, summarize):
+    """Trim old notes, keep summaries + 30 recent."""
     root_name = get_project_root()
     from storage.sessions import SessionManager
     manager = SessionManager(ctx.obj['storage'])
@@ -379,6 +393,7 @@ def planet_summarize(ctx, topic, limit):
 @click.argument('topic')
 @click.pass_context
 def planet_delete(ctx, topic):
+    """Delete a planet and all its notes."""
     from storage.sessions import SessionManager
     manager = SessionManager(ctx.obj['storage'])
     if not manager.get_planet(topic):
@@ -1134,13 +1149,21 @@ def code_list_projects(search_root):
 @cli.command()
 @click.argument('doc_name', required=False)
 @click.pass_context
-def docs(doc_name):
+def docs(ctx, doc_name):
     """Read project documentation files (readme, implementation, etc.)."""
     base = Path(__file__).parent.parent.absolute()
-    m = {"readme": "README.md", "implementation": "IMPLEMENTATION.md", "development": "DEVELOPMENT.md", "agents": "AGENTS.md"}
-    if not doc_name: click.echo("Available: " + ", ".join(m.keys())); return
-    path = base / m.get(doc_name.lower(), "")
-    if path.exists(): click.echo(path.read_text())
+    m = {}
+    for p in sorted(base.glob("*.md")) + sorted(base.glob("doc/*.md")):
+        name = p.stem.lower().replace("_", "-").replace(" ", "-")
+        m[name] = p
+    if not doc_name:
+        click.echo("Available: " + ", ".join(m.keys()))
+        return
+    path = m.get(doc_name.lower())
+    if not path or not path.exists():
+        click.echo(f"Not found: {doc_name}")
+        return
+    click.echo(path.read_text())
 
 if __name__ == '__main__':
     from .main import cli
