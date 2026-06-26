@@ -43,31 +43,31 @@ mem session sync "topic-name" --agent-id "your-unique-suffix"
 | `list_planets()` | Discover what topics exist |
 | `search_nodes(query)` | Full-text search across all content |
 | `search_notes(topic, kind, query)` | Filtered note search |
-| `get_node(node_id)` | Read any node by ID |
+| `get_node(nodeId)` | Read any node by ID |
 
 ### Writing
 | Tool | Description |
 |------|-------------|
 | `update_planet(topic, ...)` | Update or create a planet |
 | `log_interaction(topic, ...)` | Persist decision, fact, state change, next step |
-| `link_notes(from_id, to_id, link_type)` | Connect two notes |
-| `link_planets(from_planet, to_planet, relation)` | Connect two planets |
+| `link_notes(fromNoteId, toNoteId, linkType)` | Connect two notes |
+| `link_planets(fromPlanet, toPlanet, relation)` | Connect two planets |
 | `set_memory_state(topic, state)` | Set hot/warm/compacted |
 
 ### Graph Navigation
 | Tool | Description |
 |------|-------------|
-| `get_note_neighbors(note_id)` | Find all notes linked to a note |
+| `get_note_neighbors(noteId)` | Find all notes linked to a note |
 | `get_planet_links(planet)` | Find all planets linked to a planet |
-| `get_neighbors_weighted(note_id, depth, min_weight)` | Recursive weighted traversal |
-| `get_subgraph(note_id, depth, min_weight)` | Extract structured subgraph |
-| `rank_neighbors(note_id, by)` | Sort neighbors by weight or confidence |
+| `get_neighbors_weighted(noteId, depth, minWeight)` | Recursive weighted traversal |
+| `get_subgraph(noteId, depth, minWeight)` | Extract structured subgraph |
+| `rank_neighbors(noteId, by)` | Sort neighbors by weight or confidence |
 
 ### Agent-Driven Intelligence
 | Tool | Description |
 |------|-------------|
-| `compute_similarity(note_id_a, note_id_b)` | Returns both notes for agent to judge similarity |
-| `rerank(query, note_ids)` | Returns query + notes for agent to reorder by relevance |
+| `compute_similarity(noteIdA, noteIdB)` | Returns both notes for agent to judge similarity |
+| `rerank(query, noteIds)` | Returns query + notes for agent to reorder by relevance |
 
 ### Lifecycle
 | Tool | Description |
@@ -133,7 +133,7 @@ mem export / mem import
 {
     "from_note_id": "int",
     "to_note_id": "int",
-    "link_type": "str",          # related, depends, implements, auto
+    "link_type": "str",          # related, depends, implements, fixes, duplicates, supersedes, causes, blocks, tests, references, auto
     "weight": "float",           # 0-1
     "confidence": "float",       # 0-1 (auto links capped at similarity*1.5)
     "source": "str",             # auto or explicit
@@ -148,7 +148,7 @@ mem export / mem import
 {
     "from_planet_id": "int",
     "to_planet_id": "int",
-    "relation": "str",           # related, depends
+    "relation": "str",           # related, depends, implements, fixes, duplicates, supersedes, causes, blocks, tests, references
     "weight": "float",           # 0-1
 }
 ```

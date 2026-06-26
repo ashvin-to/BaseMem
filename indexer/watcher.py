@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from .parser import CodeParser
+from .indexer import SKIP_DIRS
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +59,10 @@ class CodeGraphEventHandler(FileSystemEventHandler):
             self._queue("deleted", event.src_path)
 
     def _is_source_file(self, path: str) -> bool:
-        return CodeParser.supported_extension(Path(path).suffix.lower())
+        p = Path(path)
+        if any(part in SKIP_DIRS for part in p.parts):
+            return False
+        return CodeParser.supported_extension(p.suffix.lower())
 
     def _queue(self, kind: str, path: str):
         with self._lock:
@@ -123,13 +127,20 @@ class CodeGraphWatcher:
             self._running = False
             logger.info("Code graph watcher stopped")
 
+    def _is_skipped(self, path: str) -> bool:
+        return any(f"/{d}/" in f"/{path}/" for d in SKIP_DIRS)
+
     def _handle_change(self, modified: list, created: list, deleted: list):
         if deleted:
             for f in deleted:
+                if self._is_skipped(f):
+                    continue
                 self.indexer.remove_file(f)
-                logger.debug(f"Removed from code graph: {f}")
+                print(f"  [del] {f}")
 
-        to_index = modified + created
+        to_index = [f for f in (modified + created) if not self._is_skipped(f)]
         if to_index:
             result = self.indexer.index_files(self.root_path, to_index)
-            logger.debug(f"Indexed {result['symbols_added']} symbols, {result['edges_added']} edges from {len(to_index)} files")
+            for f in to_index:
+                print(f"  [mod] {f}")
+            print(f"  -> {result['symbols_added']} symbols, {result['edges_added']} edges")

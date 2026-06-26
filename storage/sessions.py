@@ -55,7 +55,9 @@ class _PlanetProxy:
 
         note_list = [
             {"id": f"note-{n.get('id')}", "kind": n.get("kind"), "title": n.get("title") or n["content"][:80],
-             "content": n["content"], "status": n.get("status", "open"), "agent_id": n.get("agent_id", "default")}
+             "content": n["content"], "status": n.get("status", "open"), "agent_id": n.get("agent_id", "default"),
+             "pinned": bool(n.get("pinned", 0)),
+             "tags": json.loads(n.get("tags", "[]")) if isinstance(n.get("tags"), str) else (n.get("tags") or [])}
             for n in self._notes if n.get("kind") != "turn"
         ]
 
@@ -300,7 +302,23 @@ class SessionManager:
         ).fetchall()
         summary_ids = {r["id"] for r in summary_ids}
 
-        ids_to_keep = set(summary_ids)
+        pinned = cursor.execute(
+            "SELECT id FROM notes WHERE topic = ? AND pinned = 1", (topic_slug,)
+        ).fetchall()
+
+        ids_to_keep = set(summary_ids) | {r["id"] for r in pinned}
+
+        task_notes = set()
+        for t in _get_tasks(cursor.connection, topic_slug):
+            if t.get("status") and t["status"] != "done":
+                nids = json.loads(t.get("notes", "[]"))
+                for nid in nids:
+                    try:
+                        task_notes.add(int(nid))
+                    except (ValueError, TypeError):
+                        pass
+        ids_to_keep.update(task_notes)
+
         recent = cursor.execute(
             "SELECT id FROM notes WHERE topic = ? AND kind != 'summary' ORDER BY created_at DESC LIMIT 30",
             (topic_slug,),
@@ -630,6 +648,17 @@ class SessionManager:
             ])
 
         all_notes = metadata.get("notes", [])
+        pinned_notes = [n for n in all_notes if n.get("pinned")]
+        if pinned_notes:
+            lines.extend([
+                "",
+                "## Pinned Notes",
+                *[
+                    f"- [{n.get('kind', 'note')}] {self._trim_text(n.get('content') or n.get('title') or '', 220)}"
+                    for n in pinned_notes
+                ],
+            ])
+
         if all_notes:
             lines.extend([
                 "",
@@ -815,7 +844,20 @@ class SessionManager:
                 names = ", ".join(r[0] for r in topics)
                 lines.append(f"  (did you mean: {names})")
 
+        tasks = _get_tasks(conn, topic_slug)
+        open_tasks = [t for t in tasks if t.get("status") and t["status"] != "done"]
+        if open_tasks:
+            lines.append("")
+            lines.append(f"  tasks ({len(open_tasks)} open):")
+            for t in open_tasks[:5]:
+                lines.append(f"    task-{t['id']} [{t['status']}/{t['priority']}] {t['title']}")
+            if len(open_tasks) > 5:
+                lines.append(f"    ... and {len(open_tasks) - 5} more")
+
         notes = _get_notes(conn, topic_slug)
+        pinned = [n for n in notes if n.get("pinned")]
+        for n in pinned:
+            lines.append(f"  pin: {n['content'][:300]}")
         for n in notes:
             if n.get("kind") in ("decision", "issue", "fact"):
                 if not q or q in (n.get("content") or "").lower():
@@ -839,11 +881,11 @@ class SessionManager:
         return dict(row) if row else None
 
     def search_notes(
-        self, topic: str, kind: str = "", query: str = "", limit: int = 10
+        self, topic: str, kind: str = "", query: str = "", tags: str = "", limit: int = 10
     ) -> list[dict]:
-        """Search notes by topic, kind, and optional text filter."""
+        """Search notes by topic, kind, optional text filter, and optional tags."""
         cursor = self.storage.connection.cursor()
-        sql = "SELECT id, topic, kind, content, created_at FROM notes WHERE topic = ?"
+        sql = "SELECT id, topic, kind, content, created_at, tags, pinned FROM notes WHERE topic = ?"
         params: list = [self.normalize_topic(topic)]
         if kind:
             sql += " AND kind = ?"
@@ -852,10 +894,50 @@ class SessionManager:
             like = f"%{query}%"
             sql += " AND (content LIKE ? OR title LIKE ?)"
             params.extend([like, like])
-        sql += " ORDER BY created_at DESC LIMIT ?"
+        if tags:
+            for tag in tags.split(","):
+                tag = tag.strip()
+                if tag:
+                    sql += " AND tags LIKE ?"
+                    params.append(f"%\"{tag}\"%")
+        sql += " ORDER BY pinned DESC, created_at DESC LIMIT ?"
         params.append(limit)
         rows = cursor.execute(sql, params).fetchall()
         return [dict(r) for r in rows]
+
+    def pin_note(self, note_id: int | str) -> tuple[bool, str]:
+        """Pin a note so compact_planet never drops it."""
+        nid = self._parse_note_id(note_id)
+        if nid is None:
+            return False, "Invalid note ID"
+        row = self.get_note(nid)
+        if not row:
+            return False, f"Note not found: {note_id}"
+        _exec(self.storage.connection, "UPDATE notes SET pinned = 1 WHERE id = ?", (nid,))
+        return True, f"Pinned note-{nid}"
+
+    def unpin_note(self, note_id: int | str) -> tuple[bool, str]:
+        """Unpin a note."""
+        nid = self._parse_note_id(note_id)
+        if nid is None:
+            return False, "Invalid note ID"
+        row = self.get_note(nid)
+        if not row:
+            return False, f"Note not found: {note_id}"
+        _exec(self.storage.connection, "UPDATE notes SET pinned = 0 WHERE id = ?", (nid,))
+        return True, f"Unpinned note-{nid}"
+
+    def tag_note(self, note_id: int | str, tags: list[str]) -> tuple[bool, str]:
+        """Set tags on a note (replaces existing tags)."""
+        nid = self._parse_note_id(note_id)
+        if nid is None:
+            return False, "Invalid note ID"
+        row = self.get_note(nid)
+        if not row:
+            return False, f"Note not found: {note_id}"
+        import json
+        _exec(self.storage.connection, "UPDATE notes SET tags = ? WHERE id = ?", (json.dumps(tags), nid))
+        return True, f"Tagged note-{nid} with {tags}"
 
     def search_all(self, query: str, limit: int = 10) -> dict:
         """Full-text search across planets and notes. Returns {'planets': [...], 'notes': [...]}."""
@@ -1007,6 +1089,171 @@ class SessionManager:
         else:
             neighbors.sort(key=lambda x: x.get("weight", 0) or 0, reverse=True)
         return neighbors
+
+    # ── Task operations (tasks table) ────────────────────────────
+
+    VALID_STATUSES = {"todo", "in_progress", "blocked", "done"}
+    VALID_PRIORITIES = {"low", "medium", "high"}
+
+    def _check_dependency_cycle(self, task_id: int, depends_on: list[int], visited: set | None = None) -> bool:
+        """Return True if a dependency cycle would be introduced."""
+        if visited is None:
+            visited = set()
+        for dep_id in depends_on:
+            if dep_id == task_id:
+                return True
+            if dep_id in visited:
+                continue
+            visited.add(dep_id)
+            cursor = self.storage.connection.cursor()
+            row = cursor.execute(
+                "SELECT depends_on FROM tasks WHERE id = ?", (dep_id,)
+            ).fetchone()
+            if row:
+                nested = json.loads(row["depends_on"])
+                if self._check_dependency_cycle(task_id, nested, visited):
+                    return True
+        return False
+
+    def create_task(
+        self,
+        topic: str,
+        title: str,
+        priority: str = "medium",
+        depends_on: list[int] | None = None,
+        files: list[str] | None = None,
+        notes: list[int] | None = None,
+    ) -> dict:
+        topic_slug = self.normalize_topic(topic)
+        row = _get_planet_row(self.storage.connection, topic_slug)
+        if not row:
+            self.get_or_create_task_planet(topic, topic)
+        priority = priority.lower() if priority in self.VALID_PRIORITIES else "medium"
+        deps = sorted(depends_on) if depends_on else []
+        if deps:
+            existing = set()
+            cursor = self.storage.connection.cursor()
+            for d in deps:
+                r = cursor.execute("SELECT id FROM tasks WHERE id = ?", (d,)).fetchone()
+                if r:
+                    existing.add(d)
+            deps = sorted(existing)
+        file_list = sorted(set(files)) if files else []
+        note_list = sorted(set(notes)) if notes else []
+        now = self._now()
+        _exec(
+            self.storage.connection,
+            "INSERT INTO tasks (topic, title, status, priority, depends_on, files, notes, created_at) VALUES (?, ?, 'todo', ?, ?, ?, ?, ?)",
+            (topic_slug, title, priority, json.dumps(deps), json.dumps(file_list), json.dumps(note_list), now),
+        )
+        _exec(
+            self.storage.connection,
+            "UPDATE planets SET updated_at = ? WHERE topic = ?",
+            (now, topic_slug),
+        )
+        cursor = self.storage.connection.cursor()
+        task_row = cursor.execute(
+            "SELECT * FROM tasks WHERE topic = ? AND title = ? AND created_at = ? ORDER BY id DESC LIMIT 1",
+            (topic_slug, title, now),
+        ).fetchone()
+        return dict(task_row) if task_row else {"title": title, "topic": topic_slug}
+
+    def update_task(
+        self,
+        task_id: int,
+        status: str | None = None,
+        priority: str | None = None,
+        depends_on: list[int] | None = None,
+        files: list[str] | None = None,
+        notes: list[int] | None = None,
+    ) -> tuple[bool, str]:
+        cursor = self.storage.connection.cursor()
+        row = cursor.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        if not row:
+            return False, f"Task not found: {task_id}"
+        task = dict(row)
+        updates = []
+        params: list = []
+        if status is not None:
+            s = status.lower().strip()
+            if s not in self.VALID_STATUSES:
+                return False, f"Invalid status: {status}. Valid: {', '.join(sorted(self.VALID_STATUSES))}"
+            updates.append("status = ?")
+            params.append(s)
+            if s == "done":
+                updates.append("completed_at = ?")
+                params.append(self._now())
+            elif task.get("completed_at"):
+                updates.append("completed_at = NULL")
+        if priority is not None:
+            p = priority.lower().strip()
+            if p not in self.VALID_PRIORITIES:
+                return False, f"Invalid priority: {priority}. Valid: {', '.join(sorted(self.VALID_PRIORITIES))}"
+            updates.append("priority = ?")
+            params.append(p)
+        if depends_on is not None:
+            deps = sorted(set(depends_on))
+            for d in deps:
+                r = cursor.execute("SELECT id FROM tasks WHERE id = ?", (d,)).fetchone()
+                if r is None:
+                    return False, f"Dependency task not found: {d}"
+            if self._check_dependency_cycle(task_id, deps):
+                return False, "Cannot set depends_on: would create a dependency cycle"
+            updates.append("depends_on = ?")
+            params.append(json.dumps(deps))
+        if files is not None:
+            updates.append("files = ?")
+            params.append(json.dumps(sorted(set(files))))
+        if notes is not None:
+            updates.append("notes = ?")
+            params.append(json.dumps(sorted(set(notes))))
+        if updates:
+            params.append(task_id)
+            _exec(
+                self.storage.connection,
+                f"UPDATE tasks SET {', '.join(updates)} WHERE id = ?",
+                tuple(params),
+            )
+            _exec(
+                self.storage.connection,
+                "UPDATE planets SET updated_at = ? WHERE topic = ?",
+                (self._now(), task["topic"]),
+            )
+        return True, f"Task {task_id} updated"
+
+    def list_tasks(
+        self, topic: str | None = None, status: str | None = None, priority: str | None = None
+    ) -> list[dict]:
+        cursor = self.storage.connection.cursor()
+        sql = "SELECT * FROM tasks WHERE 1=1"
+        params: list = []
+        if topic:
+            sql += " AND topic = ?"
+            params.append(self.normalize_topic(topic))
+        if status:
+            s = status.lower().strip()
+            if s in self.VALID_STATUSES:
+                sql += " AND status = ?"
+                params.append(s)
+        if priority:
+            p = priority.lower().strip()
+            if p in self.VALID_PRIORITIES:
+                sql += " AND priority = ?"
+                params.append(p)
+        sql += " ORDER BY created_at DESC"
+        rows = cursor.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_task_summary(self, topic: str) -> dict:
+        cursor = self.storage.connection.cursor()
+        slug = self.normalize_topic(topic)
+        rows = cursor.execute(
+            "SELECT status, COUNT(*) AS cnt FROM tasks WHERE topic = ? GROUP BY status",
+            (slug,),
+        ).fetchall()
+        counts = {r["status"]: r["cnt"] for r in rows}
+        total = sum(counts.values())
+        return {"total": total, "counts": counts}
 
     # ── Edge lifecycle ────────────────────────────────────────
 
@@ -1194,6 +1441,18 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             updated_at TEXT DEFAULT (datetime('now')),
             PRIMARY KEY (from_note_id, to_note_id, link_type)
         );
+        CREATE TABLE IF NOT EXISTS tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            topic TEXT NOT NULL,
+            title TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'todo',
+            priority TEXT NOT NULL DEFAULT 'medium',
+            depends_on TEXT DEFAULT '[]',
+            files TEXT DEFAULT '[]',
+            notes TEXT DEFAULT '[]',
+            created_at TEXT DEFAULT (datetime('now')),
+            completed_at TEXT
+        );
         CREATE TABLE IF NOT EXISTS planet_links (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             from_planet_id INTEGER NOT NULL,
@@ -1212,6 +1471,11 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
     for col, dtype in [("memory_state", "TEXT DEFAULT 'hot'")]:
         try:
             conn.execute(f"ALTER TABLE planets ADD COLUMN {col} {dtype}")
+        except Exception:
+            pass
+    for col, dtype in [("tags", "TEXT DEFAULT '[]'"), ("pinned", "INTEGER DEFAULT 0")]:
+        try:
+            conn.execute(f"ALTER TABLE notes ADD COLUMN {col} {dtype}")
         except Exception:
             pass
     conn.commit()
@@ -1235,3 +1499,12 @@ def _get_notes(conn: sqlite3.Connection, topic: str) -> list:
 def _exec(conn: sqlite3.Connection, sql: str, params: tuple = ()) -> None:
     conn.execute(sql, params)
     conn.commit()
+
+
+def _get_tasks(conn: sqlite3.Connection, topic: str) -> list[dict]:
+    cursor = conn.cursor()
+    rows = cursor.execute(
+        "SELECT * FROM tasks WHERE topic = ? ORDER BY created_at DESC",
+        (topic,),
+    ).fetchall()
+    return [dict(r) for r in rows]
