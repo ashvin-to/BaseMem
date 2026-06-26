@@ -175,6 +175,8 @@ class CodeIndexer:
             fp = Path(f)
             if not fp.is_file():
                 continue
+            if any(part in SKIP_DIRS for part in fp.parts):
+                continue
             try:
                 sym_count, edge_count = self._index_file(str(root), str(fp))
                 symbols_added += sym_count

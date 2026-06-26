@@ -69,7 +69,7 @@ class TestPlanetTools:
     def test_update_planet(self, temp_db):
         from mcp_server.server import update_planet
         db_path, storage, manager = temp_db
-        r = update_planet(topic="my-project", current_state="in progress", next_step="write tests")
+        r = update_planet(topic="my-project", currentState="in progress", nextStep="write tests")
         assert "updated" in r.lower()
         p = manager.get_planet("my-project")
         assert p is not None
@@ -124,7 +124,7 @@ class TestNoteTools:
         from mcp_server.server import log_interaction
         db_path, storage, manager = temp_db
         r = log_interaction(topic="log-test", decision="use pytest",
-                            fact="tests pass", current_state="done")
+                            fact="tests pass", currentState="done")
         assert "note(decision)" in r
         assert "note(fact)" in r
         assert "planet_updated" in r
@@ -179,17 +179,17 @@ class TestNoteTools:
         db_path, storage, manager = temp_db
         note = manager.add_note("test", "node-test", "fact", "hello node")
         nid = note["id"]
-        r = get_node(node_id=nid)
+        r = get_node(nodeId=nid)
         assert "hello node" in r
 
     def test_get_node_not_found(self, temp_db):
         from mcp_server.server import get_node
-        r = get_node(node_id="note-99999")
+        r = get_node(nodeId="note-99999")
         assert "No node found" in r
 
     def test_get_node_invalid_id(self, temp_db):
         from mcp_server.server import get_node
-        r = get_node(node_id="not-a-note")
+        r = get_node(nodeId="not-a-note")
         assert "Invalid" in r or "not found" in r.lower()
 
     def test_search_nodes(self, temp_db):
@@ -235,19 +235,19 @@ class TestLinkTools:
         db_path, storage, manager = temp_db
         n1 = manager.add_note("test", "link-test", "fact", "node A")
         n2 = manager.add_note("test", "link-test", "fact", "node B")
-        r = link_notes(from_note_id=n1["id"], to_note_id=n2["id"], link_type="related", weight=0.9)
+        r = link_notes(fromNoteId=n1["id"], toNoteId=n2["id"], linkType="related", weight=0.9)
         assert "Linked" in r
 
     def test_link_notes_invalid(self, temp_db):
         from mcp_server.server import link_notes
-        r = link_notes(from_note_id="note-999", to_note_id="note-888")
+        r = link_notes(fromNoteId="note-999", toNoteId="note-888")
         assert "Linked" in r or "Invalid" in r
 
     def test_link_notes_self(self, temp_db):
         from mcp_server.server import link_notes
         db_path, storage, manager = temp_db
         n = manager.add_note("test", "self-test", "fact", "alone")
-        r = link_notes(from_note_id=n["id"], to_note_id=n["id"])
+        r = link_notes(fromNoteId=n["id"], toNoteId=n["id"])
         assert "itself" in r
 
     def test_get_note_neighbors(self, seeded_db):
@@ -255,7 +255,7 @@ class TestLinkTools:
         db_path, storage, manager = seeded_db
         notes = manager.search_notes("graph-test-planet")
         nid = notes[0]["id"]
-        r = get_note_neighbors(note_id=f"note-{nid}")
+        r = get_note_neighbors(noteId=f"note-{nid}")
         assert "Neighbors" in r
         assert "note-" in r
 
@@ -263,7 +263,7 @@ class TestLinkTools:
         from mcp_server.server import get_note_neighbors
         db_path, storage, manager = temp_db
         n = manager.add_note("test", "isolated", "fact", "lonely")
-        r = get_note_neighbors(note_id=n["id"])
+        r = get_note_neighbors(noteId=n["id"])
         assert "No linked" in r
 
     def test_link_planets(self, temp_db):
@@ -271,12 +271,12 @@ class TestLinkTools:
         db_path, storage, manager = temp_db
         manager.update_planet("test", "planet-a", current_state="a")
         manager.update_planet("test", "planet-b", current_state="b")
-        r = link_planets(from_planet="planet-a", to_planet="planet-b", relation="related", weight=1.0)
+        r = link_planets(fromPlanet="planet-a", toPlanet="planet-b", relation="related", weight=1.0)
         assert "Linked" in r
 
     def test_link_planets_missing(self, temp_db):
         from mcp_server.server import link_planets
-        r = link_planets(from_planet="real", to_planet="ghost")
+        r = link_planets(fromPlanet="real", toPlanet="ghost")
         assert "not found" in r.lower()
 
     def test_get_planet_links(self, temp_db):
@@ -318,7 +318,7 @@ class TestGraphTools:
         db_path, storage, manager = seeded_db
         notes = manager.search_notes("graph-test-planet")
         nid = notes[0]["id"]
-        r = get_neighbors_weighted(note_id=f"note-{nid}", depth=2, min_weight=0.0)
+        r = get_neighbors_weighted(noteId=f"note-{nid}", depth=2, minWeight=0.0)
         assert "Neighbors" in r
         assert len(r.splitlines()) > 1
 
@@ -327,7 +327,7 @@ class TestGraphTools:
         db_path, storage, manager = seeded_db
         notes = manager.search_notes("graph-test-planet")
         nid = notes[0]["id"]
-        r = get_neighbors_weighted(note_id=f"note-{nid}", depth=1, min_weight=0.9)
+        r = get_neighbors_weighted(noteId=f"note-{nid}", depth=1, minWeight=0.9)
         if "No neighbors" in r:
             assert True  # no edge >= 0.9
         else:
@@ -337,12 +337,12 @@ class TestGraphTools:
         from mcp_server.server import get_neighbors_weighted
         db_path, storage, manager = temp_db
         n = manager.add_note("test", "alone", "fact", "solo")
-        r = get_neighbors_weighted(note_id=n["id"])
+        r = get_neighbors_weighted(noteId=n["id"])
         assert "No neighbors" in r
 
     def test_get_neighbors_weighted_invalid_id(self, seeded_db):
         from mcp_server.server import get_neighbors_weighted
-        r = get_neighbors_weighted(note_id="note-99999")
+        r = get_neighbors_weighted(noteId="note-99999")
         assert "No neighbors" in r or "Invalid" in r
 
     def test_get_subgraph(self, seeded_db):
@@ -350,7 +350,7 @@ class TestGraphTools:
         db_path, storage, manager = seeded_db
         notes = manager.search_notes("graph-test-planet")
         nid = notes[0]["id"]
-        r = get_subgraph(note_id=f"note-{nid}", depth=2, min_weight=0.0)
+        r = get_subgraph(noteId=f"note-{nid}", depth=2, minWeight=0.0)
         data = json.loads(r)
         assert "nodes" in data
         assert "edges" in data
@@ -361,7 +361,7 @@ class TestGraphTools:
         db_path, storage, manager = seeded_db
         notes = manager.search_notes("graph-test-planet")
         nid = notes[0]["id"]
-        r = get_subgraph(note_id=f"note-{nid}", depth=3, min_weight=0.0)
+        r = get_subgraph(noteId=f"note-{nid}", depth=3, minWeight=0.0)
         data = json.loads(r)
         assert len(data["nodes"]) >= 2
         assert len(data["edges"]) >= 1
@@ -370,7 +370,7 @@ class TestGraphTools:
         from mcp_server.server import get_subgraph
         db_path, storage, manager = temp_db
         n = manager.add_note("test", "alone", "fact", "solo")
-        r = get_subgraph(note_id=n["id"])
+        r = get_subgraph(noteId=n["id"])
         data = json.loads(r)
         assert "nodes" in data
         assert len(data["nodes"]) >= 1  # self is always included
@@ -378,7 +378,7 @@ class TestGraphTools:
 
     def test_get_subgraph_invalid_id(self, seeded_db):
         from mcp_server.server import get_subgraph
-        r = get_subgraph(note_id="note-99999")
+        r = get_subgraph(noteId="note-99999")
         data = json.loads(r)
         assert data["nodes"] == []
 
@@ -387,14 +387,14 @@ class TestGraphTools:
         db_path, storage, manager = seeded_db
         notes = manager.search_notes("graph-test-planet")
         nid = notes[0]["id"]
-        r = rank_neighbors(note_id=f"note-{nid}", by="weight")
+        r = rank_neighbors(noteId=f"note-{nid}", by="weight")
         assert "ranked" in r.lower()
 
     def test_rank_neighbors_no_links(self, temp_db):
         from mcp_server.server import rank_neighbors
         db_path, storage, manager = temp_db
         n = manager.add_note("test", "alone", "fact", "solo")
-        r = rank_neighbors(note_id=n["id"])
+        r = rank_neighbors(noteId=n["id"])
         assert "No neighbors" in r
 
     def test_rank_neighbors_by_confidence(self, seeded_db):
@@ -402,7 +402,7 @@ class TestGraphTools:
         db_path, storage, manager = seeded_db
         notes = manager.search_notes("graph-test-planet")
         nid = notes[0]["id"]
-        r = rank_neighbors(note_id=f"note-{nid}", by="confidence")
+        r = rank_neighbors(noteId=f"note-{nid}", by="confidence")
         assert "ranked" in r.lower()
 
     def test_compute_similarity(self, seeded_db):
@@ -410,8 +410,8 @@ class TestGraphTools:
         db_path, storage, manager = seeded_db
         notes = manager.search_notes("graph-test-planet")
         if len(notes) >= 2:
-            r = compute_similarity(note_id_a=f"note-{notes[0]['id']}",
-                                   note_id_b=f"note-{notes[1]['id']}")
+            r = compute_similarity(noteIdA=f"note-{notes[0]['id']}",
+                                   noteIdB=f"note-{notes[1]['id']}")
             assert notes[0]["kind"] in r.lower() or notes[0]["kind"] in r
             assert "Agent:" in r
 
@@ -419,12 +419,12 @@ class TestGraphTools:
         from mcp_server.server import compute_similarity
         notes = seeded_db[2].search_notes("graph-test-planet")
         nid = notes[0]["id"] if notes else 1
-        r = compute_similarity(note_id_a=f"note-{nid}", note_id_b="note-99999")
+        r = compute_similarity(noteIdA=f"note-{nid}", noteIdB="note-99999")
         assert "not found" in r.lower() or "Invalid" in r
 
     def test_compute_similarity_not_found(self, temp_db):
         from mcp_server.server import compute_similarity
-        r = compute_similarity(note_id_a="note-99991", note_id_b="note-99992")
+        r = compute_similarity(noteIdA="note-99991", noteIdB="note-99992")
         assert "not found" in r.lower() or "Invalid" in r
 
     def test_rerank(self, seeded_db):
@@ -432,18 +432,18 @@ class TestGraphTools:
         db_path, storage, manager = seeded_db
         notes = manager.search_notes("graph-test-planet")
         ids = [f"note-{n['id']}" for n in notes]
-        r = rerank(query="graph", note_ids=ids)
+        r = rerank(query="graph", noteIds=ids)
         assert "Query: graph" in r
         assert "Candidate notes" in r
 
     def test_rerank_empty_ids(self, seeded_db):
         from mcp_server.server import rerank
-        r = rerank(query="test", note_ids=[])
+        r = rerank(query="test", noteIds=[])
         assert "No valid" in r
 
     def test_rerank_invalid_ids(self, seeded_db):
         from mcp_server.server import rerank
-        r = rerank(query="test", note_ids=["note-bogus"])
+        r = rerank(query="test", noteIds=["note-bogus"])
         assert "No valid" in r
 
     def test_edge_decay(self, seeded_db):
@@ -499,31 +499,31 @@ class TestCodeTools:
     def test_code_init_nonexistent(self):
         """code_init checks directory before importing indexer, so it works without tree_sitter."""
         from mcp_server.server import code_init
-        r = code_init(project_root="/tmp/__nonexistent_project_path__")
+        r = code_init(projectRoot="/tmp/__nonexistent_project_path__")
         assert "not found" in r.lower() or "Directory" in r
 
     @pytestmark_code
     def test_code_find_no_project(self):
         from mcp_server.server import code_find
-        r = code_find(project_root="/tmp/__nonexistent__")
+        r = code_find(projectRoot="/tmp/__nonexistent__")
         assert "not found" in r.lower() or "No code index" in r
 
     def test_code_find_grep_no_rg(self):
         """grep mode returns before indexer import, so it works without tree_sitter."""
         from mcp_server.server import code_find
-        r = code_find(query="test", grep=True, project_root="/tmp")
+        r = code_find(query="test", grep=True, projectRoot="/tmp")
         assert isinstance(r, str)
 
     @pytestmark_code
     def test_code_trace_no_index(self):
         from mcp_server.server import code_trace
-        r = code_trace("main", project_root="/tmp/__nonexistent__")
+        r = code_trace("main", projectRoot="/tmp/__nonexistent__")
         assert "No code index" in r
 
     @pytestmark_code
     def test_code_files_no_index(self):
         from mcp_server.server import code_files
-        r = code_files(project_root="/tmp/__nonexistent__")
+        r = code_files(projectRoot="/tmp/__nonexistent__")
         assert "No code index" in r
 
     def test_code_files_glob(self, tmp_path):
@@ -533,30 +533,30 @@ class TestCodeTools:
         d.mkdir()
         (d / "a.json").write_text("{}")
         (d / "b.txt").write_text("x")
-        r = code_files(project_root=str(d), pattern="**/*.json")
+        r = code_files(projectRoot=str(d), pattern="**/*.json")
         assert "a.json" in r
 
     def test_code_files_glob_no_match(self, tmp_path):
         from mcp_server.server import code_files
-        r = code_files(project_root=str(tmp_path), pattern="**/*.nosuch")
+        r = code_files(projectRoot=str(tmp_path), pattern="**/*.nosuch")
         assert "No files matching" in r
 
     @pytestmark_code
     def test_code_explore_no_index(self):
         from mcp_server.server import code_explore
-        r = code_explore("main", project_root="/tmp/__nonexistent__")
+        r = code_explore("main", projectRoot="/tmp/__nonexistent__")
         assert "No code index" in r
 
     @pytestmark_code
     def test_code_impact_no_index(self):
         from mcp_server.server import code_impact
-        r = code_impact("main", project_root="/tmp/__nonexistent__")
+        r = code_impact("main", projectRoot="/tmp/__nonexistent__")
         assert "No code index" in r
 
     @pytestmark_code
     def test_code_read_no_index(self):
         from mcp_server.server import code_read
-        r = code_read("main.py", project_root="/tmp/__nonexistent__")
+        r = code_read("main.py", projectRoot="/tmp/__nonexistent__")
         assert "No code index" in r
 
     @pytestmark_code
@@ -571,7 +571,7 @@ class TestCodeTools:
         d = tmp_path / "safe"
         d.mkdir()
         (d / "f.py").write_text("x")
-        r = code_read("../etc/passwd", project_root=str(d))
+        r = code_read("../etc/passwd", projectRoot=str(d))
         assert "outside" in r.lower()
 
 
