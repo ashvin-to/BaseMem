@@ -8,10 +8,10 @@ description: BaseMem memory protocol
 | Step | Tool | When |
 |------|------|------|
 | **Start** | `getContext(topic, query)` | First turn, before answering |
-| **During** | `log_interaction(topic, decision=, fact=, ...)` | Every non-trivial decision/fact/state change |
-| **End** | `log_interaction(topic, summary=, activity="done")` | Session end |
+| **During** | `logInteraction(topic, decision=, fact=, ...)` | Every non-trivial decision/fact/state change |
+| **End** | `logInteraction(topic, summary=, activity="done")` | Session end |
 
-Call `log_interaction` at least once per session. Log decisions as they happen.
+Call `logInteraction` at least once per session. Log decisions as they happen.
 
 ## Code — use code_* instead of Read/grep/glob
 

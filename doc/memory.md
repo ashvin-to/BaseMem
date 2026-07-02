@@ -49,7 +49,7 @@ mem session sync "topic-name" --agent-id "your-unique-suffix"
 | Tool | Description |
 |------|-------------|
 | `update_planet(topic, ...)` | Update or create a planet |
-| `log_interaction(topic, ...)` | Persist decision, fact, state change, next step |
+| `logInteraction(topic, ...)` | Persist decision, fact, state change, next step |
 | `link_notes(fromNoteId, toNoteId, linkType)` | Connect two notes |
 | `link_planets(fromPlanet, toPlanet, relation)` | Connect two planets |
 | `set_memory_state(topic, state)` | Set hot/warm/compacted |
