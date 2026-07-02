@@ -1,12 +1,14 @@
 """Tests for BaseMem"""
 
-import pytest
 import tempfile
 from pathlib import Path
-from models import Node, NodeType, Edge, EdgeType
+
+import pytest
+
+from graph.engine import GraphEngine
+from models import Edge, EdgeType, Node, NodeType
 from storage.db import StorageManager
 from storage.sessions import SessionManager
-from graph.engine import GraphEngine
 
 
 @pytest.fixture

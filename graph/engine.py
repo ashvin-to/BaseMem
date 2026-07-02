@@ -23,12 +23,10 @@ Semantic Gravity Algorithm:
 Complexity: O(n) for new node auto-linking where n = existing nodes
 """
 
-from typing import List, Dict, Set, Optional
-from collections import deque
 import logging
-import math
+from collections import deque
 
-from models import Node, Edge, EdgeType
+from models import Edge, EdgeType, Node
 from storage.db import StorageManager
 
 logger = logging.getLogger(__name__)
@@ -52,7 +50,7 @@ class GraphEngine:
         self.storage.add_edge(edge)
         return edge
 
-    def get_neighbors(self, node_id: str, depth: int = 1) -> Dict[str, Node]:
+    def get_neighbors(self, node_id: str, depth: int = 1) -> dict[str, Node]:
         """Get all neighboring nodes up to a certain depth"""
         visited = {node_id}
         queue = deque([(node_id, 0)])
@@ -75,13 +73,13 @@ class GraphEngine:
 
         return neighbors
 
-    def find_path(self, start_id: str, end_id: str) -> List[str]:
+    def find_path(self, start_id: str, end_id: str) -> list[str]:
         """Find the shortest path between two nodes (BFS)"""
         if start_id == end_id:
             return [start_id]
 
         visited = {start_id}
-        parent = {}
+        parent: dict = {}
         queue = deque([start_id])
 
         while queue:
@@ -103,12 +101,12 @@ class GraphEngine:
 
         return []
 
-    def get_shortest_path(self, from_id: str, to_id: str) -> Optional[List[str]]:
+    def get_shortest_path(self, from_id: str, to_id: str) -> list[str] | None:
         """Compatibility wrapper for callers that expect None when no path exists."""
         path = self.find_path(from_id, to_id)
         return path or None
 
-    def get_clusters(self) -> List[Set[str]]:
+    def get_clusters(self) -> list[set[str]]:
         """Identify disconnected components in the graph"""
         all_nodes = self.storage.get_all_nodes()
         unvisited = {n.id for n in all_nodes}
@@ -132,10 +130,10 @@ class GraphEngine:
 
         return clusters
 
-    def auto_link_nodes(self, new_node_id: str, threshold: float = 0.3, limit: int = 3) -> List[Edge]:
+    def auto_link_nodes(self, new_node_id: str, threshold: float = 0.3, limit: int = 3) -> list[Edge]:
         """
         Auto-link a new node to existing nodes using Semantic Gravity (keyword-based).
-        
+
         Algorithm (Zero-RAM, No Models):
         1. Extract keywords from new node
         2. For each existing node:
@@ -145,17 +143,17 @@ class GraphEngine:
         3. Filter by threshold (default 0.3)
         4. Sort by score and take top `limit` (default 3)
         5. Create RELATED_TO edges to top candidates
-        
+
         Rationale for Weights:
         - Keywords 0.8: AI-curated tags, high signal-to-noise
         - Text 0.2: Fallback signal, catches common English overlap
         - This prevents over-linking while catching semantic relationships
-        
+
         Why Top-K = 3:
         - Prevents "spaghetti ball" dense graphs
         - 3 connections per new node is sufficient for discoverability
         - Maintains sparsity and query performance
-        
+
         Args:
             new_node_id: ID of the node to link
             threshold: Minimum similarity score to create a link (0-1, default 0.3)
@@ -164,48 +162,57 @@ class GraphEngine:
             limit: Maximum number of edges to create per node (default 3)
                   Increase to allow denser graphs (slower queries)
                   Decrease to maintain sparsity
-        
+
         Returns:
             List[Edge]: Edges created, empty if new_node not found or no matches
-        
+
         Raises:
             None (logs errors internally)
-        
+
         Side effects:
             - Creates edges in storage (committed to DB)
             - Logs each auto-link with score for debugging
-        
+
         Examples:
             # Auto-link with defaults (0.3 threshold, top 3)
             edges = graph_engine.auto_link_nodes("node-123")
             print(f"Created {len(edges)} auto-links")
-            
+
             # Stricter linking (higher threshold, fewer connections)
             edges = graph_engine.auto_link_nodes("node-123", threshold=0.5, limit=2)
-            
+
             # Aggressive linking (lower threshold, more connections)
             edges = graph_engine.auto_link_nodes("node-123", threshold=0.2, limit=5)
-        
+
         Notes:
             - Keywords treated as ground truth (weighted 0.8)
             - If new node has no keywords, only text similarity used
             - Existing node's weight and decay_score not used in linking decision
             - Linking is directional (new → existing only)
+
+        DEPRECATED: Use SessionManager._auto_link_note or recompute_links instead.
+        This method operates on the legacy `Node`/`Edge` model (UUID keys).
         """
+        import warnings
+        warnings.warn(
+            "GraphEngine.auto_link_nodes is deprecated. "
+            "Use SessionManager.recompute_links() instead.",
+            DeprecationWarning, stacklevel=2,
+        )
         new_node = self.storage.get_node(new_node_id)
         if not new_node:
             return []
 
         existing_nodes = self.storage.get_all_nodes()
         existing_nodes = [n for n in existing_nodes if n.id != new_node_id]
-        
+
         if not existing_nodes:
             return []
 
         candidates = []
         new_keywords = set(new_node.keywords)
         new_text = (new_node.title + " " + new_node.content).lower()
-        
+
         for existing_node in existing_nodes:
             # 1. Keyword/Tag Overlap (Primary Signal)
             existing_keywords = set(existing_node.keywords)
@@ -214,24 +221,24 @@ class GraphEngine:
                 overlap = len(new_keywords & existing_keywords)
                 union_size = len(new_keywords | existing_keywords)
                 keyword_score = overlap / union_size if union_size > 0 else 0
-            
+
             # 2. Text Overlap (Secondary Signal)
             existing_text = (existing_node.title + " " + existing_node.content).lower()
             text_score = 0.0
             new_tokens = set(new_text.split())
             existing_tokens = set(existing_text.split())
-            
+
             if new_tokens and existing_tokens:
                 overlap = len(new_tokens & existing_tokens)
                 union_size = len(new_tokens | existing_tokens)
                 text_score = overlap / union_size if union_size > 0 else 0
-            
+
             # Hybrid score (No models needed)
             final_score = (keyword_score * 0.8) + (text_score * 0.2)
-            
+
             if final_score >= threshold:
                 candidates.append((existing_node.id, final_score))
-        
+
         # Sort and take Top K
         candidates.sort(key=lambda x: x[1], reverse=True)
         top_candidates = candidates[:limit]
@@ -241,24 +248,24 @@ class GraphEngine:
             edge = self.link_nodes(new_node_id, target_id, EdgeType.RELATED_TO)
             created_edges.append(edge)
             logger.info(f"Auto-linked {new_node_id} <-> {target_id} (keyword score: {score:.2f})")
-        
+
         return created_edges
 
-    def get_graph_stats(self) -> Dict:
+    def get_graph_stats(self) -> dict:
         """Get comprehensive graph statistics"""
         nodes = self.storage.get_all_nodes()
         all_edges = self.storage.get_edges()
-        
+
         if not nodes:
             return {"nodes": 0, "edges": 0, "clusters": 0, "avg_clustering_coeff": 0}
 
         # Calculate average clustering (simplified)
-        total_clustering = 0
+        total_clustering = 0.0
         for node in nodes:
             neighbor_ids = self.storage.get_neighbors(node.id)
             if len(neighbor_ids) < 2:
                 continue
-            
+
             # Find edges between neighbors
             possible_edges = len(neighbor_ids) * (len(neighbor_ids) - 1) / 2
             actual_edges = 0
@@ -266,9 +273,9 @@ class GraphEngine:
                 for j in range(i + 1, len(neighbor_ids)):
                     if self.storage.get_edges(from_id=neighbor_ids[i], to_id=neighbor_ids[j]):
                         actual_edges += 1
-            
+
             total_clustering += actual_edges / possible_edges
-        
+
         avg_clustering = total_clustering / len(nodes)
 
         return {
@@ -276,6 +283,6 @@ class GraphEngine:
             "edges": len(all_edges),
             "clusters": len(self.get_clusters()),
             "avg_clustering_coeff": avg_clustering,
-            "edge_types": {et.value: sum(1 for e in all_edges if e.edge_type == et) 
+            "edge_types": {et.value: sum(1 for e in all_edges if e.edge_type == et)
                           for et in EdgeType},
         }

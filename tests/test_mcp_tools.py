@@ -1,9 +1,10 @@
 """Tests for all 30 MCP tools (memory + graph + code tool smoke tests)."""
 
-import os
 import json
+import os
 import tempfile
 from pathlib import Path
+
 import pytest
 
 from storage.db import StorageManager
@@ -120,28 +121,28 @@ class TestPlanetTools:
 
 
 class TestNoteTools:
-    def test_log_interaction(self, temp_db):
-        from mcp_server.server import log_interaction
+    def test_logInteraction(self, temp_db):
+        from mcp_server.server import logInteraction
         db_path, storage, manager = temp_db
-        r = log_interaction(topic="log-test", decision="use pytest",
+        r = logInteraction(topic="log-test", decision="use pytest",
                             fact="tests pass", currentState="done")
         assert "note(decision)" in r
         assert "note(fact)" in r
         assert "planet_updated" in r
 
-    def test_log_interaction_summary(self, temp_db):
-        from mcp_server.server import log_interaction
-        r = log_interaction(topic="log-test", summary="All done.")
+    def test_logInteraction_summary(self, temp_db):
+        from mcp_server.server import logInteraction
+        r = logInteraction(topic="log-test", summary="All done.")
         assert "note(summary)" in r
 
-    def test_log_interaction_activity(self, temp_db):
-        from mcp_server.server import log_interaction
-        r = log_interaction(topic="log-test", activity="working")
+    def test_logInteraction_activity(self, temp_db):
+        from mcp_server.server import logInteraction
+        r = logInteraction(topic="log-test", activity="working")
         assert "turn_logged" in r
 
-    def test_log_interaction_noop(self, temp_db):
-        from mcp_server.server import log_interaction
-        r = log_interaction(topic="log-test")
+    def test_logInteraction_noop(self, temp_db):
+        from mcp_server.server import logInteraction
+        r = logInteraction(topic="log-test")
         assert "no changes" in r
 
     def test_search_notes(self, temp_db):
@@ -453,10 +454,10 @@ class TestGraphTools:
         # verify weights decreased
         nid = _first_note_id(seeded_db)
         before = _neighbor_weights(seeded_db, nid)
-        r2 = edge_decay(factor=0.5)
+        edge_decay(factor=0.5)
         after = _neighbor_weights(seeded_db, nid)
         if before:
-            assert all(a <= b for a, b in zip(after, before))
+            assert all(a <= b for a, b in zip(after, before, strict=False))
 
     def test_edge_decay_by_planet(self, seeded_db):
         from mcp_server.server import edge_decay

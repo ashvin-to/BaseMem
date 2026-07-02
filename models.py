@@ -11,17 +11,17 @@ Node IDs are UUIDs by default (deterministic with given seeds).
 All timestamps are stored as ISO format strings.
 """
 
-from dataclasses import dataclass, field
-from typing import List, Optional, Dict, Any
-from datetime import datetime
-from enum import Enum
 import uuid
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from enum import Enum
+from typing import Any
 
 
 class NodeType(str, Enum):
     """
     Enumeration of node types in the knowledge graph.
-    
+
     Types:
     - CONCEPT: Abstract idea or theory (purple in UI)
     - FACT: Concrete data point or assertion (blue in UI)
@@ -43,7 +43,7 @@ class NodeType(str, Enum):
 class EdgeType(str, Enum):
     """
     Enumeration of semantic relationship types.
-    
+
     Types:
     - IS_A: Taxonomic/hierarchical (e.g., "Dog is a Mammal")
     - PART_OF: Compositional relationship (e.g., "Chapter is part of Book")
@@ -66,13 +66,13 @@ class EdgeType(str, Enum):
 class Node:
     """
     Represents a knowledge base unit in the graph.
-    
+
     A node is the atomic unit of knowledge in BaseMem. It can be:
     - A concept (abstract idea)
     - A fact (concrete statement)
     - A summary (condensed information)
     - A conversation turn (AI/human message)
-    
+
     Fields:
         id: Unique identifier (UUID4 by default, deterministic if seeded)
         title: Short label for the node (max 256 chars recommended)
@@ -90,14 +90,14 @@ class Node:
                     Decreases score for old nodes (implement manually if needed)
         metadata: Arbitrary JSON-serializable data (source, author, version, etc.)
                  Used for filtering and tracking provenance
-    
+
     Invariants:
     - id is unique across all nodes in a graph
     - id should be deterministic (same input → same id)
     - keywords should be lowercase and normalized
     - weight should be in range [0, 10]
     - decay_score should be in range [0, 1]
-    
+
     Example:
         node = Node(
             title="Machine Learning",
@@ -112,13 +112,13 @@ class Node:
     title: str = ""
     content: str = ""
     node_type: NodeType = NodeType.CONCEPT
-    keywords: List[str] = field(default_factory=list)
-    embedding: Optional[List[float]] = None
+    keywords: list[str] = field(default_factory=list)
+    embedding: list[float] | None = None
     weight: float = 1.0
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    last_accessed: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    last_accessed: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     decay_score: float = 1.0
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 
@@ -126,7 +126,7 @@ class Node:
 class Edge:
     """
     Represents a typed relationship between two nodes.
-    
+
     Edges are directed (from_id → to_id) and can represent:
     - Taxonomic relationships (IS_A)
     - Compositional relationships (PART_OF)
@@ -135,7 +135,7 @@ class Edge:
     - Dependencies (DEPENDS_ON)
     - Contradictions (CONTRADICTS)
     - Provenance (DERIVED_FROM)
-    
+
     Fields:
         from_id: Source node ID
         to_id: Target node ID
@@ -147,13 +147,13 @@ class Edge:
                    Used by orchestrator for probabilistic ranking
         created_at: Timestamp when edge was created
         metadata: Arbitrary JSON data (reason, source, score, etc.)
-    
+
     Invariants:
     - from_id != to_id (no self-loops)
     - (from_id, to_id, edge_type) is unique (no duplicate relationships)
     - weight in [0, 1]
     - confidence in [0, 1]
-    
+
     Example:
         edge = Edge(
             from_id=node1_id,
@@ -170,8 +170,8 @@ class Edge:
     edge_type: EdgeType
     weight: float = 1.0
     confidence: float = 1.0
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 
@@ -182,17 +182,17 @@ class RetrievalResult:
     node: Node
     score: float
     source: str  # "bm25", "vector", or "combined"
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class ContextPacket:
     """Formatted context for LLM"""
     concept: str
-    related: List[str]
-    facts: List[str]
-    examples: List[str]
+    related: list[str]
+    facts: list[str]
+    examples: list[str]
     token_count: int
-    source_nodes: List[str]
+    source_nodes: list[str]
 
 

@@ -4,8 +4,8 @@ import logging
 import os
 import sqlite3
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, Optional
 
 from .parser import CodeParser
 from .schema import ensure_code_schema
@@ -46,7 +46,7 @@ def find_code_projects(search_root: str = "") -> list[dict]:
             p = Path(extra)
             if p.is_dir():
                 roots.append(p)
-    SYSTEM_DIRS = {"proc", "sys", "dev", "run", "lost+found", "boot", "lib", "lib64", "sbin", "bin"}
+    system_dirs = {"proc", "sys", "dev", "run", "lost+found", "boot", "lib", "lib64", "sbin", "bin"}
     results = []
     for root in roots:
         if not root.is_dir():
@@ -54,7 +54,7 @@ def find_code_projects(search_root: str = "") -> list[dict]:
         for dirpath, dirnames, filenames in os.walk(root):
             dirnames[:] = [
                 d for d in dirnames
-                if (not d.startswith(".") or d == ".config") and d not in SYSTEM_DIRS
+                if (not d.startswith(".") or d == ".config") and d not in system_dirs
             ]
             if CODE_DB_FILENAME in filenames:
                 db_path = Path(dirpath) / CODE_DB_FILENAME
@@ -108,9 +108,9 @@ class CodeIndexer:
 
     def index_project(
         self,
-        root_path: Optional[str] = None,
-        progress_cb: Optional[Callable] = None,
-        max_workers: int = 4,
+        root_path: str | None = None,
+        progress_cb: Callable | None = None,
+        _max_workers: int = 4,
     ):
         """Index an entire project directory."""
         root = Path(root_path or self.project_root).resolve()
@@ -240,7 +240,7 @@ class CodeIndexer:
                    FROM code_symbols cs
                    ORDER BY cs.symbol_name"""
             )
-            results = []
+            results: list = []
             for r in cur.fetchall():
                 fields = [r["symbol_name"] or "", r["signature"] or "",
                           r["docstring"] or "", r["file_path"] or "",
@@ -283,7 +283,7 @@ class CodeIndexer:
         )
         return [dict(r) for r in cur.fetchall()]
 
-    def get_symbol(self, symbol_id: int) -> Optional[dict]:
+    def get_symbol(self, symbol_id: int) -> dict | None:
         cur = self.conn.execute(
             "SELECT * FROM code_symbols WHERE id = ?",
             (symbol_id,),
@@ -440,7 +440,7 @@ class CodeIndexer:
         Converts module paths in import edges to file paths to detect cross-file references.
         Pass limit=0 for all results.
         """
-        limit_sql = "" if limit <= 0 else f" LIMIT {int(limit)}"
+        "" if limit <= 0 else f" LIMIT {int(limit)}"
         all_files = self.list_files(limit=0)
 
         dead_files = []
@@ -480,8 +480,7 @@ class CodeIndexer:
         if not dead_files:
             return []
 
-        combined = dead_files[:limit] if limit > 0 else dead_files
-        return combined
+        return dead_files[:limit] if limit > 0 else dead_files
 
     def list_files(self, prefix: str = "", limit: int = 200) -> list[dict]:
         """List indexed files with symbol counts. Pass limit=0 for all results."""
@@ -507,7 +506,7 @@ class CodeIndexer:
 
         Returns deduplicated list of symbols that call this symbol (directly or transitively).
         """
-        results = []
+        results: list = []
         seen = set()
         queue = [(symbol_name, 0)]
         while queue and len(results) < limit:
@@ -561,7 +560,7 @@ class CodeIndexer:
             if not fp.is_file():
                 continue
             try:
-                with open(fp, "r", errors="replace") as fh:
+                with open(fp, errors="replace") as fh:
                     for i, line in enumerate(fh, 1):
                         if (f["file_path"], i) in seen_defs:
                             continue
@@ -585,11 +584,11 @@ class CodeIndexer:
         """
         import subprocess
         repo = Path(self.project_root)
-        git_dir = repo / ".git"
+        repo / ".git"
         stats = self.get_project_stats()
         if not stats.get("indexed"):
             # No existing index — do full index
-            return self.index_project(max_workers=max_workers)
+            return self.index_project(_max_workers=max_workers)
 
         # Try git diff to find changed files
         try:

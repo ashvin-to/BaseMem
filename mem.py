@@ -4,7 +4,6 @@ Global Entry Point for BaseMem CLI.
 This script is path-aware and can be run from any directory.
 """
 
-import os
 import sys
 from pathlib import Path
 

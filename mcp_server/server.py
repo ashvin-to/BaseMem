@@ -69,7 +69,7 @@ def code_init(projectRoot: str) -> str:
     from indexer import CodeIndexer
     indexer = CodeIndexer(projectRoot)
     try:
-        result = indexer.index_project(max_workers=4)
+        result = indexer.index_project(_max_workers=4)
         return (
             f"Indexed {result['files']} files, {result['symbols']} symbols, "
             f"{result['edges']} edges in {result['elapsed']:.1f}s\n"
@@ -82,6 +82,7 @@ def code_init(projectRoot: str) -> str:
 def _detect_project_root() -> str:
     """Walk up from CWD to find a project root with .basemem.code.db."""
     import os
+
     from indexer import CODE_DB_FILENAME
     cwd = os.getcwd()
     parent = cwd
@@ -105,7 +106,7 @@ def _fmt_loc(file_path: str) -> str:
     return "/".join(parts[-3:]) if len(parts) > 3 else path
 
 
-@server.tool(description="Find code symbols. grep=True = raw text search across ALL files. references=True = find all usages across indexed files. REPLACES grep.")
+@server.tool(description="Find code symbols. grep=True = raw text search. references=True = find all usages. REPLACES grep.")
 def code_find(
     query: str = "",
     projectRoot: str = "",
@@ -137,7 +138,8 @@ def code_find(
             cmd.extend(["--fixed-strings"])
         if filePath:
             cmd.extend(["--glob", filePath])
-        cmd.extend([query, projectRoot])
+        root = projectRoot or _detect_project_root() or "."
+        cmd.extend([query, root])
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
             if result.returncode not in (0, 1):
@@ -157,14 +159,19 @@ def code_find(
         except subprocess.TimeoutExpired:
             return f"Search timed out for '{query}'."
 
-    from indexer import CodeIndexer, CODE_DB_FILENAME
+    from indexer import CODE_DB_FILENAME, CodeIndexer
     if not projectRoot:
         projectRoot = _detect_project_root()
+    if not os.path.isdir(projectRoot):
+        return f"Directory not found: {projectRoot}"
     db_path = os.path.join(projectRoot, CODE_DB_FILENAME)
     if not os.path.exists(db_path):
-        _ci = CodeIndexer(projectRoot)
         try:
-            _ci.index_project(max_workers=4)
+            _ci = CodeIndexer(projectRoot)
+        except ValueError as e:
+            return str(e)
+        try:
+            _ci.index_project(_max_workers=4)
         finally:
             _ci.close()
     indexer = CodeIndexer(projectRoot)
@@ -264,7 +271,6 @@ def code_find(
             return "\n".join(parts)
 
         # Browse fallback — show file overview with symbol counts
-        import sqlite3
         _c = indexer.conn
         total = _c.execute("SELECT COUNT(*) FROM code_symbols").fetchone()[0]
         files = _c.execute("SELECT COUNT(DISTINCT file_path) FROM code_symbols").fetchone()[0]
@@ -275,7 +281,7 @@ def code_find(
             FROM code_symbols GROUP BY file_path ORDER BY file_path
             LIMIT 100
         """):
-            if file_path and row['file_path'] != file_path:
+            if filePath and row['file_path'] != filePath:
                 continue
             parts.append(f"  {row['file_path']} ({row['cnt']} sym)")
         if files > 100:
@@ -295,7 +301,8 @@ def code_trace(
 ) -> str:
     """Trace call chains: who calls this symbol and what does it call?"""
     import os
-    from indexer import CodeIndexer, CODE_DB_FILENAME
+
+    from indexer import CODE_DB_FILENAME, CodeIndexer
     if not projectRoot:
         projectRoot = _detect_project_root()
     db_path = os.path.join(projectRoot, CODE_DB_FILENAME)
@@ -350,8 +357,8 @@ def code_list_projects(searchRoot: str = "") -> str:
 @server.tool(description="Show project files. pattern='**/*.json' = glob wildcard search. Use prefix='src/' to filter indexed files.")
 def code_files(projectRoot: str = "", prefix: str = "", pattern: str = "", limit: int = 100) -> str:
     """List indexed files with symbol counts, or glob files by pattern. Replaces native glob."""
-    import os
     import glob as _glob
+    import os
     if pattern:
         if not projectRoot:
             projectRoot = _detect_project_root()
@@ -366,7 +373,7 @@ def code_files(projectRoot: str = "", prefix: str = "", pattern: str = "", limit
             parts.append(f"  ... and {len(rels) - limit} more")
         return "\n".join(parts)
 
-    from indexer import CodeIndexer, CODE_DB_FILENAME
+    from indexer import CODE_DB_FILENAME, CodeIndexer
     if not projectRoot:
         projectRoot = _detect_project_root()
     db_path = os.path.join(projectRoot, CODE_DB_FILENAME)
@@ -391,7 +398,8 @@ def code_explore(query: str, projectRoot: str = "", limit: int = 10) -> str:
     Tries exact symbol name/ID first, then full-text search.
     """
     import os
-    from indexer import CodeIndexer, CODE_DB_FILENAME
+
+    from indexer import CODE_DB_FILENAME, CodeIndexer
     if not projectRoot:
         projectRoot = _detect_project_root()
     db_path = os.path.join(projectRoot, CODE_DB_FILENAME)
@@ -452,7 +460,8 @@ def code_explore(query: str, projectRoot: str = "", limit: int = 10) -> str:
 def code_impact(symbolName: str, projectRoot: str = "", depth: int = 2, limit: int = 30) -> str:
     """Trace transitive reverse dependencies for a symbol."""
     import os
-    from indexer import CodeIndexer, CODE_DB_FILENAME
+
+    from indexer import CODE_DB_FILENAME, CodeIndexer
     if not projectRoot:
         projectRoot = _detect_project_root()
     db_path = os.path.join(projectRoot, CODE_DB_FILENAME)
@@ -462,8 +471,8 @@ def code_impact(symbolName: str, projectRoot: str = "", depth: int = 2, limit: i
     try:
         results = indexer.get_impact(symbolName, depth=depth, limit=limit)
         if not results:
-            return f"No impact found for '{symbol_name}'."
-        parts = [f"Impact analysis for '{symbol_name}' (depth={depth}):"]
+            return f"No impact found for '{symbolName}'."
+        parts = [f"Impact analysis for '{symbolName}' (depth={depth}):"]
         for r in results:
             loc = _fmt_loc(r['file_path'])
             via = f" (via {r['via']})" if r.get('via') else ""
@@ -538,7 +547,8 @@ def getContext(topic: str = "", project: str = "", query: str = "") -> str:
 def read_planet(topic: str) -> str:
     """Read all details of a specific planet/topic."""
     from storage.db import StorageManager
-    from storage.sessions import SessionManager, _get_notes
+    from storage.planets import _get_notes
+    from storage.sessions import SessionManager
 
     db_path = get_db_path()
     if not os.path.isfile(db_path):
@@ -578,7 +588,7 @@ def read_planet(topic: str) -> str:
 
 
 @server.tool(description="Persist session: decisions, facts, state, activity — all in one call.")
-def log_interaction(
+def logInteraction(
     topic: str,
     decision: str = "",
     fact: str = "",
@@ -613,7 +623,7 @@ def log_interaction(
         parts.append("planet_updated")
 
     if activity:
-        manager.log_chat_to_planet(topic, topic, activity, agent_id="system", sender="system")
+        manager.log_chat_to_planet(topic, topic, activity, agent_id="system", _sender="system")
         parts.append("turn_logged")
 
     return f"{' + '.join(parts) if parts else 'no changes'} for '{topic}'."
@@ -659,8 +669,8 @@ def update_planet(
 @server.tool(description="Get raw notes for agent summarization.")
 def summarize_planet(topic: str, limit: int = 50) -> str:
     """Return all notes for a planet formatted for agent summarization."""
-    from storage.sessions import SessionManager
     from storage.db import StorageManager
+    from storage.sessions import SessionManager
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
     return manager.summarize_planet(topic, limit=limit)
@@ -669,12 +679,12 @@ def summarize_planet(topic: str, limit: int = 50) -> str:
 @server.tool(description="Trim old notes, keep summaries + 30 recent.")
 def compact_planet(topic: str) -> str:
     """Compact a planet - keep summaries + 30 recent notes, delete the rest."""
-    from storage.sessions import SessionManager
     from storage.db import StorageManager
+    from storage.sessions import SessionManager
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
     count_before = manager.get_note_count(topic)
-    proxy = manager.compact_planet("default", topic)
+    manager.compact_planet("default", topic)
     count_after = manager.get_note_count(topic)
     return f"Compacted '{topic}': {count_before} notes -> {count_after} notes kept."
 
@@ -819,8 +829,8 @@ def get_node(nodeId: str) -> str:
 def link_notes(fromNoteId: str, toNoteId: str, linkType: str = "related", weight: float = 1.0) -> str:
     """Link two notes with a typed relationship. Valid types: related, depends, implements, fixes, duplicates, supersedes, causes, blocks, tests, references"""
     """Link two notes together."""
-    from storage.sessions import SessionManager
     from storage.db import StorageManager
+    from storage.sessions import SessionManager
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
     ok, msg = manager.link_notes(fromNoteId, toNoteId, linkType, weight)
@@ -830,8 +840,8 @@ def link_notes(fromNoteId: str, toNoteId: str, linkType: str = "related", weight
 @server.tool(description="Find notes linked to a note.")
 def get_note_neighbors(noteId: str) -> str:
     """Get neighbors of a note."""
-    from storage.sessions import SessionManager
     from storage.db import StorageManager
+    from storage.sessions import SessionManager
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
     neighbors = manager.get_note_neighbors(noteId)
@@ -847,8 +857,8 @@ def get_note_neighbors(noteId: str) -> str:
 @server.tool(description="Pin a note so compact_planet never drops it.")
 def note_pin(noteId: str) -> str:
     """Pin a note to preserve it through compaction."""
-    from storage.sessions import SessionManager
     from storage.db import StorageManager
+    from storage.sessions import SessionManager
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
     ok, msg = manager.pin_note(noteId)
@@ -858,8 +868,8 @@ def note_pin(noteId: str) -> str:
 @server.tool(description="Unpin a note.")
 def note_unpin(noteId: str) -> str:
     """Unpin a previously pinned note."""
-    from storage.sessions import SessionManager
     from storage.db import StorageManager
+    from storage.sessions import SessionManager
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
     ok, msg = manager.unpin_note(noteId)
@@ -869,8 +879,8 @@ def note_unpin(noteId: str) -> str:
 @server.tool(description="Set tags on a note (replaces existing tags).")
 def note_tag(noteId: str, tags: str) -> str:
     """Tag a note with comma-separated keywords."""
-    from storage.sessions import SessionManager
     from storage.db import StorageManager
+    from storage.sessions import SessionManager
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
     tag_list = [t.strip() for t in tags.split(",") if t.strip()]
@@ -884,10 +894,14 @@ def note_tag(noteId: str, tags: str) -> str:
 @server.tool(description="Create a task on a planet. Returns the task id.")
 def task_create(topic: str, title: str, priority: str = "medium", depends_on: list | None = None, files: list | None = None, notes: list | None = None) -> str:
     """Create a new task on a planet with status=todo."""
-    from storage.sessions import SessionManager
     from storage.db import StorageManager
+    from storage.sessions import SessionManager
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
+    if notes:
+        notes = [int(n.replace("note-", "")) if isinstance(n, str) and "note-" in n else int(n) for n in notes]
+    if depends_on:
+        depends_on = [int(d.replace("task-", "")) if isinstance(d, str) and "task-" in d else int(d) for d in depends_on]
     result = manager.create_task(topic, title, priority=priority, depends_on=depends_on, files=files, notes=notes)
     deps = json.loads(result.get("depends_on", "[]"))
     parts = [f"Task created: task-{result['id']} [{result['status']}/{result['priority']}] {result['title']}"]
@@ -899,10 +913,12 @@ def task_create(topic: str, title: str, priority: str = "medium", depends_on: li
 @server.tool(description="Update a task's status, priority, files, or notes.")
 def task_update(task_id: int, status: str | None = None, priority: str | None = None, files: list | None = None, notes: list | None = None) -> str:
     """Update task fields: status, priority, files, notes."""
-    from storage.sessions import SessionManager
     from storage.db import StorageManager
+    from storage.sessions import SessionManager
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
+    if notes:
+        notes = [int(n.replace("note-", "")) if isinstance(n, str) and "note-" in n else int(n) for n in notes]
     ok, msg = manager.update_task(task_id, status=status, priority=priority, files=files, notes=notes)
     return msg
 
@@ -910,8 +926,8 @@ def task_update(task_id: int, status: str | None = None, priority: str | None = 
 @server.tool(description="List tasks, optionally filtered by topic, status, priority.")
 def task_list(topic: str | None = None, status: str | None = None, priority: str | None = None) -> str:
     """List tasks with optional filters."""
-    from storage.sessions import SessionManager
     from storage.db import StorageManager
+    from storage.sessions import SessionManager
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
     tasks = manager.list_tasks(topic=topic, status=status, priority=priority)
@@ -928,8 +944,8 @@ def task_list(topic: str | None = None, status: str | None = None, priority: str
 @server.tool(description="Block a task. Optionally provide a reason (stored as an issue note).")
 def task_block(task_id: int, reason: str | None = None) -> str:
     """Mark a task as blocked. If reason is given, creates a linked issue note."""
-    from storage.sessions import SessionManager
     from storage.db import StorageManager
+    from storage.sessions import SessionManager
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
     if reason:
@@ -943,7 +959,9 @@ def task_block(task_id: int, reason: str | None = None) -> str:
             existing = json.loads(notes_str)
             if nid not in existing:
                 existing.append(nid)
-                manager.update_task(task_id, notes=existing)
+                # Normalize to ints: filter out non-numeric entries, convert strings that look like ints
+                ints = [int(x) for x in existing if isinstance(x, (int, str)) and str(x).lstrip('-').isdigit()]
+                manager.update_task(task_id, notes=ints)
     ok, msg = manager.update_task(task_id, status="blocked")
     return "Blocked. " + msg if ok else msg
 
@@ -954,8 +972,8 @@ def task_block(task_id: int, reason: str | None = None) -> str:
 @server.tool(description="Link two planets with a relation type.")
 def link_planets(fromPlanet: str, toPlanet: str, relation: str = "related", weight: float = 1.0) -> str:
     """Link two planets together."""
-    from storage.sessions import SessionManager
     from storage.db import StorageManager
+    from storage.sessions import SessionManager
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
     ok, msg = manager.link_planets(fromPlanet, toPlanet, relation, weight)
@@ -965,16 +983,16 @@ def link_planets(fromPlanet: str, toPlanet: str, relation: str = "related", weig
 @server.tool(description="Get planets linked to a planet.")
 def get_planet_links(planet: str) -> str:
     """Get planets linked to the given planet."""
-    from storage.sessions import SessionManager
     from storage.db import StorageManager
+    from storage.sessions import SessionManager
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
     links = manager.get_planet_links(planet)
     if not links:
         return f"No planet links found for '{planet}'."
     lines = [f"Planets linked to '{planet}':\n"]
-    for l in links:
-        lines.append(f"- {l['planet']} [{l['relation']}] (w={l['weight']})")
+    for link in links:
+        lines.append(f"- {link['planet']} [{link['relation']}] (w={link['weight']})")
     return "\n".join(lines)
 
 
@@ -984,8 +1002,8 @@ def get_planet_links(planet: str) -> str:
 @server.tool(description="Set memory tier: hot, warm, compacted.")
 def set_memory_state(topic: str, state: str) -> str:
     """Set memory tier for a planet."""
-    from storage.sessions import SessionManager
     from storage.db import StorageManager
+    from storage.sessions import SessionManager
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
     ok, msg = manager.set_memory_state(topic, state)
@@ -998,8 +1016,8 @@ def set_memory_state(topic: str, state: str) -> str:
 @server.tool(description="Weighted neighbor traversal with depth.")
 def get_neighbors_weighted(noteId: str, depth: int = 1, minWeight: float = 0.0) -> str:
     """Weighted neighbor traversal with configurable depth."""
-    from storage.sessions import SessionManager
     from storage.db import StorageManager
+    from storage.sessions import SessionManager
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
     nid = manager._parse_note_id(noteId)
@@ -1018,8 +1036,9 @@ def get_neighbors_weighted(noteId: str, depth: int = 1, minWeight: float = 0.0) 
 def get_subgraph(noteId: str, depth: int = 2, minWeight: float = 0.2) -> str:
     """Extract weighted subgraph around a note."""
     import json
-    from storage.sessions import SessionManager
+
     from storage.db import StorageManager
+    from storage.sessions import SessionManager
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
     nid = manager._parse_note_id(noteId)
@@ -1032,8 +1051,8 @@ def get_subgraph(noteId: str, depth: int = 2, minWeight: float = 0.2) -> str:
 @server.tool(description="Rank neighbors by weight or confidence.")
 def rank_neighbors(noteId: str, by: str = "weight") -> str:
     """Rank neighbors by weight or confidence."""
-    from storage.sessions import SessionManager
     from storage.db import StorageManager
+    from storage.sessions import SessionManager
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
     nid = manager._parse_note_id(noteId)
@@ -1054,8 +1073,8 @@ def rank_neighbors(noteId: str, by: str = "weight") -> str:
 @server.tool(description="Two notes for agent similarity comparison.")
 def compute_similarity(noteIdA: str, noteIdB: str) -> str:
     """Return both notes for agent-driven semantic similarity comparison."""
-    from storage.sessions import SessionManager
     from storage.db import StorageManager
+    from storage.sessions import SessionManager
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
     nid_a = manager._parse_note_id(noteIdA)
@@ -1082,8 +1101,8 @@ def compute_similarity(noteIdA: str, noteIdB: str) -> str:
 @server.tool(description="Notes + query for agent reranking.")
 def rerank(query: str, noteIds: list) -> str:
     """Return query + note contents for agent-driven reranking."""
-    from storage.sessions import SessionManager
     from storage.db import StorageManager
+    from storage.sessions import SessionManager
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
     ids = []
@@ -1112,8 +1131,8 @@ def rerank(query: str, noteIds: list) -> str:
 @server.tool(description="Decay auto-link weights by a factor.")
 def edge_decay(factor: float = 0.9, planet: str | None = None) -> str:
     """Apply weight decay to auto-links."""
-    from storage.sessions import SessionManager
     from storage.db import StorageManager
+    from storage.sessions import SessionManager
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
     result = manager.edge_decay(factor=factor, planet=planet)
@@ -1123,8 +1142,8 @@ def edge_decay(factor: float = 0.9, planet: str | None = None) -> str:
 @server.tool(description="Prune edges below a weight threshold.")
 def edge_prune(threshold: float = 0.05, planet: str | None = None) -> str:
     """Remove auto-links below weight threshold."""
-    from storage.sessions import SessionManager
     from storage.db import StorageManager
+    from storage.sessions import SessionManager
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
     result = manager.edge_prune(threshold=threshold, planet=planet)
@@ -1139,12 +1158,10 @@ def code_read(filePath: str, projectRoot: str = "", offset: int = 0, limit: int 
        offset (1-indexed): start line. limit: max lines. 0 = all lines.
        Path traversal is prevented — must be within the project."""
     import os
-    from indexer import CodeIndexer, CODE_DB_FILENAME
+
+    from indexer import CODE_DB_FILENAME
     if not projectRoot:
         projectRoot = _detect_project_root()
-    db_path = os.path.join(projectRoot, CODE_DB_FILENAME)
-    if not os.path.exists(db_path):
-        return f"No code index at {projectRoot}."
 
     # Resolve filePath relative to projectRoot and prevent traversal
     abs_fp = os.path.normpath(os.path.join(projectRoot, filePath))
@@ -1152,11 +1169,15 @@ def code_read(filePath: str, projectRoot: str = "", offset: int = 0, limit: int 
     if not abs_fp.startswith(abs_root + os.sep) and abs_fp != abs_root:
         return f"File is outside project root: {filePath}"
 
+    db_path = os.path.join(projectRoot, CODE_DB_FILENAME)
+    if not os.path.exists(db_path):
+        return f"No code index at {projectRoot}."
+
     if not os.path.isfile(abs_fp):
         return f"File not found: {filePath}"
 
     try:
-        with open(abs_fp, "r", errors="replace") as f:
+        with open(abs_fp, errors="replace") as f:
             lines = f.readlines()
     except Exception as e:
         return f"Error reading {filePath}: {e}"

@@ -3,20 +3,21 @@
 import logging
 import os
 import threading
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, Optional
 
-from .parser import CodeParser
 from .indexer import SKIP_DIRS
+from .parser import CodeParser
 
 logger = logging.getLogger(__name__)
 
 try:
-    from watchdog.observers import Observer
     from watchdog.events import FileSystemEventHandler
+    from watchdog.observers import Observer as _Observer
     HAS_WATCHDOG = True
+    Observer = _Observer
 except ImportError:
-    Observer = None
+    Observer = None  # type: ignore[assignment]
     HAS_WATCHDOG = False
 
 
@@ -27,9 +28,9 @@ class CodeGraphEventHandler(FileSystemEventHandler):
         super().__init__()
         self.root_path = root_path
         self.on_change = on_change
-        self._debounce_timer: Optional[threading.Timer] = None
+        self._debounce_timer: threading.Timer | None = None
         self._lock = threading.Lock()
-        self._pending_changes = {"modified": [], "created": [], "deleted": []}
+        self._pending_changes: dict = {"modified": [], "created": [], "deleted": []}
         self._debounce_seconds = 2.0
 
     def on_modified(self, event):
@@ -78,7 +79,7 @@ class CodeGraphEventHandler(FileSystemEventHandler):
     def _flush(self):
         with self._lock:
             changes = self._pending_changes
-            self._pending_changes = {"modified": [], "created": [], "deleted": []}
+        self._pending_changes: dict[str, list[str]] = {"modified": [], "created": [], "deleted": []}
         if any(changes.values()):
             try:
                 self.on_change(
@@ -96,7 +97,7 @@ class CodeGraphWatcher:
     def __init__(self, root_path: str, indexer, auto_start: bool = False):
         self.root_path = root_path
         self.indexer = indexer
-        self._observer: Optional[Observer] = None
+        self._observer: Observer | None = None  # type: ignore[valid-type]
         self._running = False
 
         if auto_start:
