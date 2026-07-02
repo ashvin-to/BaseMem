@@ -9,7 +9,6 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 
 from storage.db import StorageManager
-from graph.engine import GraphEngine
 from storage.sessions import SessionManager
 
 logging.basicConfig(
@@ -21,25 +20,19 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": "*"}})
 
-_db = None
-_graph = None
+_storage = None
 
-def get_db():
-    global _db
-    if _db is None:
-        home = Path.home()
-        db_path = home / ".basemem" / "basemem.db"
-        _db = StorageManager(str(db_path))
-    return _db
 
-def get_graph():
-    global _graph
-    if _graph is None:
-        _graph = GraphEngine(get_db())
-    return _graph
+def _db_path():
+    return str(Path.home() / ".basemem" / "basemem.db")
 
-def get_session():
-    return SessionManager(get_db())
+
+def get_session() -> SessionManager:
+    global _storage
+    if _storage is None:
+        _storage = StorageManager(_db_path())
+    return SessionManager(_storage)
+
 
 @app.route("/", methods=["GET"])
 def index():
@@ -58,46 +51,77 @@ def index():
         }
     })
 
-@app.route("/api/graph", methods=["GET"])
-def get_graph_data():
-    """Get full graph data for visualization"""
-    try:
-        db_instance = get_db()
-        graph_instance = get_graph()
-        nodes = db_instance.get_all_nodes()
-        edges = db_instance.get_edges()
-        
-        nodes_data = [
-            {
-                "id": n.id,
-                "title": n.title,
-                "content": n.content[:100] + "..." if len(n.content) > 100 else n.content,
-                "type": n.node_type.value,
-                "weight": n.weight,
-                "keywords": n.keywords,
-                "color": _get_node_color(n.node_type.value),
-            }
-            for n in nodes
-        ]
-        
-        edges_data = [
-            {
-                "id": f"{e.from_id}-{e.to_id}",
-                "source": e.from_id,
-                "target": e.to_id,
-                "type": e.edge_type.value,
-                "weight": e.weight,
-            }
-            for e in edges
-        ]
-        
-        return jsonify({
-            "nodes": nodes_data,
-            "edges": edges_data,
-            "stats": graph_instance.get_graph_stats(),
+
+def _build_notes_graph(planet_filter: str = ""):
+    """Build D3 graph data from notes/links for a single planet or all planets."""
+    mgr = get_session()
+    nodes = []
+    edges = []
+
+    planets = mgr.list_planets()
+    if planet_filter:
+        p = mgr.get_planet_dict(planet_filter)
+        planets = [p] if p else []
+
+    for p in planets:
+        slug = p["topic"]
+        pid = f"planet-{slug}"
+        nodes.append({
+            "id": pid, "title": p.get("display_topic") or slug,
+            "type": "planet", "group": 0, "weight": 2,
+            "color": "#f97316",
         })
+
+        note_rows = mgr.get_notes_for_planet(slug, limit=50)
+
+        for n in note_rows:
+            nid = f"note-{n['id']}"
+            label = n.get("title") or n.get("content", "")[:60]
+            nodes.append({
+                "id": nid, "title": label, "type": n.get("kind"),
+                "group": slug, "weight": 1,
+                "color": _get_note_color(n.get("kind", "")),
+                "planet": slug,
+            })
+            edges.append({
+                "source": pid, "target": nid,
+                "type": "contains", "weight": 0.5,
+            })
+
+        links = mgr.get_note_links_for_planet(slug)
+
+        for link in links:
+            edges.append({
+                "source": f"note-{link['from_note_id']}",
+                "target": f"note-{link['to_note_id']}",
+                "type": link["link_type"],
+                "weight": link.get("weight") or 1,
+                "confidence": link.get("confidence") or 1,
+                "link_source": link.get("source") or "auto",
+            })
+
+    if not planet_filter:
+        plinks = mgr.get_all_planet_links()
+        for pl in plinks:
+            edges.append({
+                "source": f"planet-{pl['from_topic']}",
+                "target": f"planet-{pl['to_topic']}",
+                "type": "planet_link",
+                "weight": pl.get("weight") or 1,
+                "confidence": 1.0,
+                "relation": pl["relation"],
+            })
+
+    return jsonify({"nodes": nodes, "edges": edges, "stats": {"planets": len(planets), "notes": len(nodes) - len(planets)}})
+
+
+@app.route("/api/graph/<project_id>", methods=["GET"])
+def project_graph_data(project_id):
+    """Get graph data for a specific project (notes + note_links)."""
+    try:
+        return _build_notes_graph(project_id)
     except Exception as e:
-        logger.error(f"Error getting graph: {e}")
+        logger.error(f"Error getting project graph: {e}")
         return jsonify({"error": str(e)}), 500
 
 
@@ -105,79 +129,7 @@ def get_graph_data():
 def notes_graph():
     """Get all notes + links as D3 graph data, grouped by planet."""
     try:
-        conn = get_db().connection
-        planets = conn.execute(
-            "SELECT topic, display_topic, status FROM planets ORDER BY updated_at DESC"
-        ).fetchall()
-
-        nodes = []
-        edges = []
-
-        for p in planets:
-            slug = p["topic"]
-            pid = f"planet-{slug}"
-            nodes.append({
-                "id": pid, "title": p["display_topic"] or slug,
-                "type": "planet", "group": 0, "weight": 2,
-                "color": _get_node_color("summary"),
-            })
-
-            note_rows = conn.execute(
-                "SELECT id, kind, content, title, agent_id FROM notes WHERE topic = ? ORDER BY created_at DESC",
-                (slug,),
-            ).fetchall()
-
-            for n in note_rows:
-                nid = f"note-{n['id']}"
-                label = n["title"] or n["content"][:60]
-                nodes.append({
-                    "id": nid, "title": label, "type": n["kind"],
-                    "group": slug, "weight": 1,
-                    "color": _get_note_color(n["kind"]),
-                    "planet": slug,
-                })
-                edges.append({
-                    "source": pid, "target": nid,
-                    "type": "contains", "weight": 0.5,
-                })
-
-            links = conn.execute(
-                """SELECT from_note_id, to_note_id, link_type, weight, confidence, source
-                   FROM note_links
-                   WHERE from_note_id IN (SELECT id FROM notes WHERE topic = ?)
-                      OR to_note_id IN (SELECT id FROM notes WHERE topic = ?)""",
-                (slug, slug),
-            ).fetchall()
-
-            for l in links:
-                edges.append({
-                    "source": f"note-{l['from_note_id']}",
-                    "target": f"note-{l['to_note_id']}",
-                    "type": l["link_type"],
-                    "weight": l["weight"] or 1,
-                    "confidence": l["confidence"] or 1,
-                    "link_source": l["source"] or "auto",
-                })
-
-        # Add planet-planet edges
-        plinks = conn.execute(
-            """SELECT pl.from_planet_id, pl.to_planet_id, pl.relation, pl.weight,
-                      p1.topic AS ft, p2.topic AS tt
-               FROM planet_links pl
-               JOIN planets p1 ON p1.id = pl.from_planet_id
-               JOIN planets p2 ON p2.id = pl.to_planet_id"""
-        ).fetchall()
-        for pl in plinks:
-            edges.append({
-                "source": f"planet-{pl['ft']}",
-                "target": f"planet-{pl['tt']}",
-                "type": "planet_link",
-                "weight": pl["weight"] or 1,
-                "confidence": 1.0,
-                "relation": pl["relation"],
-            })
-
-        return jsonify({"nodes": nodes, "edges": edges, "stats": {"planets": len(planets), "notes": len(nodes) - len(planets)}})
+        return _build_notes_graph()
     except Exception as e:
         logger.error(f"Error getting notes graph: {e}")
         return jsonify({"error": str(e)}), 500
@@ -187,14 +139,11 @@ def notes_graph():
 def get_note_detail(note_id):
     """Get a single note with its linked neighbors."""
     try:
-        conn = get_db().connection
-        row = conn.execute(
-            "SELECT * FROM notes WHERE id = ?", (note_id,)
-        ).fetchone()
+        mgr = get_session()
+        row = mgr.get_note(note_id)
         if not row:
             return jsonify({"error": "Note not found"}), 404
 
-        mgr = get_session()
         neighbors = mgr.get_note_neighbors(note_id)
 
         return jsonify({
@@ -203,10 +152,10 @@ def get_note_detail(note_id):
                 "topic": row["topic"],
                 "kind": row["kind"],
                 "content": row["content"],
-                "title": row["title"] or row["content"][:80],
-                "agent_id": row["agent_id"],
-                "status": row["status"],
-                "created_at": row["created_at"],
+                "title": row.get("title") or row["content"][:80],
+                "agent_id": row.get("agent_id"),
+                "status": row.get("status"),
+                "created_at": row.get("created_at"),
             },
             "neighbors": neighbors,
         })
@@ -215,86 +164,7 @@ def get_note_detail(note_id):
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/api/node/<node_id>", methods=["GET"])
-def get_node(node_id):
-    """Get single node with neighbors"""
-    try:
-        db_instance = get_db()
-        graph_instance = get_graph()
-        node = db_instance.get_node(node_id)
-        if not node:
-            return jsonify({"error": "Node not found"}), 404
-        
-        neighbors = graph_instance.get_neighbors(node_id, depth=1)
-        edges = db_instance.get_edges(from_id=node_id)
-        
-        return jsonify({
-            "node": {
-                "id": node.id,
-                "title": node.title,
-                "content": node.content,
-                "type": node.node_type.value,
-                "keywords": node.keywords,
-                "weight": node.weight,
-            },
-            "neighbors": [
-                {
-                    "id": n.id,
-                    "title": n.title,
-                    "type": n.node_type.value,
-                }
-                for n in neighbors.values()
-            ],
-            "edges": [
-                {
-                    "target": e.to_id,
-                    "type": e.edge_type.value,
-                    "weight": e.weight,
-                }
-                for e in edges
-            ],
-        })
-    except Exception as e:
-        logger.error(f"Error getting node {node_id}: {e}")
-        return jsonify({"error": str(e)}), 500
 
-@app.route("/api/node/<node_id>", methods=["DELETE"])
-def delete_node(node_id):
-    """Delete a specific node"""
-    try:
-        db_instance = get_db()
-        db_instance.delete_node(node_id)
-        return jsonify({"status": "success", "deleted": node_id})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/node", methods=["POST"])
-def create_node():
-    """Manually create a new knowledge node"""
-    try:
-        data = request.get_json()
-        from models import Node, NodeType
-        import uuid
-        
-        node = Node(
-            id=data.get("id") or f"manual-{uuid.uuid4().hex[:8]}",
-            title=data.get("title", "New Node"),
-            content=data.get("content", ""),
-            node_type=NodeType(data.get("type", "concept")),
-            keywords=data.get("keywords", [])
-        )
-        
-        db_instance = get_db()
-        db_instance.add_node(node)
-        
-        # Trigger auto-linking
-        graph_instance = get_graph()
-        graph_instance.auto_link_nodes(node.id)
-        
-        return jsonify({"status": "success", "node_id": node.id})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
 @app.route("/api/session/turn", methods=["POST"])
 def session_turn():
     """Log a turn and optionally add a summary note"""
@@ -309,8 +179,7 @@ def session_turn():
         if not topic or not message:
             return jsonify({"error": "Topic and message required"}), 400
 
-        db_instance = get_db()
-        manager = SessionManager(db_instance)
+        manager = get_session()
         hint = manager.log_chat_to_planet("web", topic, message, agent_id, sender)
         result = {"status": "success", "logged": True}
 
@@ -326,34 +195,29 @@ def session_turn():
         logger.error(f"Error in session turn: {e}")
         return jsonify({"error": str(e)}), 500
 
+
 @app.route("/api/session/read/<topic>", methods=["GET"])
 def session_read(topic):
     """Read planet details for a topic"""
     try:
-        conn = get_db().connection
         mgr = get_session()
-        slug = mgr.normalize_topic(topic)
-        row = conn.execute(
-            "SELECT * FROM planets WHERE topic = ?", (slug,)
-        ).fetchone()
-        if not row:
+        data = mgr.get_planet_with_notes(topic)
+        if not data:
             return jsonify({"error": "Not found"}), 404
-        notes = conn.execute(
-            "SELECT * FROM notes WHERE topic = ? ORDER BY created_at DESC LIMIT 50",
-            (slug,),
-        ).fetchall()
-        data = _planet_to_json(dict(row), [dict(n) for n in notes])
-        lines = [f"# Planet: {data['display_topic']}"]
-        if data["goal"]: lines.append(f"\nGoal: {data['goal']}")
-        if data["current_state"]: lines.append(f"\nState: {data['current_state']}")
-        if data["next_steps"]:
+        lines = [f"# Planet: {data.get('display_topic') or data['topic']}"]
+        if data.get("goal"):
+            lines.append(f"\nGoal: {data['goal']}")
+        if data.get("current_state"):
+            lines.append(f"\nState: {data['current_state']}")
+        if data.get("next_steps"):
             lines.append("\nNext steps:")
-            lines.extend(f"  - {s}" for s in data["next_steps"])
-        if data["notes"]:
-            lines.append(f"\nNotes ({len(data['notes'])}):")
-            for n in data["notes"]:
-                lines.append(f"\n[{n['kind'].upper()}] {n['content']}")
-        return jsonify({"topic": slug, "content": "\n".join(lines)})
+            lines.extend(f"  - {s}" for s in _safe_json(data["next_steps"]))
+        notes = data.get("notes", [])
+        if notes:
+            lines.append(f"\nNotes ({len(notes)}):")
+            for n in notes:
+                lines.append(f"\n[{n['kind'].upper()}] {n.get('content', '')}")
+        return jsonify({"topic": data["topic"], "content": "\n".join(lines)})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -369,7 +233,7 @@ def _safe_json(val, fallback=None):
         return fallback or []
 
 
-def _planet_to_json(row: dict, notes: list = None):
+def _planet_to_json(row: dict, notes: list | None = None):
     return {
         "topic": row["topic"],
         "display_topic": row.get("display_topic") or row["topic"],
@@ -402,12 +266,10 @@ def _planet_to_json(row: dict, notes: list = None):
 @app.route("/api/planets", methods=["GET"])
 def api_list_planets():
     try:
-        conn = get_db().connection
-        rows = conn.execute(
-            "SELECT * FROM planets ORDER BY updated_at DESC"
-        ).fetchall()
+        mgr = get_session()
+        rows = mgr.list_planets()
         return jsonify({
-            "planets": [_planet_to_json(dict(r)) for r in rows]
+            "planets": [_planet_to_json(r) for r in rows]
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -416,17 +278,11 @@ def api_list_planets():
 @app.route("/api/planets/<topic>", methods=["GET"])
 def api_get_planet(topic):
     try:
-        conn = get_db().connection
-        row = conn.execute(
-            "SELECT * FROM planets WHERE topic = ?", (topic,)
-        ).fetchone()
-        if not row:
+        mgr = get_session()
+        data = mgr.get_planet_with_notes(topic)
+        if not data:
             return jsonify({"error": "Planet not found"}), 404
-        notes = conn.execute(
-            "SELECT * FROM notes WHERE topic = ? ORDER BY created_at DESC LIMIT 50",
-            (topic,),
-        ).fetchall()
-        return jsonify(_planet_to_json(dict(row), [dict(n) for n in notes]))
+        return jsonify(_planet_to_json(data, data.get("notes", [])))
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -449,7 +305,7 @@ def api_upsert_planet():
             next_step=data.get("next_step"),
             handoff=data.get("handoff"),
         )
-        return jsonify({"status": "success", "topic": topic})
+        return jsonify({"status": "success", "topic": raw_topic})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -516,20 +372,20 @@ def api_search():
     q = request.args.get("q", "").strip()
     if not q:
         return jsonify({"results": []})
-    like = f"%{q}%"
     mgr = get_session()
-    conn = mgr.storage.connection
     results = []
-    for r in conn.execute(
-        "SELECT topic, display_topic, current_state, goal, updated_at FROM planets WHERE topic LIKE ? OR display_topic LIKE ? OR current_state LIKE ? OR goal LIKE ? LIMIT 10",
-        (like, like, like, like),
-    ):
-        results.append({"type": "planet", "label": r["display_topic"] or r["topic"], "id": "planet-" + r["topic"], "preview": (r["current_state"] or r["goal"] or "")[:150]})
-    for r in conn.execute(
-        "SELECT id, topic, kind, content, title FROM notes WHERE content LIKE ? OR title LIKE ? LIMIT 20",
-        (like, like),
-    ):
-        results.append({"type": "note", "label": f"{r['topic']} / {r['kind']}", "id": f"note-{r['id']}", "preview": r["content"][:150], "topic": r["topic"]})
+    all_results = mgr.search_all(q, limit=20)
+    for r in all_results.get("planets", []):
+        label = r.get("display_topic") or r["topic"]
+        results.append({
+            "type": "planet", "label": label, "id": "planet-" + r["topic"],
+            "preview": (r.get("current_state") or r.get("goal") or "")[:150],
+        })
+    for r in all_results.get("notes", []):
+        results.append({
+            "type": "note", "label": f"{r['topic']} / {r['kind']}", "id": f"note-{r['id']}",
+            "preview": r.get("content", "")[:150], "topic": r["topic"],
+        })
     return jsonify({"results": results})
 
 
@@ -617,19 +473,6 @@ def _get_note_color(kind: str) -> str:
     }
     return colors.get(kind, "#757575")
 
-
-def _get_node_color(node_type: str) -> str:
-    """Map node type to color"""
-    colors = {
-        "concept": "#7c3aed",
-        "fact": "#2196F3",
-        "summary": "#f97316",
-        "conversation": "#06b6d4",
-        "task": "#F44336",
-        "question": "#FFC107",
-        "example": "#00BCD4",
-    }
-    return colors.get(node_type, "#757575")
 
 # ── Code Graph API ────────────────────────────────────────────────
 

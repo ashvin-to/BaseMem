@@ -16,15 +16,14 @@ Tables:
 Thread-safety: Enabled (check_same_thread=False) for Flask/async use.
 """
 
-import sqlite3
 import json
-import re
-from pathlib import Path
-from typing import List, Optional, Dict, Any
-from datetime import datetime
 import logging
+import re
+import sqlite3
+from datetime import datetime
+from pathlib import Path
 
-from models import Node, Edge, NodeType, EdgeType, RetrievalResult
+from models import Edge, EdgeType, Node, NodeType
 
 logger = logging.getLogger(__name__)
 
@@ -32,41 +31,41 @@ logger = logging.getLogger(__name__)
 class StorageManager:
     """
     Manages persistence of nodes, edges, and metadata in SQLite with FTS5 support.
-    
+
     Design Principles:
     - Zero-RAM: Minimal in-memory footprint, all data persisted to disk
     - Fast retrieval: FTS5 for full-text search, SQL indexes for graph traversal
     - Atomic transactions: ACID compliance for data integrity
     - Schema versioning: Implicit (schema updates only add new columns/tables)
-    
+
     Typical usage:
         storage = StorageManager()  # Uses ~/.basemem/basemem.db by default
         node = Node(title="Concept", content="...", keywords=["tag1", "tag2"])
         storage.add_node(node)
         results = storage.search_nodes_fts("tag1")
-    
+
     Raises:
         RuntimeError: On insert failures or database corruption
         sqlite3.DatabaseError: On SQL/FTS query issues (logged, fallback provided)
     """
 
-    def __init__(self, db_path: Optional[str] = None) -> None:
+    def __init__(self, db_path: str | None = None) -> None:
         """
         Initialize storage manager and create database if needed.
-        
+
         Args:
             db_path: Path to SQLite database file. If None, uses ~/.basemem/basemem.db
                     Will create parent directories if they don't exist.
-        
+
         Returns:
             None
-        
+
         Side effects:
             - Creates ~/.basemem directory if it doesn't exist
             - Creates SQLite database and initializes schema on first run
             - Enables thread-safe mode for Flask/async compatibility
             - Logs initialization status
-        
+
         Raises:
             OSError: If unable to create database directory or file
             sqlite3.DatabaseError: If schema initialization fails
@@ -76,10 +75,12 @@ class StorageManager:
             home = Path.home()
             db_dir = home / ".basemem"
             db_dir.mkdir(parents=True, exist_ok=True)
-            db_path = db_dir / "basemem.db"
-            
-        self.db_path = Path(db_path)
-             
+            resolved: str | Path = db_dir / "basemem.db"
+        else:
+            resolved = db_path
+
+        self.db_path = Path(resolved)
+
         # Enable thread-safe mode for Flask/multi-threaded use
         self.connection = sqlite3.connect(str(self.db_path), check_same_thread=False)
         self.connection.row_factory = sqlite3.Row
@@ -161,32 +162,32 @@ class StorageManager:
     def add_node(self, node: Node) -> None:
         """
         Add or update a node in both main and FTS tables.
-        
+
         Guarantees:
         - Atomic insert/update (ACID)
         - Both nodes and nodes_fts tables stay synchronized
         - Existing node with same ID is replaced (upsert behavior)
         - Keywords automatically indexed for full-text search
-        
+
         Args:
             node: Node object containing id, title, content, type, keywords, etc.
                   Keywords must be a list of strings for FTS indexing.
-        
+
         Returns:
             None
-        
+
         Raises:
             RuntimeError: If node insert into nodes_fts fails to align rowids
             sqlite3.IntegrityError: If foreign key constraint violated (shouldn't occur)
-        
+
         Side effects:
             - Inserts into nodes table (or replaces if id exists)
             - Inserts into nodes_fts virtual table for full-text search
             - Updates last_accessed timestamp
             - Commits transaction to disk
-        
+
         Examples:
-            node = Node(title="AI Concept", content="Description", 
+            node = Node(title="AI Concept", content="Description",
                        keywords=["AI", "concept"], node_type=NodeType.CONCEPT)
             storage.add_node(node)
         """
@@ -259,7 +260,7 @@ class StorageManager:
         self.connection.commit()
         logger.debug(f"Added edge: {edge.from_id} -> {edge.to_id}")
 
-    def get_node(self, node_id: str) -> Optional[Node]:
+    def get_node(self, node_id: str) -> Node | None:
         """Retrieve a node by ID"""
         cursor = self.connection.cursor()
         cursor.execute("SELECT * FROM nodes WHERE id = ?", (node_id,))
@@ -270,43 +271,43 @@ class StorageManager:
 
         return self._row_to_node(row)
 
-    def get_all_nodes(self) -> List[Node]:
+    def get_all_nodes(self) -> list[Node]:
         """Retrieve all nodes"""
         cursor = self.connection.cursor()
         cursor.execute("SELECT * FROM nodes")
         rows = cursor.fetchall()
         return [self._row_to_node(row) for row in rows]
 
-    def search_nodes_fts(self, query: str, limit: int = 50) -> List[str]:
+    def search_nodes_fts(self, query: str, limit: int = 50) -> list[str]:
         """
         Full-text search nodes using FTS5 with automatic fallback.
-        
+
         Strategy:
         1. Try FTS5 MATCH with prefix query (fast, ~1ms for 1000 nodes)
         2. On complex query errors, fall back to LIKE search
         3. Return node IDs ranked by FTS relevance
-        
+
         Args:
             query: Search query (e.g., "machine learning" or "embedding model")
                    Automatically converted to FTS5 prefix format: ("machine"* "learning"*)
             limit: Maximum results to return (default 50)
-        
+
         Returns:
             List of node IDs matching the query, ordered by relevance
             Empty list if no matches or empty query
-        
+
         Raises:
             None (catches and logs sqlite3.DatabaseError internally)
-        
+
         Side effects:
             - Logs warnings if FTS query fails (fallback to LIKE)
             - No database modifications
-        
+
         Notes:
             - Searches title, content, and keywords fields
             - FTS5 prefix queries (term*) are more forgiving than exact match
             - LIKE fallback is slower but handles any query format
-        
+
         Examples:
             results = storage.search_nodes_fts("neural network")
             print(f"Found {len(results)} nodes")
@@ -352,7 +353,7 @@ class StorageManager:
         terms = re.findall(r"[\w]+", query)
         return " ".join(f'"{term}"*' for term in terms)
 
-    def get_neighbors(self, node_id: str, edge_type: Optional[EdgeType] = None) -> List[str]:
+    def get_neighbors(self, node_id: str, edge_type: EdgeType | None = None) -> list[str]:
         """Get all nodes connected to a given node"""
         cursor = self.connection.cursor()
 
@@ -376,7 +377,7 @@ class StorageManager:
                 neighbors.add(row[0])
         return list(neighbors)
 
-    def get_edges(self, from_id: Optional[str] = None, to_id: Optional[str] = None) -> List[Edge]:
+    def get_edges(self, from_id: str | None = None, to_id: str | None = None) -> list[Edge]:
         """Get edges matching criteria"""
         cursor = self.connection.cursor()
 

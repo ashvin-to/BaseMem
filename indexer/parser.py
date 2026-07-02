@@ -12,11 +12,11 @@ from pathlib import Path
 from typing import Optional
 
 from tree_sitter import Language, Node, Parser, Query, QueryCursor
-from tree_sitter_language_pack import detect_language_from_extension, process, ProcessConfig
+from tree_sitter_language_pack import ProcessConfig, detect_language_from_extension, process
 
 # ── Language grammars ────────────────────────────────────────────────
 
-_GRAMMAR_CACHE = {}
+_GRAMMAR_CACHE: dict = {}
 
 # Map our language names to the bundled .so filename and C export function.
 _LANGUAGE_SO = {
@@ -28,7 +28,7 @@ _LANGUAGE_SO = {
 }
 
 
-def _get_grammar(lang: str) -> Optional[Language]:
+def _get_grammar(lang: str) -> Language | None:
     if lang in _GRAMMAR_CACHE:
         return _GRAMMAR_CACHE[lang]
     entry = _LANGUAGE_SO.get(lang)
@@ -285,6 +285,7 @@ class CodeParser:
         self.queries = LANGUAGE_QUERIES.get(language, {})
         self._has_queries = bool(self.queries)
         self._grammar_ok = False
+        self._compiled_queries: dict = {}
         if self._has_queries:
             grammar = _get_grammar(language)
             if grammar is not None:
@@ -337,8 +338,8 @@ class CodeParser:
     def _parse_with_queries(self, source_bytes: bytes, file_path: str = ""):
         tree = self.parser.parse(source_bytes)
         root = tree.root_node
-        symbols = []
-        edges = []
+        symbols: list[dict] = []
+        edges: list[dict] = []
         _seen_ranges = set()
 
         if root is None or root.has_error:
@@ -619,7 +620,7 @@ def _content_hash(source_bytes, node):
     return hashlib.sha256(source_bytes[node.start_byte:node.end_byte]).hexdigest()[:16]
 
 
-def _is_python_method(root, func_node):
+def _is_python_method(_root, func_node):
     """Check if a function_definition is inside a class."""
     parent = func_node.parent
     while parent is not None and parent.type != "module":
@@ -651,7 +652,7 @@ def _extract_docstring(language, sym_node, source_bytes, text_lines):
             elif line.startswith("/*") or line.startswith("*"):
                 comment_lines.insert(0, line.strip().strip("/*").strip("*").strip())
             elif line.startswith("/**"):
-                comment_lines.insert(0, line.strip().strip("/**").strip().strip("*/"))
+                comment_lines.insert(0, line.strip().lstrip("/*").rstrip("*/").strip())
             else:
                 break
         if comment_lines:
@@ -661,9 +662,7 @@ def _extract_docstring(language, sym_node, source_bytes, text_lines):
         comments = []
         for i in range(start_line - 1, max(start_line - 5, -1), -1):
             line = text_lines[i].strip() if i < len(text_lines) else ""
-            if line.startswith("///"):
-                comments.insert(0, line[3:].strip())
-            elif line.startswith("//!"):
+            if line.startswith("///") or line.startswith("//!"):
                 comments.insert(0, line[3:].strip())
             elif line.startswith("/*") or line.startswith("*"):
                 comments.insert(0, line.strip().strip("/*").strip("*").strip())
@@ -681,7 +680,7 @@ def _find_child_of_type(node, type_name):
     return None
 
 
-def _find_parent_class(root, method_node):
+def _find_parent_class(_root, method_node):
     cursor = method_node.walk()
     parent = cursor.node.parent
     while parent is not None and parent.type not in ("module", "program"):
@@ -709,8 +708,6 @@ def _find_enclosing_func(root, node):
 def _find_named_child(node, language):
     if language == "python":
         return _find_child_of_type(node, "identifier")
-    elif language in ("javascript", "typescript"):
-        return _find_child_of_type(node, "type_identifier") or _find_child_of_type(node, "identifier")
-    elif language == "rust":
+    if language in ("javascript", "typescript") or language == "rust":
         return _find_child_of_type(node, "type_identifier") or _find_child_of_type(node, "identifier")
     return _find_child_of_type(node, "identifier")

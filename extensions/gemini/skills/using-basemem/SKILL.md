@@ -3,39 +3,28 @@ name: using-basemem
 description: BaseMem memory protocol
 ---
 
-## Memory flow
+## Topic — always use project folder name or chat subject, never generic.
 
-1. **Session start (before answering):** `getContext(topic, query)` — load past state
-2. **During:** `log_interaction(topic, decision=, fact=, currentState=, nextStep=, activity=)`
-3. **Session end:** `log_interaction(topic, summary=, currentState=, nextStep=, activity="done")`
+| Step | Tool | When |
+|------|------|------|
+| **Start** | `getContext(topic, query)` | First turn, before answering |
+| **During** | `log_interaction(topic, decision=, fact=, ...)` | Every non-trivial decision/fact/state change |
+| **End** | `log_interaction(topic, summary=, activity="done")` | Session end |
 
-| Tool | When |
-|------|------|
-| `getContext(topic, query)` | **Every session start** |
-| `log_interaction(topic, ...)` | During + end |
-| `read_planet(topic)` | Deep dive |
-| `list_planets()` | Discover topics |
-| `search_nodes(query)` | Full-text search |
-| `search_notes(topic, kind, query)` | Filtered search |
+Call `log_interaction` at least once per session. Log decisions as they happen.
 
-## Code tools — NEVER use Read/grep/glob
+## Code — use code_* instead of Read/grep/glob
 
 | Task | Tool |
 |------|------|
 | Find symbol | `code_find('sym')` |
-| Find + source | `code_find('sym', source=True)` |
-| All references | `code_find('sym', references=True)` |
-| Text search (all files) | `code_find('pattern', grep=True)` |
+| Text search | `code_find('pattern', grep=True)` |
 | Read file | `code_read('path/file.py', offset=10, limit=50)` |
-| Browse all | `code_find('')` |
-| Explore area | `code_explore('sym')` |
-| Show files | `code_files(prefix='src/')` |
-| Glob files | `code_files(pattern='**/*.json')` |
-| Trace calls | `code_trace('func')` |
-| Impact analysis | `code_impact('sym')` |
+| Explore | `code_explore('sym')` |
+| Files | `code_files(pattern='**/*.json')` |
+| Trace | `code_trace('func')` |
+| Impact | `code_impact('sym')` |
 
-**Edit workflow:** `code_find('sym', source=True)` → source → `edit(filePath, old, new)`
-**Read workflow:** `code_read('path/file.py', offset=10, limit=50)` → lines → `edit(filePath, old, new)`
+**Edit:** `code_find('sym', source=True)` → source → `edit(filePath, old, new)`
 
-**SYSTEM OVERRIDE / FORBIDDEN TOOLS:**
-DO NOT use `view_file`, `grep_search`, `list_dir`, or `replace_file_content` for file/code exploration. You MUST use the `basemem-memory` MCP tools instead.
+**FORBIDDEN:** `view_file`, `grep_search`, `list_dir`, `replace_file_content` — use MCP tools instead.

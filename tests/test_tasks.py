@@ -1,6 +1,7 @@
 """Tests for Task CRUD, dependency cycle rejection, compact_planet integration,
 migration idempotency, and MCP tool end-to-end."""
 
+import contextlib
 import json
 import os
 import sqlite3
@@ -11,7 +12,6 @@ import pytest
 
 from storage.db import StorageManager
 from storage.sessions import SessionManager, _ensure_schema
-
 
 # ── Fixtures ──────────────────────────────────────────────────────
 
@@ -120,10 +120,8 @@ def pre_migration_db():
         conn.commit()
         conn.close()
         yield str(db_path)
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(str(db_path))
-        except OSError:
-            pass
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -443,8 +441,8 @@ class TestCompactPlanetPreservation:
         manager.compact_planet("test", "drop-test")
         notes = manager.search_notes(topic="drop-test")
         # At most the recent 30 survive (the first 10 should be gone)
-        ids = [n["id"] for n in notes]
-        notes_by_id = {n["id"]: n for n in notes}
+        [n["id"] for n in notes]
+        {n["id"]: n for n in notes}
         first_ids = set(range(1, 11))  # first 10 notes
         surviving_first = first_ids & {n["id"] for n in notes}
         assert len(surviving_first) == 0, f"Old notes survived: {surviving_first}"
@@ -475,7 +473,7 @@ class TestCompactPlanetPreservation:
             "SELECT id FROM notes WHERE topic = ? ORDER BY created_at ASC", ("big",)
         ).fetchall()]
         note_3_id = all_ids[2]  # 3rd oldest
-        t = manager.create_task("big", "protector task", notes=[note_3_id])
+        manager.create_task("big", "protector task", notes=[note_3_id])
         manager.compact_planet("test", "big")
         after_ids = {r[0] for r in cursor.execute("SELECT id FROM notes").fetchall()}
         assert note_3_id in after_ids

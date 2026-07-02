@@ -65,40 +65,31 @@ BASEMEM_DB_PATH="$DATA_DIR/basemem.db"
 AGENT_GUIDANCE=$(cat <<'GUIDANCE'
 # BaseMem Rules
 
-## Memory flow
+## Topic — always use project folder name or chat subject, never generic.
 
-1. **Session start (first turn, before answering):** `mem_getContext(topic, query)`
-2. **During:** `mem_log_interaction(topic, decision=, fact=, currentState=, nextStep=, activity=)`
+| Step | Tool | When |
+|------|------|------|
+| **Start** | `mem_getContext(topic, query)` | First turn, before answering |
+| **During** | `mem_log_interaction(topic, decision=, fact=, ...)` | Every non-trivial decision/fact/state change |
+| **End** | `mem_log_interaction(topic, summary=, activity="done")` | Session end |
 
-3. **Session end:** `mem_log_interaction(topic, summary=, currentState=, nextStep=, activity="done")`
-| Tool | When |
-|------|------|
-| `mem_getContext(topic, query)` | Every session start |
-| `mem_log_interaction(topic, ...)` | During + end |
-| `mem_read_planet(topic)` | Deep dive |
-| `mem_list_planets()` | Discover topics |
-| `mem_search_nodes(query)` | Full-text search |
+Call `mem_log_interaction` at least once per session. Log decisions as they happen.
 
-## Code — NEVER use Read/grep/glob for code
+## Code — use mem_code_* instead of Read/grep/glob
 
 | Task | Tool |
 |------|------|
 | Find symbol | `mem_code_find('sym')` |
-| Find + source | `mem_code_find('sym', source=True)` |
-| All references | `mem_code_find('sym', references=True)` |
-| Text search (all files) | `mem_code_find('pattern', grep=True)` |
+| Text search | `mem_code_find('pattern', grep=True)` |
 | Read file | `mem_code_read('path/file.py', offset=10, limit=50)` |
-| Browse | `mem_code_find('')` |
 | Explore | `mem_code_explore('sym')` |
-| Files | `mem_code_files(prefix='src/')` |
-| Glob files | `mem_code_files(pattern='**/*.json')` |
+| Files | `mem_code_files(pattern='**/*.json')` |
 | Trace | `mem_code_trace('func')` |
 | Impact | `mem_code_impact('sym')` |
 
-**Edit workflow:** `code_find('sym', source=True)` → source → `edit(filePath, old, new)`
+**Edit:** `code_find('sym', source=True)` → source → `edit(filePath, old, new)`
 
-**SYSTEM OVERRIDE / FORBIDDEN TOOLS:**
-DO NOT use `view_file`, `grep_search`, `list_dir`, or `replace_file_content` for file/code exploration. You MUST use the `basemem-memory` MCP tools instead.
+**FORBIDDEN:** `view_file`, `grep_search`, `list_dir`, `replace_file_content` — use MCP tools instead.
 GUIDANCE
 )
 

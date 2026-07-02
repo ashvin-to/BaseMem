@@ -1,8 +1,8 @@
 """Code intelligence: tree-sitter symbol graph indexer."""
 
-from .schema import ensure_code_schema
+from .indexer import CODE_DB_FILENAME, CodeIndexer
 from .parser import CodeParser
-from .indexer import CodeIndexer, CODE_DB_FILENAME
+from .schema import ensure_code_schema
 
 __all__ = [
     "ensure_code_schema",
