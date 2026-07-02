@@ -1,5 +1,5 @@
 # BaseMem tools
 
-Memory: `getContext`, `log_interaction`, `update_planet`, `read_planet`, `list_planets`, `search_nodes`, `search_notes`, `get_node`, `link_notes`, `get_note_neighbors`, `link_planets`, `get_planet_links`, `set_memory_state`, `get_neighbors_weighted`, `get_subgraph`, `rank_neighbors`, `compute_similarity`, `rerank`, `summarize_planet`, `compact_planet`, `edge_decay`, `edge_prune`
+Memory: `getContext`, `logInteraction`, `update_planet`, `read_planet`, `list_planets`, `search_nodes`, `search_notes`, `get_node`, `link_notes`, `get_note_neighbors`, `link_planets`, `get_planet_links`, `set_memory_state`, `get_neighbors_weighted`, `get_subgraph`, `rank_neighbors`, `compute_similarity`, `rerank`, `summarize_planet`, `compact_planet`, `edge_decay`, `edge_prune`
 
 Code: `code_init`, `code_find`, `code_read`, `code_explore`, `code_files`, `code_trace`, `code_impact`, `code_list_projects`
