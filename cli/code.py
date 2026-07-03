@@ -14,7 +14,7 @@ def _get_code_indexer(project_root: str):
         return None
     db_path = os.path.join(root, CODE_DB_FILENAME)
     if not os.path.exists(db_path):
-        click.echo(f"[!] No code index found at {db_path}. Run `kb code init {root}` first.")
+        click.echo(f"[!] No code index found at {db_path}. Run `mem code init {root}` first.")
         return None
     return CodeIndexer(root)
 
@@ -215,7 +215,7 @@ def code_trace(symbol_name, root, direction):
     from indexer import CODE_DB_FILENAME, CodeIndexer
     db_path = os.path.join(os.path.abspath(root), CODE_DB_FILENAME)
     if not os.path.exists(db_path):
-        click.echo(f"No code index at {db_path}. Run `kb code init {root}` first.")
+        click.echo(f"No code index at {db_path}. Run `mem code init {root}` first.")
         return
     indexer = CodeIndexer(root)
     try:
@@ -524,7 +524,7 @@ def code_status(root):
     try:
         stats = indexer.get_project_stats()
         if not stats.get("indexed"):
-            click.echo("No code indexed. Run `kb code init` first.")
+            click.echo("No code indexed. Run `mem code init` first.")
             return
         click.echo(f"{stats.get('name', '?')}: {stats['file_count']}f {stats['symbol_count']}s {stats.get('edges', 0)}e")
     finally:

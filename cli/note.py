@@ -5,7 +5,7 @@ import click
 
 @click.group()
 def note():
-    """Manage notes on a planet. Use `kb note add` to create notes, `kb note link` to connect them."""
+    """Manage notes on a planet. Use `mem note add` to create notes, `mem note link` to connect them."""
     pass
 
 

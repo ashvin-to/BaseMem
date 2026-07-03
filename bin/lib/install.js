@@ -365,12 +365,7 @@ function install(name) {
   let mcpResult = { written: false };
 
   if (agent.hooks) {
-    const dest = hookInstallDir(name);
-    if (dest && fs.existsSync(dest) && fs.readdirSync(dest).length > 0) {
-      hooksResult = { deployed: false, reason: 'already deployed' };
-    } else {
-      hooksResult = deployHooks(name);
-    }
+    hooksResult = deployHooks(name);
 
     if (name === 'claude') {
       const settingsPath = getSettingsPath(name);

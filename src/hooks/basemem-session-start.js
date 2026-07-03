@@ -1,8 +1,22 @@
 #!/usr/bin/env node
 const fs = require('fs');
 const path = require('path');
-const { getClaudeDir, FLAG_FILENAME } = require('../../bin/lib/constants.js');
-const { BASEMEM_RULES } = require('../../bin/lib/rules.js');
+const home = require('os').homedir();
+
+function getClaudeDir() {
+  if (process.env.CLAUDE_CONFIG_DIR) return process.env.CLAUDE_CONFIG_DIR;
+  if (process.platform === 'win32') return path.join(process.env.APPDATA, 'claude');
+  return path.join(home, '.claude');
+}
+
+const BASEMEM_RULES = process.env.BASEMEM_RULES || `You have access to a persistent memory system via MCP tools. These tools are not optional and must be called as described below.
+Before your first response in any session: call getContext with topic set to the project or repo name and query set to what the user is asking. If the topic is unknown, call list_planets first to discover what exists.
+After any of the following events, call logInteraction immediately: a decision is made, a file is created or modified, a blocker or error is encountered, the user changes direction or scope.
+At the end of every session: call logInteraction with a one-paragraph summary of what was done.
+For all code exploration: use code_find, code_read, code_explore, code_files instead of any file read, grep, or directory listing tool. The only exception is writing a brand new file that does not yet exist.
+Never answer a project question without calling getContext first. Never use a generic topic name such as task, work, project, or chat. Always use the repository name, folder name, or the specific subject of the conversation.`;
+
+const FLAG_FILENAME = '.basemem-active';
 
 function main() {
   const configDir = getClaudeDir();
