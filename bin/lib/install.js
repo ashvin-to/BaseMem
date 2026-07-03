@@ -429,6 +429,21 @@ function install(name) {
   return { agent: name, rule, hooks: hooksResult, settings: settingsResult, mcp: mcpResult };
 }
 
+function ensureEditableInstall() {
+  const python = process.env.BASEMEM_MCP_PYTHON || DEFAULT_MCP_PYTHON;
+  if (!fs.existsSync(python)) return { ok: false, reason: 'no venv python' };
+  try {
+    execSync(`${python} -c "import models; import cli; import storage" 2>/dev/null`, { stdio: 'ignore' });
+    return { ok: true };
+  } catch (_) {}
+  try {
+    execSync(`${python} -m pip install -q -e "${BASEMEM_ROOT}"`, { stdio: 'pipe' });
+    return { ok: true, reinstalled: true };
+  } catch (e) {
+    return { ok: false, reason: e.stderr?.toString() || String(e) };
+  }
+}
+
 function writeCLIWrapper() {
   const binDir = path.join(os.homedir(), '.local', 'bin');
   fs.mkdirSync(binDir, { recursive: true });
@@ -454,7 +469,8 @@ function writeCLIWrapper() {
 }
 
 function installAll() {
-  const results = {};
+  const pkg = ensureEditableInstall();
+  const results = { _pkg: pkg };
   for (const agent of AGENTS) {
     results[agent.name] = install(agent.name);
   }
@@ -547,13 +563,19 @@ if (require.main === module || process.argv[2]) {
   if (cmd === 'install-all') {
     const results = installAll();
     for (const [name, res] of Object.entries(results)) {
-      if (name === '_cli') continue;
+      if (name === '_cli' || name === '_pkg') continue;
       const parts = [];
       if (res.rule && res.rule.written) parts.push('rules');
       if (res.hooks && res.hooks.deployed) parts.push('hooks');
       if (res.settings && res.settings.merged) parts.push('settings');
       if (res.mcp && res.mcp.written) parts.push('mcp');
       console.log(`${name}: ${parts.length ? parts.join(', ') : 'no action'}`);
+    }
+    if (results._pkg && results._pkg.reinstalled) {
+      console.log('pkg: pip install -e . (reinstalled)');
+    }
+    if (results._pkg && !results._pkg.ok) {
+      console.log(`pkg: WARNING ${results._pkg.reason}`);
     }
     if (results._cli && results._cli.written) {
       console.log(`cli: mem wrapper at ${results._cli.path}`);
