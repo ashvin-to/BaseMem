@@ -429,11 +429,36 @@ function install(name) {
   return { agent: name, rule, hooks: hooksResult, settings: settingsResult, mcp: mcpResult };
 }
 
+function writeCLIWrapper() {
+  const binDir = path.join(os.homedir(), '.local', 'bin');
+  fs.mkdirSync(binDir, { recursive: true });
+
+  if (process.platform === 'win32') {
+    const batPath = path.join(binDir, 'mem.bat');
+    if (fs.existsSync(batPath)) return { written: false, reason: 'already exists' };
+    const dbPath = process.env.BASEMEM_DB_PATH || DEFAULT_MCP_DB;
+    const content = `@echo off\r\n"${DEFAULT_MCP_PYTHON}" "${path.join(BASEMEM_ROOT, 'mem.py')}" --db "${dbPath}" %*\r\n`;
+    fs.writeFileSync(batPath, content, 'utf-8');
+    return { written: true, path: batPath };
+  }
+
+  // Unix: symlink to the pip-installed entry point
+  const venvMem = path.join(BASEMEM_ROOT, 'venv', 'bin', 'mem');
+  const linkPath = path.join(binDir, 'mem');
+  if (fs.existsSync(linkPath)) return { written: false, reason: 'already exists' };
+  if (!fs.existsSync(venvMem)) return { written: false, reason: 'venv entry point missing' };
+
+  try { fs.symlinkSync(venvMem, linkPath); }
+  catch (_) { fs.copyFileSync(venvMem, linkPath); fs.chmodSync(linkPath, 0o755); }
+  return { written: true, path: linkPath };
+}
+
 function installAll() {
   const results = {};
   for (const agent of AGENTS) {
     results[agent.name] = install(agent.name);
   }
+  results._cli = writeCLIWrapper();
   return results;
 }
 
@@ -503,6 +528,7 @@ module.exports = {
   uninstallAll,
   writeMCPEntry,
   removeMCPEntry,
+  writeCLIWrapper,
 };
 
 if (require.main === module || process.argv[2]) {
@@ -521,12 +547,16 @@ if (require.main === module || process.argv[2]) {
   if (cmd === 'install-all') {
     const results = installAll();
     for (const [name, res] of Object.entries(results)) {
+      if (name === '_cli') continue;
       const parts = [];
       if (res.rule && res.rule.written) parts.push('rules');
       if (res.hooks && res.hooks.deployed) parts.push('hooks');
       if (res.settings && res.settings.merged) parts.push('settings');
       if (res.mcp && res.mcp.written) parts.push('mcp');
       console.log(`${name}: ${parts.length ? parts.join(', ') : 'no action'}`);
+    }
+    if (results._cli && results._cli.written) {
+      console.log(`cli: mem wrapper at ${results._cli.path}`);
     }
     process.exit(0);
   }
