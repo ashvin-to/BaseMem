@@ -11,6 +11,7 @@ downloads/
 eggs/
 .eggs/
 lib/
+!bin/lib/
 lib64/
 parts/
 sdist/
@@ -74,5 +75,10 @@ BOOKMARKLET.md
 .codegraph/
 
 # Frontend (removed)
+frontend/
 *.html
 .basemem.code.db
+.basemem-active
+
+# Memory (local)
+Memory.md

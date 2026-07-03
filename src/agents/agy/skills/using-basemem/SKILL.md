@@ -1,0 +1,28 @@
+---
+name: using-basemem
+description: BaseMem memory protocol — persistent knowledge base
+---
+
+## Topic — always use project folder name or chat subject, never generic.
+
+| Step | Tool | When |
+|------|------|------|
+| **Start** | `getContext(topic, query)` | First turn, before answering |
+| **During** | `logInteraction(topic, decision=, fact=, ...)` | Every non-trivial decision/fact/state change |
+| **End** | `logInteraction(topic, summary=, activity="done")` | Session end |
+
+Call `logInteraction` at least once per session. Log decisions as they happen.
+
+## Code — use code_* instead of Read/grep/glob
+
+| Task | Tool |
+|------|------|
+| Find symbol | `code_find('sym')` |
+| Text search | `code_find('pattern', grep=True)` |
+| Read file | `code_read('path/file.py', offset=10, limit=50)` |
+| Explore | `code_explore('sym')` |
+| Files | `code_files(pattern='**/*.json')` |
+| Trace | `code_trace('func')` |
+| Impact | `code_impact('sym')` |
+
+**FORBIDDEN:** `view_file`, `grep_search`, `list_dir`, `replace_file_content` — use MCP tools instead.

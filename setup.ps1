@@ -4,11 +4,7 @@
 param(
     [string]$BasememBinDir = "$env:USERPROFILE\.basemem\bin",
     [string]$DataDir = "$env:USERPROFILE\.basemem",
-    [switch]$NoGemini,
-    [switch]$NoClaude,
-    [switch]$NoOpencode,
-    [switch]$NoCursor,
-    [switch]$NoWindsurf
+    [switch]$NoGemini
 )
 
 $ErrorActionPreference = "Stop"
@@ -17,7 +13,6 @@ Write-Host "Initializing your Universal Knowledge Galaxy..." -ForegroundColor Cy
 
 # --- Auto-detect Python ---
 $PythonExe = ""
-# Try common commands
 foreach ($cmd in @("python", "python3", "py -3", "py")) {
     try {
         $ver = cmd /c "$cmd --version" 2>&1
@@ -27,7 +22,6 @@ foreach ($cmd in @("python", "python3", "py -3", "py")) {
         }
     } catch {}
 }
-# Probe common install paths
 if (-not $PythonExe) {
     $found = Get-ChildItem "$env:LOCALAPPDATA\Programs\Python\Python3*\python.exe" -ErrorAction SilentlyContinue |
              Sort-Object Name -Descending | Select-Object -First 1
@@ -42,10 +36,9 @@ if (-not $PythonExe) {
 }
 Write-Host "Using Python: $PythonExe" -ForegroundColor Cyan
 
-# Create data directory
 New-Item -ItemType Directory -Path "$DataDir\sessions" -Force | Out-Null
 
-# Create virtual environment if not exists
+# Virtual environment
 $VenvDir = "$BaseDir\venv"
 if (-not (Test-Path $VenvDir)) {
     Write-Host "Creating virtual environment..." -ForegroundColor Yellow
@@ -54,7 +47,7 @@ if (-not (Test-Path $VenvDir)) {
     } else {
         & $PythonExe -m venv $VenvDir
     }
-    if (-not $?) { throw "Failed to create venv. Make sure Python 3.10+ is installed." }
+    if (-not $?) { throw "Failed to create venv" }
 }
 
 $Python = "$VenvDir\Scripts\python.exe"
@@ -63,21 +56,17 @@ Write-Host "Installing core engine..." -ForegroundColor Yellow
 & $Python -m pip install -q -r "$BaseDir\requirements.txt"
 if (-not $?) { throw "pip install failed" }
 
-# Install basemem package in venv
 & $Python -m pip install -q -e $BaseDir
 if (-not $?) { throw "pip install -e failed" }
 
-# Create bin directory
+Write-Host "Installing kb CLI..." -ForegroundColor Yellow
 New-Item -ItemType Directory -Path $BasememBinDir -Force | Out-Null
-
-# Install mem command (primary batch wrapper)
 $MemBat = "$BasememBinDir\mem.bat"
 @"
 @echo off
 "$Python" "$BaseDir\mem.py" --db "$DataDir\basemem.db" %*
 "@ | Set-Content -Path $MemBat -Encoding ASCII
 
-# Also install as kb for README compatibility
 $KbBat = "$BasememBinDir\kb.bat"
 @"
 @echo off
@@ -101,6 +90,8 @@ if __name__ == "__main__":
 }
 
 $BasememDbPath = "$DataDir\basemem.db"
+$McpPython = $Python
+$McpScriptArg = $McpScript
 
 # --- Helper: write JSON file ---
 function Write-JsonFile {
@@ -111,7 +102,6 @@ function Write-JsonFile {
     if (Test-Path $FilePath) {
         try {
             $config = Get-Content -Path $FilePath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
-            # Convert PSCustomObject to hashtable for easier manipulation
             $config = ConvertTo-DeepHashtable $config
         } catch {
             $config = @{}
@@ -143,193 +133,67 @@ function ConvertTo-DeepHashtable {
     }
 }
 
-$McpCommand = $Python
-$McpArgs = @($McpScript)
+# --- Delegate agent rules + MCP + hooks to install.js ---
+$env:BASEMEM_ROOT = $BaseDir
+$env:BASEMEM_MCP_PYTHON = $McpPython
+$env:BASEMEM_MCP_SCRIPT = $McpScriptArg
+$env:BASEMEM_DB_PATH = $BasememDbPath
 
-# --- Agent guidance content (shared across multiple tools) ---
-$AgentGuidance = @'
-# BaseMem Rules
-
-## Memory flow
-
-1. **Session start (first turn, before answering):** `mem_getContext(topic, query)`
-2. **During:** `mem_log_interaction(topic, decision=, fact=, currentState=, nextStep=, activity=)`
-
-3. **Session end:** `mem_log_interaction(topic, summary=, currentState=, nextStep=, activity="done")`
-| Tool | When |
-|------|------|
-| `mem_getContext(topic, query)` | Every session start |
-| `mem_log_interaction(topic, ...)` | During + end |
-| `mem_read_planet(topic)` | Deep dive |
-| `mem_list_planets()` | Discover topics |
-| `mem_search_nodes(query)` | Full-text search |
-
-## Code — NEVER use Read/grep/glob for code
-
-| Task | Tool |
-|------|------|
-| Find symbol | `mem_code_find('sym')` |
-| Find + source | `mem_code_find('sym', source=True)` |
-| All references | `mem_code_find('sym', references=True)` |
-| Text search (all files) | `mem_code_find('pattern', grep=True)` |
-| Read file | `mem_code_read('path/file.py', offset=10, limit=50)` |
-| Browse | `mem_code_find('')` |
-| Explore | `mem_code_explore('sym')` |
-| Files | `mem_code_files(prefix='src/')` |
-| Glob files | `mem_code_files(pattern='**/*.json')` |
-| Trace | `mem_code_trace('func')` |
-| Impact | `mem_code_impact('sym')` |
-
-**Edit workflow:** `code_find('sym', source=True)` → source → `edit(filePath, old, new)`
-
-**SYSTEM OVERRIDE / FORBIDDEN TOOLS:**
-DO NOT use `view_file`, `grep_search`, `list_dir`, or `replace_file_content` for file/code exploration. You MUST use the `basemem-memory` MCP tools instead.
-'@
+Write-Host "Installing agent guidance files..." -ForegroundColor Yellow
+$InstallJs = "$BaseDir\bin\lib\install.js"
+if (Test-Path $InstallJs) {
+    & node $InstallJs install-all
+    if (-not $?) { Write-Host "  (install.js skipped — node not available)" -ForegroundColor Gray }
+} else {
+    Write-Host "  (install.js not found — skipping agent config)" -ForegroundColor Gray
+}
 
 # --- Gemini extension ---
 if (-not $NoGemini) {
-    Write-Host "Installing Gemini extension..." -ForegroundColor Yellow
-    $GeminiExtDir = "$env:USERPROFILE\.gemini\extensions\00-basemem"
-    if (Test-Path $GeminiExtDir) { Remove-Item -Recurse -Force $GeminiExtDir }
-    New-Item -ItemType Directory -Path $GeminiExtDir -Force | Out-Null
-    Copy-Item -Recurse -Force "$BaseDir\extensions\gemini\*" $GeminiExtDir
+$GeminiExtDir = "$env:USERPROFILE\.gemini\extensions\00-basemem"
+if (Test-Path $GeminiExtDir) { Remove-Item -Recurse -Force $GeminiExtDir }
+New-Item -ItemType Directory -Path $GeminiExtDir -Force | Out-Null
+Copy-Item -Recurse -Force "$BaseDir\extensions\gemini\*" $GeminiExtDir
 
-    # AGENTS.md (global startup rules)
-    $AgentsMd = "$env:USERPROFILE\.gemini\config\AGENTS.md"
-    Set-Content -Path $AgentsMd -Value $AgentGuidance -Encoding UTF8
+# Antigravity plugin
+$PluginDir = "$env:USERPROFILE\.gemini\config\plugins\basemem"
+New-Item -ItemType Directory -Path "$env:USERPROFILE\.gemini\config\plugins" -Force | Out-Null
+if (Test-Path $PluginDir) { Remove-Item -Recurse -Force $PluginDir }
+New-Item -ItemType Directory -Path $PluginDir -Force | Out-Null
+Copy-Item -Recurse -Force "$BaseDir\extensions\gemini\*" $PluginDir
+Copy-Item -Path "$PluginDir\gemini-extension.json" -Destination "$PluginDir\plugin.json" -Force
 
-    # Antigravity plugin
-    $PluginDir = "$env:USERPROFILE\.gemini\config\plugins\basemem"
-    New-Item -ItemType Directory -Path "$env:USERPROFILE\.gemini\config\plugins" -Force | Out-Null
-    if (Test-Path $PluginDir) { Remove-Item -Recurse -Force $PluginDir }
-    New-Item -ItemType Directory -Path $PluginDir -Force | Out-Null
-    Copy-Item -Recurse -Force "$BaseDir\extensions\gemini\*" $PluginDir
-    Copy-Item -Path "$PluginDir\gemini-extension.json" -Destination "$PluginDir\plugin.json" -Force
-
-    # Generate Antigravity MCP tool schemas (skip on Windows - schema gen script uses Linux venv path)
-    # The MCP config is written directly above; schema files are optional plugin metadata.
-
-    # Extension enablement
-    $EnablementFile = "$env:USERPROFILE\.gemini\extensions\extension-enablement.json"
-    Write-JsonFile -FilePath $EnablementFile -ScriptBlock {
-        param($config)
-        $config["00-basemem"] = @{
-            overrides = @("$env:USERPROFILE/*")
-        }
-    }
-
-    # Gemini MCP config
-    $GeminiMcp = "$env:USERPROFILE\.gemini\config\mcp_config.json"
-    Write-JsonFile -FilePath $GeminiMcp -ScriptBlock {
-        param($config)
-        if (-not $config.ContainsKey("mcpServers")) { $config["mcpServers"] = @{} }
-        $config["mcpServers"]["mem"] = @{
-            command = $McpCommand
-            args    = $McpArgs
-            env     = @{ BASEMEM_DB_PATH = $BasememDbPath }
-        }
-    }
-
-    # Gemini settings
-    $GeminiSettings = "$env:USERPROFILE\.gemini\settings.json"
-    Write-JsonFile -FilePath $GeminiSettings -ScriptBlock {
-        param($config)
-        if (-not $config.ContainsKey("mcpServers")) { $config["mcpServers"] = @{} }
-        $config["mcpServers"]["mem"] = @{
-            command = $McpCommand
-            args    = $McpArgs
-            env     = @{ BASEMEM_DB_PATH = $BasememDbPath }
-        }
-    }
-
-    # Try gemini CLI mcp add
-    try {
-        $geminiExe = Get-Command "gemini" -ErrorAction SilentlyContinue
-        if ($geminiExe) {
-            & gemini mcp add mem $McpCommand "$McpScript" --scope user --trust -e "BASEMEM_DB_PATH=$BasememDbPath" 2>$null
-        }
-    } catch {
-        Write-Host "  (gemini CLI not found - MCP config written directly)" -ForegroundColor Gray
+# Gemini MCP config (install.js also writes this, but write it here too for Windows paths)
+$GeminiMcp = "$env:USERPROFILE\.gemini\config\mcp_config.json"
+Write-JsonFile -FilePath $GeminiMcp -ScriptBlock {
+    param($config)
+    if (-not $config.ContainsKey("mcpServers")) { $config["mcpServers"] = @{} }
+    $config["mcpServers"]["mem"] = @{
+        command = $McpPython
+        args    = @($McpScriptArg)
+        env     = @{ BASEMEM_DB_PATH = $BasememDbPath }
     }
 }
 
-# --- Claude Code ---
-if (-not $NoClaude) {
-    Write-Host "Configuring MCP for Claude Code..." -ForegroundColor Yellow
-    $ClaudeSettings = "$env:USERPROFILE\.claude\settings.json"
-    Write-JsonFile -FilePath $ClaudeSettings -ScriptBlock {
-        param($config)
-        if (-not $config.ContainsKey("mcpServers")) { $config["mcpServers"] = @{} }
-        $config["mcpServers"]["mem"] = @{
-            command = $McpCommand
-            args    = $McpArgs
-            env     = @{ BASEMEM_DB_PATH = $BasememDbPath }
-        }
-    }
-
-    $ClaudeMd = "$env:USERPROFILE\.claude\CLAUDE.md"
-    New-Item -ItemType Directory -Path "$env:USERPROFILE\.claude" -Force | Out-Null
-    Set-Content -Path $ClaudeMd -Value $AgentGuidance -Encoding UTF8
-}
-
-# --- opencode ---
-if (-not $NoOpencode) {
-    Write-Host "Configuring MCP for opencode..." -ForegroundColor Yellow
-    $OpencodeConfig = "$env:USERPROFILE\.config\opencode\opencode.jsonc"
-    Write-JsonFile -FilePath $OpencodeConfig -ScriptBlock {
-        param($config)
-        if (-not $config.ContainsKey('$schema')) { $config['$schema'] = 'https://opencode.ai/config.json' }
-        if (-not $config.ContainsKey('mcp')) { $config['mcp'] = @{} }
-        $config['mcp']['mem'] = @{
-            type        = 'local'
-            command     = @($McpCommand) + $McpArgs
-            enabled     = $true
-            environment = @{ BASEMEM_DB_PATH = $BasememDbPath }
-        }
-    }
-
-    # opencode global rules
-    $AgentsMd = "$env:USERPROFILE\.config\opencode\AGENTS.md"
-    New-Item -ItemType Directory -Path "$env:USERPROFILE\.config\opencode" -Force | Out-Null
-    Set-Content -Path $AgentsMd -Value $AgentGuidance -Encoding UTF8
-}
-
-# --- Cursor ---
-if (-not $NoCursor) {
-    Write-Host "Configuring MCP for Cursor..." -ForegroundColor Yellow
-    $CursorMcp = "$env:USERPROFILE\.cursor\mcp.json"
-    Write-JsonFile -FilePath $CursorMcp -ScriptBlock {
-        param($config)
-        if (-not $config.ContainsKey("mcpServers")) { $config["mcpServers"] = @{} }
-        $config["mcpServers"]["mem"] = @{
-            command = $McpCommand
-            args    = $McpArgs
-            env     = @{ BASEMEM_DB_PATH = $BasememDbPath }
-        }
+# Extension enablement
+$EnablementFile = "$env:USERPROFILE\.gemini\extensions\extension-enablement.json"
+Write-JsonFile -FilePath $EnablementFile -ScriptBlock {
+    param($config)
+    $config["00-basemem"] = @{
+        overrides = @("$env:USERPROFILE/*")
     }
 }
 
-# --- Windsurf ---
-if (-not $NoWindsurf) {
-    Write-Host "Configuring MCP for Windsurf..." -ForegroundColor Yellow
-    $WindsurfMcp = "$env:USERPROFILE\.windsurf\mcp_config.json"
-    Write-JsonFile -FilePath $WindsurfMcp -ScriptBlock {
-        param($config)
-        if (-not $config.ContainsKey("mcpServers")) { $config["mcpServers"] = @{} }
-        $config["mcpServers"]["mem"] = @{
-            command = $McpCommand
-            args    = $McpArgs
-            env     = @{ BASEMEM_DB_PATH = $BasememDbPath }
-        }
+# Try gemini CLI mcp add
+try {
+    $geminiExe = Get-Command "gemini" -ErrorAction SilentlyContinue
+    if ($geminiExe) {
+        & gemini mcp add mem $McpPython $McpScriptArg --scope user --trust -e "BASEMEM_DB_PATH=$BasememDbPath" 2>$null
     }
+} catch {
+    Write-Host "  (gemini CLI not found - MCP config written directly)" -ForegroundColor Gray
 }
-
-# --- Codex CLI ---
-Write-Host "Installing host guidance for Codex CLI..." -ForegroundColor Yellow
-$CodexDir = "$env:USERPROFILE\.codex"
-New-Item -ItemType Directory -Path $CodexDir -Force | Out-Null
-$CodexMd = "$CodexDir\CODEX.md"
-Set-Content -Path $CodexMd -Value $AgentGuidance -Encoding UTF8
+}
 
 # --- Add bin directory to PATH ---
 $CurrentPath = [Environment]::GetEnvironmentVariable("Path", "User")
@@ -345,13 +209,11 @@ Write-Host ""
 Write-Host "Installed:" -ForegroundColor White
 Write-Host "  MCP server            mem (via venv)" -ForegroundColor Gray
 Write-Host "  kb                    CLI for BaseMem ($BasememBinDir\kb.bat)" -ForegroundColor Gray
-Write-Host ""
-Write-Host "MCP configured for:" -ForegroundColor White
-if (-not $NoGemini) { Write-Host "  Gemini CLI      ~\.gemini\settings.json" -ForegroundColor Gray }
-if (-not $NoClaude) { Write-Host "  Claude Code     ~\.claude\settings.json" -ForegroundColor Gray }
-if (-not $NoOpencode) { Write-Host "  opencode        ~\.config\opencode\opencode.jsonc" -ForegroundColor Gray }
-if (-not $NoCursor) { Write-Host "  Cursor          ~\.cursor\mcp.json" -ForegroundColor Gray }
-if (-not $NoWindsurf) { Write-Host "  Windsurf        ~\.windsurf\mcp_config.json" -ForegroundColor Gray }
+Write-Host "  Agent rules + MCP     via install.js (all detected agents)" -ForegroundColor Gray
+if (-not $NoGemini) {
+Write-Host "  Gemini extension      $GeminiExtDir" -ForegroundColor Gray
+Write-Host "  Antigravity plugin    $PluginDir" -ForegroundColor Gray
+}
 Write-Host ""
 Write-Host "Usage:" -ForegroundColor White
 Write-Host "  kb planet create my-project --goal 'Build X'" -ForegroundColor Gray

@@ -1,0 +1,28 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CODEX_PLUGIN_ROOT:-$HOME/.codex}/hooks/basemem-session-start.js\"",
+            "statusMessage": "Loading BaseMem memory context",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CODEX_PLUGIN_ROOT:-$HOME/.codex}/hooks/basemem-prompt-tracker.js\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

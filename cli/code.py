@@ -51,7 +51,7 @@ def code_init(project_root, workers, watch):
     indexer = CodeIndexer(root)
     try:
         with click.progressbar(length=1, label='Indexing...') as bar:
-            result = indexer.index_project(max_workers=workers)
+            result = indexer.index_project(_max_workers=workers)
             bar.update(1)
         click.echo(f"[ok] Indexed {result['files']} files, {result['symbols']} symbols, {result['edges']} edges in {result['elapsed']:.1f}s")
         click.echo(f"     DB: {indexer.db_path}")
@@ -473,7 +473,7 @@ def code_files(root, prefix, limit, tree, as_json):
             def _print_tree(d, indent=""):
                 for k, v in sorted(d.items()):
                     is_leaf = not v
-                    click.echo(f"{indent}{'📄 ' if is_leaf else '📁 '}{k}")
+                    click.echo(f"{indent}{'[file] ' if is_leaf else '[dir] '}{k}")
                     if not is_leaf:
                         _print_tree(v, indent + "  ")
             _print_tree(tree_data)

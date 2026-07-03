@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "mem": {
+      "command": "${extensionPath}/venv/bin/python3",
+      "args": ["${extensionPath}/mem-mcp.py"],
+      "env": {
+        "BASEMEM_DB_PATH": "${BASEMEM_DB_PATH:-$HOME/.basemem/basemem.db}"
+      }
+    }
+  }
+}

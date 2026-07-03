@@ -1,6 +1,7 @@
 #!/bin/bash
 
 # BaseMem Galaxy: Uninstaller
+# Removes all BaseMem traces: rules, hooks, settings, MCP configs, plugins, CLI.
 
 set -euo pipefail
 
@@ -52,14 +53,64 @@ if new_text != text:
 PY
 }
 
-remove_if_contains_marker() {
+remove_mcp_entries() {
   local file="$1"
-  local marker="$2"
   [ -f "$file" ] || return 0
-  if grep -q "$marker" "$file"; then
-    rm -f "$file"
-    echo "Removed $file"
-  fi
+  python3 - "$file" <<'PY'
+import json, sys, re
+from pathlib import Path
+path = Path(sys.argv[1])
+BAD = re.compile(r'(basemem|graphrag|memgraph)', re.IGNORECASE)
+try:
+    data = json.loads(path.read_text() or "{}")
+except (json.JSONDecodeError, ValueError):
+    sys.exit(0)
+changed = False
+for server_key in ('mcpServers', 'mcp_servers'):
+    if server_key in data and isinstance(data[server_key], dict):
+        for k in list(data[server_key].keys()):
+            if BAD.search(k):
+                del data[server_key][k]
+                changed = True
+                print(f"  Removed {server_key}.{k} from {path}")
+        if not data[server_key]:
+            del data[server_key]
+if "mcp" in data and isinstance(data["mcp"], dict):
+    for k in list(data["mcp"].keys()):
+        if BAD.search(k):
+            del data["mcp"][k]
+            changed = True
+            print(f"  Removed mcp.{k} from {path}")
+    if not data["mcp"]:
+        del data["mcp"]
+if changed:
+    path.write_text(json.dumps(data, indent=2) + "\n")
+PY
+}
+
+remove_bad_permissions() {
+  local file="$1"
+  [ -f "$file" ] || return 0
+  python3 - "$file" <<'PY'
+import json, sys, re
+from pathlib import Path
+path = Path(sys.argv[1])
+BAD = re.compile(r'(basemem|graphrag|memgraph)', re.IGNORECASE)
+try:
+    data = json.loads(path.read_text() or "{}")
+except (json.JSONDecodeError, ValueError):
+    sys.exit(0)
+def clean(obj):
+    if isinstance(obj, list):
+        return [x for x in (clean(v) for v in obj) if x is not None and not (isinstance(x, str) and BAD.search(x))]
+    elif isinstance(obj, dict):
+        return {k: clean(v) for k, v in obj.items() if not (isinstance(k, str) and BAD.search(k))}
+    return obj
+new = clean(data)
+if new != data:
+    path.write_text(json.dumps(new, indent=2) + "\n")
+    print(f"  Removed bad permissions from {path}")
+PY
 }
 
 for arg in "$@"; do
@@ -81,40 +132,11 @@ done
 
 echo "Uninstalling BaseMem Galaxy components..."
 
-remove_mcp_entry() {
-  local file="$1"
-  local key="$2"
-  [ -f "$file" ] || return 0
-  python3 - "$file" "$key" <<'PY'
-import json, sys
-from pathlib import Path
-path = Path(sys.argv[1])
-key = sys.argv[2]
-try:
-    data = json.loads(path.read_text() or "{}")
-except (json.JSONDecodeError, ValueError):
-    sys.exit(0)
-changed = False
-# Claude/Cursor/Windsurf format: mcpServers
-if "mcpServers" in data and key in data["mcpServers"]:
-    del data["mcpServers"][key]
-    changed = True
-    if not data["mcpServers"]:
-        del data["mcpServers"]
-# opencode format: mcp
-if "mcp" in data and key in data["mcp"]:
-    del data["mcp"][key]
-    changed = True
-    if not data["mcp"]:
-        del data["mcp"]
-if changed:
-    if data:
-        path.write_text(json.dumps(data, indent=2) + "\n")
-    else:
-        path.write_text("{}\n")
-PY
-}
+# --- Step 1: Delegate to install.js for rules + hooks + settings cleanup ---
+echo "  Running install.js uninstall-all..."
+node "$BASE_DIR/bin/lib/install.js" uninstall-all 2>/dev/null || true
 
+# --- Step 2: Remove CLI binary ---
 for bin in "$HOME/.local/bin/mem" "/usr/local/bin/mem"; do
   [ -f "$bin" ] || continue
   if grep -q "$BASE_DIR" "$bin"; then
@@ -124,57 +146,66 @@ for bin in "$HOME/.local/bin/mem" "/usr/local/bin/mem"; do
       else
         sudo rm -f "$bin"
       fi
-      echo "Removed $bin"
+      echo "  Removed $bin"
     fi
   fi
 done
 
-echo "Removing MCP server entry point..."
+# --- Step 3: Remove MCP server entry point ---
+echo "  Removing MCP server entry point..."
 rm -f "$BASE_DIR/mem-mcp.py"
 
-echo "Removing Codex MCP registration..."
+# --- Step 4: Remove MCP config entries ---
+echo "  Removing MCP entries from agent configs..."
+remove_mcp_entries "$HOME/.claude.json"
+remove_mcp_entries "$HOME/.gemini/settings.json"
+remove_mcp_entries "$HOME/.gemini/config/mcp_config.json"
+remove_mcp_entries "$HOME/.cursor/mcp.json"
+remove_mcp_entries "$HOME/.windsurf/mcp_config.json"
+remove_mcp_entries "$HOME/.config/opencode/opencode.jsonc"
+remove_mcp_entries "$HOME/.gemini/antigravity/mcp_config.json"
+remove_mcp_entries "$HOME/.gemini/antigravity-ide/mcp_config.json"
+
+claude mcp remove -s user basemem-memory 2>/dev/null || true
+claude mcp remove -s user mem 2>/dev/null || true
+gemini mcp remove mem 2>/dev/null || true
 codex mcp remove mem 2>/dev/null || true
 
-echo "Removing Codex skill..."
+# --- Step 5: Remove basemem hook scripts from agent hook dirs ---
+echo "  Removing basemem hook directories..."
+rm -rf "$HOME/.claude/hooks"
+rm -rf "$HOME/.codex/hooks"
+rm -rf "$HOME/.config/opencode/plugins"
+rm -rf "$HOME/.gemini/antigravity-cli/plugins/basemem"
+
+# --- Step 6: Remove basemem permissions from allow-lists ---
+echo "  Removing bad permissions..."
+remove_bad_permissions "$HOME/.claude/settings.local.json"
+remove_bad_permissions "$HOME/.gemini/antigravity-cli/settings.json"
+
+# --- Step 7: Remove Codex skill ---
+echo "  Removing Codex skill..."
 rm -rf "$HOME/.codex/skills/basemem"
 
-echo "Removing MCP config entries from agent settings..."
-remove_mcp_entry "$HOME/.gemini/settings.json" "mem"
-remove_mcp_entry "$HOME/.gemini/config/mcp_config.json" "mem"
-claude mcp remove -s user mem 2>/dev/null || true
-# Also clean up the old incorrect file location
-remove_mcp_entry "$HOME/.claude/settings.json" "mem"
-remove_mcp_entry "$HOME/.config/opencode/opencode.jsonc" "mem"
-remove_mcp_entry "$HOME/.cursor/mcp.json" "mem"
-remove_mcp_entry "$HOME/.windsurf/mcp_config.json" "mem"
-
-echo "Removing host guidance files..."
-remove_if_contains_marker "$HOME/.codex/CODEX.md" "BaseMem"
-remove_if_contains_marker "$HOME/.claude/CLAUDE.md" "BaseMem"
-remove_if_contains_marker "$HOME/.config/opencode/AGENTS.md" "BaseMem"
-
-echo "Removing Gemini AGENTS.md..."
-rm -f "$HOME/.gemini/config/AGENTS.md"
-
-echo "Removing Gemini extension..."
+# --- Step 8: Remove Gemini extension ---
+echo "  Removing Gemini extensions..."
 rm -rf "$HOME/.gemini/extensions/00-basemem"
-
-echo "Removing Antigravity plugin..."
-rm -rf "$HOME/.gemini/config/plugins/basemem"
-rm -rf "$HOME/.gemini/antigravity/mcp/mem"
+rm -rf "$HOME/.gemini/extensions/00-graphrag"
 
 ENABLEMENT_FILE="$HOME/.gemini/extensions/extension-enablement.json"
 if [ -f "$ENABLEMENT_FILE" ]; then
   python3 - "$ENABLEMENT_FILE" <<'PY'
 from pathlib import Path
-import json
-import sys
+import json, sys, re
 path = Path(sys.argv[1])
+BAD = re.compile(r'(basemem|graphrag|memgraph)', re.IGNORECASE)
 try:
     data = json.loads(path.read_text() or "{}")
 except json.JSONDecodeError:
     data = {}
-data.pop("00-basemem", None)
+for k in list(data):
+    if BAD.search(k):
+        data.pop(k, None)
 if data:
     path.write_text(json.dumps(data, indent=2) + "\n")
 else:
@@ -182,26 +213,47 @@ else:
 PY
 fi
 
+# --- Step 9: Remove cached MCP tool schemas for antigravity ---
+echo "  Removing cached MCP tool schemas..."
+for dir in "$HOME/.gemini/antigravity/mcp" "$HOME/.gemini/antigravity-cli/mcp"; do
+  if [ -d "$dir" ]; then
+    for sub in "$dir"/*/; do
+      subname="$(basename "$sub")"
+      if echo "$subname" | grep -qiE '(basemem|graphrag|memgraph)'; then
+        rm -rf "$sub"
+        echo "  Removed $sub"
+      fi
+    done
+  fi
+done
+
+# --- Step 10: Remove Gemini config AGENTS.md + GEMINI.md ---
+rm -f "$HOME/.gemini/config/AGENTS.md"
+rm -f "$HOME/.gemini/GEMINI.md"
+
+# --- Step 11: PATH cleanup ---
 remove_from_path "$HOME/.bashrc"
 remove_from_path "$HOME/.zshrc"
 remove_from_path "$HOME/.config/fish/config.fish"
 
+# --- Step 12: Optional purge ---
 if [ "$PURGE_ENV" -eq 1 ] && [ -d "$BASE_DIR/venv" ]; then
   if confirm "Remove $BASE_DIR/venv?"; then
     rm -rf "$BASE_DIR/venv"
-    echo "Removed $BASE_DIR/venv"
+    echo "  Removed $BASE_DIR/venv"
   fi
 fi
 
 if [ "$PURGE_DATA" -eq 1 ] && [ -d "$DATA_DIR" ]; then
   if confirm "Remove $DATA_DIR?"; then
     rm -rf "$DATA_DIR"
-    echo "Removed $DATA_DIR"
+    echo "  Removed $DATA_DIR"
   fi
 fi
 
 echo "------------------------------------------------"
 echo "BaseMem uninstall complete."
-echo "MCP configs cleaned from Claude Code, opencode, Cursor, Windsurf, Codex."
-echo "Open a new shell session to refresh aliases."
+echo "All rules, hooks, settings, MCP configs, plugins,"
+echo "and cached tool schemas have been removed."
+echo "Open a new shell session to refresh PATH."
 echo "------------------------------------------------"
