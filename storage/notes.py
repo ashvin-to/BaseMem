@@ -112,6 +112,12 @@ class NoteMixin:
         if note_row and kind not in ("turn", "summary"):
             self._auto_link_note(note_row["id"], topic_slug)
 
+        if note_row and hasattr(self, 'get_active_session'):
+            session = self.get_active_session(topic_slug, agent_id)
+            if session:
+                _pexec(self.storage.connection, "UPDATE notes SET session_id = ? WHERE id = ?", (session["id"], note_row["id"]))
+                self.stamp_note(session["id"], note_row["id"])
+
         count = self.get_note_count(topic)
         result = {"id": note_id, "title": title or content[:80], "content": content}
         if count >= self.SUMMARIZE_THRESHOLD:
@@ -342,6 +348,14 @@ class NoteMixin:
                     f"- [{n.get('kind', 'note')}] {self._trim_text(n.get('content') or n.get('title') or '', 220)}"
                     for n in pinned_notes
                 ],
+            ])
+
+        session_lines = self._render_sessions_block(topic_slug)
+        if session_lines:
+            lines.extend([
+                "",
+                "## Sessions",
+                *session_lines,
             ])
 
         if all_notes:

@@ -160,14 +160,148 @@ def sync(ctx, agent_id, topic, chat_file):
 @click.option('--topic', '-t', help='Read a planet by topic instead of node id')
 @click.pass_context
 def read(ctx, node_id, topic):
-    """Read a planet or node details."""
+    """Read a planet, node, or session details.
+
+    If node_id is a number, reads a session. If --topic is set, reads a planet.
+    Otherwise reads a node by its id string."""
+    from storage.sessions import SessionManager
+    import json as _json
+    manager = SessionManager(ctx.obj['storage'])
+    if topic:
+        node = manager.get_planet(topic)
+        if node:
+            click.echo(f"\n{node.title}:\n\n{node.content}")
+        else:
+            click.echo("Planet not found.")
+    elif node_id and node_id.isdigit():
+        sid = int(node_id)
+        session = manager.get_session(sid)
+        if not session:
+            click.echo(f"Session {sid} not found.")
+            return
+        click.echo(f"Session: {session.get('title', 'untitled')} (id={sid})")
+        click.echo(f"  topic: {session.get('topic', '?')}")
+        click.echo(f"  status: {session.get('status', '?')}")
+        click.echo(f"  agent: {session.get('agent_id', '?')}")
+        click.echo(f"  started: {session.get('started_at', '?')}")
+        click.echo(f"  last active: {session.get('last_active_at', '?')}")
+        if session.get("ended_at"):
+            click.echo(f"  ended: {session['ended_at']}")
+        if session.get("summary"):
+            click.echo(f"  summary: {session['summary']}")
+        note_ids = _json.loads(session.get("note_ids", "[]"))
+        if note_ids:
+            click.echo(f"  notes ({len(note_ids)}):")
+            ph = ",".join("?" for _ in note_ids)
+            cursor = ctx.obj['storage'].connection.cursor()
+            for r in cursor.execute(
+                f"SELECT id, kind, title, content FROM notes WHERE id IN ({ph}) ORDER BY id ASC",
+                note_ids,
+            ):
+                t = r["title"] or r["content"][:80]
+                click.echo(f"    note-{r['id']} [{r['kind']}] {t[:200]}")
+        task_ids = _json.loads(session.get("task_ids", "[]"))
+        if task_ids:
+            click.echo(f"  tasks ({len(task_ids)}):")
+            ph = ",".join("?" for _ in task_ids)
+            cursor = ctx.obj['storage'].connection.cursor()
+            for r in cursor.execute(
+                f"SELECT id, status, priority, title FROM tasks WHERE id IN ({ph}) ORDER BY id ASC",
+                task_ids,
+            ):
+                click.echo(f"    task-{r['id']} [{r['status']}/{r['priority']}] {r['title']}")
+    else:
+        node = ctx.obj['storage'].get_node(node_id) if node_id else None
+        if node:
+            click.echo(f"\n{node.title}:\n\n{node.content}")
+        else:
+            click.echo("Node not found.")
+
+
+@session.command()
+@click.argument('topic')
+@click.argument('title')
+@click.option('--agent-id', default='default', help='Agent identifier')
+@click.pass_context
+def start(ctx, topic, title, agent_id):
+    """Start a new session on a planet."""
     from storage.sessions import SessionManager
     manager = SessionManager(ctx.obj['storage'])
-    node = manager.get_planet(topic) if topic else ctx.obj['storage'].get_node(node_id)
-    if node:
-        click.echo(f"\n{node.title}:\n\n{node.content}")
+    sid = manager.create_session(topic, title, agent_id)
+    click.echo(f"Session created: id={sid}, topic='{topic}', title='{title}', agent='{agent_id}'.")
+
+
+@session.command()
+@click.argument('session-id', type=int)
+@click.option('--summary', '-s', help='Optional closing summary')
+@click.pass_context
+def end(ctx, session_id, summary):
+    """End (close) a session."""
+    from storage.sessions import SessionManager
+    manager = SessionManager(ctx.obj['storage'])
+    ok = manager.close_session(session_id, summary=summary)
+    if not ok:
+        click.echo(f"Session {session_id} not found.")
+        return
+    session = manager.get_session(session_id)
+    click.echo(f"Session {session_id} closed. Status: {session['status']}.")
+    if session.get("summary"):
+        click.echo(f"Summary: {session['summary']}")
+
+
+@session.command()
+@click.argument('session-id', type=int)
+@click.pass_context
+def pause(ctx, session_id):
+    """Pause a session."""
+    from storage.sessions import SessionManager
+    manager = SessionManager(ctx.obj['storage'])
+    ok = manager.pause_session(session_id)
+    if not ok:
+        click.echo(f"Session {session_id} not found.")
+        return
+    click.echo(f"Session {session_id} paused.")
+
+
+@session.command()
+@click.argument('session-id', type=int)
+@click.option('--agent-id', default='default', help='New agent identifier')
+@click.pass_context
+def resume(ctx, session_id, agent_id):
+    """Resume a paused session."""
+    from storage.sessions import SessionManager
+    manager = SessionManager(ctx.obj['storage'])
+    ok = manager.resume_session(session_id, agent_id)
+    if not ok:
+        click.echo(f"Session {session_id} not found.")
+        return
+    click.echo(f"Session {session_id} resumed. Agent: {agent_id}.")
+
+
+@session.command(name='list')
+@click.option('--topic', '-t', help='Filter by planet topic')
+@click.option('--status', '-s', help='Filter by status (active, paused, closed)')
+@click.pass_context
+def list_sessions(ctx, topic, status):
+    """List sessions, optionally filtered by topic and/or status."""
+    from storage.sessions import SessionManager
+    manager = SessionManager(ctx.obj['storage'])
+    if topic:
+        sessions = manager.list_sessions(topic, status=status)
     else:
-        click.echo("Node not found.")
+        sessions = []
+        for p in manager.list_planets():
+            sessions.extend(manager.list_sessions(p["topic"], status=status))
+    if not sessions:
+        click.echo("No sessions found.")
+        return
+    click.echo(f"Sessions ({len(sessions)}):")
+    for s in sessions:
+        title = s.get("title", "untitled")
+        st = s.get("status", "?")
+        agent = s.get("agent_id", "?")
+        last = s.get("last_active_at", "?")[:19]
+        click.echo(f"  id={s['id']} '{title}' [{st}] agent={agent} last={last}")
 
 
 def _get_project_root():

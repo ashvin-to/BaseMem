@@ -24,6 +24,7 @@ chmod +x setup.sh && ./setup.sh
 ```bash
 mem planet create "my-project" --goal "Build feature X"
 mem note add "my-project" --type decision -m "Use SQLite for persistence"
+mem session start "my-project" "Sprint 1"
 mem agent-context --topic "my-project" --query "what did we decide?"
 ```
 

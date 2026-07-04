@@ -23,6 +23,7 @@ A task may reference notes through its `notes` field; a note should **not** dupl
 | `depends_on` | list[int] | Task IDs that must complete first |
 | `files` | list[str] | File paths relevant to this task |
 | `notes` | list[int] | Note IDs referenced by this task |
+| `session_id` | int or null | Active session id when task was created/updated |
 | `created_at` | str | ISO-8601 timestamp |
 | `completed_at` | str or null | Set when status becomes `done` |
 

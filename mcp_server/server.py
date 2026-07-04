@@ -1096,6 +1096,129 @@ def edge_maintain(planet: str | None = None, decayFactor: float | None = None, p
     return manager.edge_maintain(planet=planet, decay_factor=decayFactor, prune_threshold=pruneThreshold)
 
 
+# ── Session MCP Tools ──────────────────────────────────
+
+
+@server.tool(description="Start a new session: track activity within a planet. Returns the session id.")
+def session_start(topic: str, title: str, agent_id: str) -> str:
+    """Create a new active session on the given planet."""
+    from storage.db import StorageManager
+    from storage.sessions import SessionManager
+    storage = StorageManager(get_db_path())
+    manager = SessionManager(storage)
+    sid = manager.create_session(topic, title, agent_id)
+    return f"Session created: id={sid}, topic='{topic}', title='{title}', agent='{agent_id}'."
+
+
+@server.tool(description="End a session: mark as closed with an optional summary.")
+def session_end(session_id: int, summary: str = "") -> str:
+    """Close a session and optionally attach a summary."""
+    from storage.db import StorageManager
+    from storage.sessions import SessionManager
+    storage = StorageManager(get_db_path())
+    manager = SessionManager(storage)
+    ok = manager.close_session(session_id, summary=summary or None)
+    if not ok:
+        return f"Session {session_id} not found."
+    session = manager.get_session(session_id)
+    status = session.get("status", "?")
+    s = session.get("summary", "")
+    return f"Session {session_id} closed. Status: {status}. Summary: {s[:200]}" if s else f"Session {session_id} closed."
+
+
+@server.tool(description="Pause a session: mark as paused without closing it.")
+def session_pause(session_id: int) -> str:
+    """Pause a session."""
+    from storage.db import StorageManager
+    from storage.sessions import SessionManager
+    storage = StorageManager(get_db_path())
+    manager = SessionManager(storage)
+    ok = manager.pause_session(session_id)
+    if not ok:
+        return f"Session {session_id} not found."
+    return f"Session {session_id} paused."
+
+
+@server.tool(description="Resume a paused session: set back to active with a new agent_id.")
+def session_resume(session_id: int, agent_id: str) -> str:
+    """Resume a paused session with a new agent."""
+    from storage.db import StorageManager
+    from storage.sessions import SessionManager
+    storage = StorageManager(get_db_path())
+    manager = SessionManager(storage)
+    ok = manager.resume_session(session_id, agent_id)
+    if not ok:
+        return f"Session {session_id} not found."
+    return f"Session {session_id} resumed. Agent: {agent_id}."
+
+
+@server.tool(description="Read a full session: metadata, stamped notes, and stamped tasks.")
+def session_read(session_id: int) -> str:
+    """Return session metadata with expanded notes and tasks."""
+    from storage.db import StorageManager
+    from storage.sessions import SessionManager
+    import json as _json
+    storage = StorageManager(get_db_path())
+    manager = SessionManager(storage)
+    session = manager.get_session(session_id)
+    if not session:
+        return f"Session {session_id} not found."
+    lines = [
+        f"Session: {session.get('title', 'untitled')} (id={session_id})",
+        f"  topic: {session.get('topic', '?')}",
+        f"  status: {session.get('status', '?')}",
+        f"  agent: {session.get('agent_id', '?')}",
+        f"  started: {session.get('started_at', '?')}",
+        f"  last active: {session.get('last_active_at', '?')}",
+    ]
+    if session.get("ended_at"):
+        lines.append(f"  ended: {session['ended_at']}")
+    if session.get("summary"):
+        lines.append(f"  summary: {session['summary']}")
+    note_ids = _json.loads(session.get("note_ids", "[]"))
+    if note_ids:
+        lines.append(f"  notes ({len(note_ids)}):")
+        placeholders = ",".join("?" for _ in note_ids)
+        cursor = manager.storage.connection.cursor()
+        for r in cursor.execute(
+            f"SELECT id, kind, title, content FROM notes WHERE id IN ({placeholders}) ORDER BY id ASC",
+            note_ids,
+        ):
+            title = r["title"] or r["content"][:80]
+            lines.append(f"    note-{r['id']} [{r['kind']}] {title[:200]}")
+    task_ids = _json.loads(session.get("task_ids", "[]"))
+    if task_ids:
+        lines.append(f"  tasks ({len(task_ids)}):")
+        placeholders = ",".join("?" for _ in task_ids)
+        cursor = manager.storage.connection.cursor()
+        for r in cursor.execute(
+            f"SELECT id, status, priority, title FROM tasks WHERE id IN ({placeholders}) ORDER BY id ASC",
+            task_ids,
+        ):
+            lines.append(f"    task-{r['id']} [{r['status']}/{r['priority']}] {r['title']}")
+    return "\n".join(lines)
+
+
+@server.tool(description="List sessions for a topic, optionally filtered by status.")
+def session_list(topic: str, status: str = "") -> str:
+    """List sessions for a planet."""
+    from storage.db import StorageManager
+    from storage.sessions import SessionManager
+    storage = StorageManager(get_db_path())
+    manager = SessionManager(storage)
+    sessions = manager.list_sessions(topic, status=status or None)
+    if not sessions:
+        return f"No sessions found for '{topic}'."
+    lines = [f"Sessions for '{topic}' ({len(sessions)}):"]
+    for s in sessions:
+        title = s.get("title", "untitled")
+        st = s.get("status", "?")
+        agent = s.get("agent_id", "?")
+        last = s.get("last_active_at", "?")[:19]
+        lines.append(f"  id={s['id']} '{title}' [{st}] agent={agent} last={last}")
+    return "\n".join(lines)
+
+
 # ── Code Graph MCP Tools ─────────────────────────────────
 
 @server.tool(description="Read file contents with line numbers. offset=start line, limit=max lines.")

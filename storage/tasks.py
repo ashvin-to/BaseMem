@@ -109,7 +109,13 @@ class TaskMixin:
             "SELECT * FROM tasks WHERE topic = ? AND title = ? AND created_at = ? ORDER BY id DESC LIMIT 1",
             (topic_slug, title, now),
         ).fetchone()
-        return dict(task_row) if task_row else {"title": title, "topic": topic_slug}
+        result = dict(task_row) if task_row else {"title": title, "topic": topic_slug}
+        if task_row and hasattr(self, 'get_active_session'):
+            sessions = self.list_sessions(topic_slug, status='active')
+            if sessions:
+                _pexec(self.storage.connection, "UPDATE tasks SET session_id = ? WHERE id = ?", (sessions[0]["id"], task_row["id"]))
+                self.stamp_task(sessions[0]["id"], task_row["id"])
+        return result
 
     def update_task(
         self,
@@ -174,6 +180,11 @@ class TaskMixin:
                 "UPDATE planets SET updated_at = ? WHERE topic = ?",
                 (self._now(), task["topic"]),
             )
+        if not task.get("session_id") and hasattr(self, 'get_active_session'):
+            sessions = self.list_sessions(task["topic"], status='active')
+            if sessions:
+                _pexec(self.storage.connection, "UPDATE tasks SET session_id = ? WHERE id = ?", (sessions[0]["id"], task_id))
+                self.stamp_task(sessions[0]["id"], task_id)
         return True, f"Task {task_id} updated"
 
     def list_tasks(

@@ -443,6 +443,11 @@ class PlanetMixin:
             if len(open_tasks) > 5:
                 lines.append(f"    ... and {len(open_tasks) - 5} more")
 
+        session_lines = self._render_sessions_block(topic_slug)
+        if session_lines:
+            lines.append("")
+            lines.extend(session_lines)
+
         notes = _get_notes(conn, topic_slug)
         pinned = [n for n in notes if n.get("pinned")]
         for n in pinned:

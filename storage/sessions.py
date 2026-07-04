@@ -44,6 +44,70 @@ class SessionManagerBase:
             return compact
         return compact[: limit - 3].rstrip() + "..."
 
+    def _human_age(self, iso_str: str) -> str:
+        """Convert ISO timestamp to human-readable age like '2 hours ago'."""
+        try:
+            dt = datetime.fromisoformat(iso_str)
+            delta = datetime.now(timezone.utc) - dt
+            secs = int(delta.total_seconds())
+            if secs < 60:
+                return "moments ago"
+            if secs < 3600:
+                m = secs // 60
+                return f"{m} minute{'s' if m != 1 else ''} ago"
+            if secs < 86400:
+                h = secs // 3600
+                return f"{h} hour{'s' if h != 1 else ''} ago"
+            d = secs // 86400
+            return f"{d} day{'s' if d != 1 else ''} ago"
+        except Exception:
+            return "unknown"
+
+    def _render_sessions_block(self, topic_slug: str) -> list[str]:
+        """Render a sessions context block. Calls auto_recover_sessions first."""
+        lines: list[str] = []
+        try:
+            if hasattr(self, 'auto_recover_sessions'):
+                self.auto_recover_sessions(topic_slug)
+        except Exception:
+            pass
+        if not hasattr(self, 'list_sessions'):
+            return lines
+        try:
+            active = self.list_sessions(topic_slug, status='active')
+            if active:
+                for s in active[:3]:
+                    title = s.get('title', 'untitled')
+                    agent = s.get('agent_id', '?')
+                    age = self._human_age(s.get('last_active_at', ''))
+                    lines.append(f"  session: '{title}' ({agent}) active, last {age}")
+        except Exception:
+            pass
+        try:
+            closed_or_paused = self.list_sessions(topic_slug, status='closed')
+            closed_or_paused.extend(self.list_sessions(topic_slug, status='paused'))
+            if closed_or_paused:
+                closed_or_paused.sort(key=lambda s: s.get('last_active_at', ''), reverse=True)
+                last = closed_or_paused[0]
+                summary = last.get('summary')
+                if summary:
+                    lines.append(f"  last session: {summary[:300]}")
+                else:
+                    note_ids = json.loads(last.get('note_ids', '[]'))[-5:]
+                    if note_ids:
+                        cursor = self.storage.connection.cursor()
+                        placeholders = ",".join("?" for _ in note_ids)
+                        notes = cursor.execute(
+                            f"SELECT title, content FROM notes WHERE id IN ({placeholders}) ORDER BY id ASC",
+                            note_ids,
+                        ).fetchall()
+                        for nr in notes:
+                            title = nr['title'] or nr['content'][:80]
+                            lines.append(f"  last session note: {title[:200]}")
+        except Exception:
+            pass
+        return lines
+
     def get_or_create_folder_hub(self, folder_name: str) -> Node:
         title = f"Session: {folder_name}"
         nodes = self.storage.get_all_nodes()

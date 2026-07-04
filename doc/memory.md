@@ -23,6 +23,12 @@ mem planet read "my-project"
 # Log a turn (lightweight activity record)
 mem session turn --topic "my-project" --message "Reviewed the PR" --agent-id "codex"
 
+# Start a session, work, then let the next agent pick up context
+mem session start "my-project" "Sprint 1" --agent-id "agent-a"
+mem note add "my-project" --type decision -m "Use SQLite for persistence"
+mem session end 1 --summary "Decided on SQLite"
+# Next agent: context auto-includes last session summary via getContext
+
 # Search across all content
 mem search "what is machine learning"
 
@@ -38,7 +44,7 @@ mem session sync "topic-name" --agent-id "your-unique-suffix"
 ### Context & Discovery
 | Tool | Parameters | Description |
 |------|-----------|-------------|
-| `getContext` | `topic`, `project`, `query` | Call for mid-session context refresh or when switching topics. Context is automatically injected at session start via the SessionStart hook. |
+| `getContext` | `topic`, `project`, `query` | Call for mid-session context refresh or when switching topics. Context is automatically injected at session start via the SessionStart hook. Response includes a sessions block (active sessions + last closed/paused session summary). |
 | `read_planet` | `topic` | Full planet details with all notes |
 | `list_planets` | — | Discover what topics exist |
 | `search_nodes` | `query`, `limit` | Full-text search across all content |
@@ -78,6 +84,16 @@ Enable them when actively curating note quality; omit them for a leaner tool lis
 | `compact_planet` | `topic` | Keep summaries + 30 recent notes |
 | `edge_maintain` | `planet`, `decayFactor`, `pruneThreshold` | Apply weight decay (multiply all auto-link weights by factor) and/or prune edges below a weight threshold. Decay runs before prune so pruning reflects decayed weights. At least one of `decayFactor` or `pruneThreshold` required. |
 
+### Session Management
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `session_start` | `topic`, `title`, `agent_id` | Start a new session (returns session_id) |
+| `session_end` | `session_id`, `summary` (optional) | Close a session |
+| `session_pause` | `session_id` | Pause a session (make inactive) |
+| `session_resume` | `session_id`, `agent_id` | Resume a paused session |
+| `session_read` | `session_id` | Full session details with expanded notes and tasks |
+| `session_list` | `topic` (optional), `status` (optional) | List sessions, optionally filtered |
+
 ## CLI Commands
 
 ```
@@ -86,7 +102,7 @@ mem note add/link/neighbors
 mem search
 mem agent-context
 mem list-planets
-mem session turn/context/read/sync
+mem session turn/context/read/sync/start/end/pause/resume/list
 mem recompute-links
 mem edge maintain
 mem export / mem import
@@ -113,6 +129,24 @@ mem export / mem import
 }
 ```
 
+### Session
+
+```python
+{
+    "id": "int",
+    "topic": "str",              # planet slug
+    "title": "str",
+    "status": "str",             # active, paused, closed
+    "started_at": "str",         # ISO 8601
+    "ended_at": "str",           # ISO 8601 (null if active)
+    "last_active_at": "str",     # ISO 8601
+    "summary": "str",            # closing summary (null if active)
+    "agent_id": "str",           # agent that started/resumed the session
+    "note_ids": "list[int]",     # JSON array of note IDs stamped during session
+    "task_ids": "list[int]",     # JSON array of task IDs stamped during session
+}
+```
+
 ### Note
 
 ```python
@@ -125,6 +159,7 @@ mem export / mem import
     "agent_id": "str",
     "status": "str",             # open, resolved, closed
     "turn_index": "int",
+    "session_id": "int|None",    # stamped when created during an active session
 }
 ```
 
@@ -164,11 +199,31 @@ When `add_note` is called, the new note is automatically linked to existing note
 - **warm** — stable knowledge, not recently accessed
 - **compacted** — summarized by agent, only summary + 30 recent notes preserved
 
+## Sessions
+
+Sessions group related notes and tasks under a named work interval. When a note is added or a task is created/updated while a session is **active** on that planet, the note or task is automatically stamped with the session id.
+
+### Auto-Recovery
+
+`getContext` and `agent-context` automatically run session recovery before reporting: any session whose `last_active_at` is older than `BASEMEM_SESSION_TIMEOUT_HOURS` (default 24) is **paused** and a fact note is created recording the timeout. This prevents stale sessions from silently accumulating.
+
+### Stamping
+
+- **Notes**: `add_note` calls `get_active_session(topic, agent_id)` — the active session with a matching agent_id is selected. If found, the note is stamped.
+- **Tasks**: `create_task` and `update_task` call `list_sessions(topic, status='active')` — the most recently active session on the planet is selected. Tasks don't carry an `agent_id`, so agent-scoped filtering is not applied.
+
+### Context Block
+
+Both `getContext` and `agent-context` include a **Sessions** block above the notes section, listing:
+- Active sessions with their title, agent, and human-readable age
+- The last closed or paused session with its summary, or the titles of its last 5 notes if no summary exists
+
 ## Configuration
 
 ```bash
 export BASEMEM_DB_PATH="./data/basemem.db"
 export BASEMEM_ENABLE_ADVANCED_TOOLS=1  # enables compute_similarity + rerank tools
+export BASEMEM_SESSION_TIMEOUT_HOURS=24  # session auto-pause timeout (min 1)
 ```
 
 Default location: `~/.basemem/basemem.db`
