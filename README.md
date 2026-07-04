@@ -34,7 +34,7 @@ BaseMem writes rule files, MCP config, and hooks for 13 agents:
 
 | Agent | Rules | MCP | Hooks | Config Path |
 |-------|-------|-----|-------|-------------|
-| Claude Code | `CLAUDE.md` | `mcpServers` | hooks session-start, prompt-tracker, statusline | `~/.claude.json` |
+| Claude Code | `CLAUDE.md` | `mcpServers` | hooks session-start, prompt-tracker, statusline | `~/.claude/settings.json` |
 | Cursor | `.mdc` | `mcpServers` | -- | `~/.cursor/mcp.json` |
 | Windsurf | `.md` | `mcpServers` | -- | `~/.windsurf/mcp_config.json` |
 | VS Code | -- | `servers` key | -- | `.vscode/mcp.json` |
@@ -114,8 +114,8 @@ All interfaces (CLI, MCP, Flask) read and write the same SQLite tables — no sy
 
 ### Core Components
 
-1. **Storage Layer** (`storage/`) — SQLite + FTS5, `SessionManager`, schema: planets, notes, note_links, planet_links
-2. **MCP Server** (`mcp_server/server.py`) — 29 MCP tools (memory + code + tasks; 31 with `BASEMEM_ENABLE_ADVANCED_TOOLS=1`)
+1. **Storage Layer** (`storage/`) — SQLite + FTS5, `SessionManager`, schema: planets, notes, note_links, planet_links, sessions, tasks; config via env vars
+2. **MCP Server** (`mcp_server/server.py`) — 35 MCP tools (memory + code + tasks + sessions; 37 with `BASEMEM_ENABLE_ADVANCED_TOOLS=1`)
 3. **Web Hub** (`server.py`) — Flask REST API, D3.js graph visualization
 4. **CLI** (`cli/`) — subcommands: planet, note, task, session, code, edge
 5. **Code Intelligence** (`indexer/`) — tree-sitter powered, per-project `.basemem.code.db`
@@ -134,8 +134,9 @@ BaseMem/
 │   └── edge.py
 ├── graph/            # Graph engine
 ├── indexer/          # Code intelligence (tree-sitter)
-├── mcp_server/       # MCP server (29 tools, 31 with BASEMEM_ENABLE_ADVANCED_TOOLS)
+├── mcp_server/       # MCP server (35 tools, 37 with BASEMEM_ENABLE_ADVANCED_TOOLS)
 ├── storage/          # SQLite storage layer
+│   ├── config.py     # Env var config
 │   ├── sessions.py   # Session manager
 │   ├── planets.py    # Planet CRUD
 │   ├── notes.py      # Note CRUD + linking

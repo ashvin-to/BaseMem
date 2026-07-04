@@ -35,26 +35,32 @@ mem code list-projects
 | Tool | Description |
 |------|-------------|
 | `code_init(projectRoot)` | Index a project; stores `.basemem.code.db` in project root |
-| `code_find(query, root, dead, filePath, limit, source, references, grep)` | Find symbols. `source=True` returns lines. `references=True` finds usages. `grep=True` raw text search across ALL files |
-| `code_read(filePath, offset, limit)` | Read file contents with line numbers |
-| `code_explore(query, root, limit)` | One-shot: search + source code + call paths |
-| `code_files(prefix, root, pattern, limit)` | List indexed files, or `pattern='**/*.json'` for glob wildcard search |
-| `code_impact(symbolName, root, depth, limit)` | Transitive reverse dependency graph |
-| `code_trace(symbolName, root, direction, depth, limit)` | Recursive inbound/outbound call chain |
+| `code_find(query, projectRoot, dead, filePath, limit, source, references, grep)` | Find symbols. `source=True` returns lines. `references=True` finds usages. `grep=True` raw text search across ALL files |
+| `code_read(filePath, projectRoot, offset, limit)` | Read file contents with line numbers |
+| `code_explore(query, projectRoot, limit)` | One-shot: search + source code + call paths |
+| `code_files(projectRoot, prefix, pattern, limit)` | List indexed files, or `pattern='**/*.json'` for glob wildcard search |
+| `code_impact(symbolName, projectRoot, depth, limit)` | Transitive reverse dependency graph |
+| `code_trace(symbolName, projectRoot, direction, depth, limit)` | Recursive inbound/outbound call chain |
 | `code_list_projects(searchRoot)` | Scan filesystem for all indexed projects |
 
 ## CLI Commands
 
 ```
 mem code init [--watch]          # Index or incrementally re-index a project
-mem code sync                    # Re-index a project
-mem code find <query> [--dead] [--file-path] [--source]
-mem code explore <query>
-mem code files [--prefix]
-mem code impact <symbol> [--depth]
-mem code trace <symbol> [--direction both] [--depth]
-mem code query <query> [--kind] [--json]
-mem code callers / callees / node / list / status / list-projects / search
+mem code sync                    # Incremental re-index (changed files only)
+mem code find <query> [--dead] [--file-path] [--source] [--grep]
+mem code explore <query> [--limit]
+mem code files [--prefix] [--pattern] [--limit]
+mem code trace <symbol> [--direction] [--depth] [--limit]
+mem code impact <symbol> [--depth] [--limit]
+mem code list-projects           # Discover all indexed projects
+mem code callers <symbol>        # Inbound callers
+mem code callees <symbol>        # Outbound callees
+mem code node <symbol>           # Symbol details by name or id
+mem code list [--project-root]   # List all symbols in a project
+mem code query <query> [--kind]  # Search symbols by name or signature
+mem code search <query>          # Alias for find
+mem code status                  # Index stats for a project
 ```
 
 ## Agent Edit Workflow

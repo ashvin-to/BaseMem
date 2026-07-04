@@ -41,6 +41,8 @@ mem session sync "topic-name" --agent-id "your-unique-suffix"
 
 ## MCP Tools
 
+**35 core tools (37 with `BASEMEM_ENABLE_ADVANCED_TOOLS=1`).**
+
 ### Context & Discovery
 | Tool | Parameters | Description |
 |------|-----------|-------------|
@@ -159,6 +161,8 @@ mem export / mem import
     "agent_id": "str",
     "status": "str",             # open, resolved, closed
     "turn_index": "int",
+    "tags": "list[str]",         # comma-separated in storage
+    "pinned": "bool",            # pinned notes survive compaction
     "session_id": "int|None",    # stamped when created during an active session
 }
 ```

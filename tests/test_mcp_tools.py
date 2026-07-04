@@ -1,4 +1,4 @@
-"""Tests for all 30 MCP tools (memory + graph + code tool smoke tests)."""
+"""Tests for all 35 core MCP tools (memory + graph + code + sessions + tasks smoke tests)."""
 
 import json
 import os
