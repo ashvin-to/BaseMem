@@ -251,3 +251,16 @@ class TaskMixin:
             ).rowcount
         self.storage.connection.commit()
         return {"pruned": affected, "threshold": threshold}
+
+    def edge_maintain(self, planet: str | None = None, decay_factor: float | None = None, prune_threshold: float | None = None) -> str:
+        """Apply decay and/or prune to auto-links. Decay runs first, so pruning reflects decayed weights. At least one of decay_factor or prune_threshold must be provided."""
+        if decay_factor is None and prune_threshold is None:
+            return "Error: at least one of decay_factor or prune_threshold must be provided."
+        parts = []
+        if decay_factor is not None:
+            result = self.edge_decay(factor=decay_factor, planet=planet)
+            parts.append(f"Decayed {result['decayed']} edge(s) by factor {result['factor']}.")
+        if prune_threshold is not None:
+            result = self.edge_prune(threshold=prune_threshold, planet=planet)
+            parts.append(f"Pruned {result['pruned']} edge(s) below threshold {result['threshold']}.")
+        return " ".join(parts)

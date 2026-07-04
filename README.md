@@ -114,7 +114,7 @@ All interfaces (CLI, MCP, Flask) read and write the same SQLite tables — no sy
 ### Core Components
 
 1. **Storage Layer** (`storage/`) — SQLite + FTS5, `SessionManager`, schema: planets, notes, note_links, planet_links
-2. **MCP Server** (`mcp_server/server.py`) — 37 MCP tools (memory + code + tasks)
+2. **MCP Server** (`mcp_server/server.py`) — 29 MCP tools (memory + code + tasks; 31 with `BASEMEM_ENABLE_ADVANCED_TOOLS=1`)
 3. **Web Hub** (`server.py`) — Flask REST API, D3.js graph visualization
 4. **CLI** (`cli/`) — subcommands: planet, note, task, session, code, edge
 5. **Code Intelligence** (`indexer/`) — tree-sitter powered, per-project `.basemem.code.db`
@@ -133,7 +133,7 @@ BaseMem/
 │   └── edge.py
 ├── graph/            # Graph engine
 ├── indexer/          # Code intelligence (tree-sitter)
-├── mcp_server/       # MCP server (37 tools)
+├── mcp_server/       # MCP server (29 tools, 31 with BASEMEM_ENABLE_ADVANCED_TOOLS)
 ├── storage/          # SQLite storage layer
 │   ├── sessions.py   # Session manager
 │   ├── planets.py    # Planet CRUD

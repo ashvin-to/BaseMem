@@ -14,7 +14,7 @@ mem planet set "my-project" --status active --next "Read the docs"
 # Add a decision or fact
 mem note add "my-project" --type decision -m "Use SQLite for persistence"
 
-# Get agent-ready context before answering
+# Get agent-ready context (auto-injected at session start; use for mid-session refresh)
 mem agent-context --topic "my-project" --query "what did we decide?"
 
 # Read the full planet details
@@ -36,46 +36,47 @@ mem session sync "topic-name" --agent-id "your-unique-suffix"
 ## MCP Tools
 
 ### Context & Discovery
-| Tool | Description |
-|------|-------------|
-| `getContext(topic, query)` | Compact pre-answer memory block |
-| `read_planet(topic)` | Full planet details with all notes |
-| `list_planets()` | Discover what topics exist |
-| `search_nodes(query)` | Full-text search across all content |
-| `search_notes(topic, kind, query)` | Filtered note search |
-| `get_node(nodeId)` | Read any node by ID |
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `getContext` | `topic`, `project`, `query` | Call for mid-session context refresh or when switching topics. Context is automatically injected at session start via the SessionStart hook. |
+| `read_planet` | `topic` | Full planet details with all notes |
+| `list_planets` | — | Discover what topics exist |
+| `search_nodes` | `query`, `limit` | Full-text search across all content |
+| `search_notes` | `topic`, `kind`, `query`, `limit` | Filtered note search |
+| `get_node` | `nodeId` | Read any node by ID |
 
 ### Writing
-| Tool | Description |
-|------|-------------|
-| `update_planet(topic, ...)` | Update or create a planet |
-| `logInteraction(topic, ...)` | Persist decision, fact, state change, next step |
-| `link_notes(fromNoteId, toNoteId, linkType)` | Connect two notes |
-| `link_planets(fromPlanet, toPlanet, relation)` | Connect two planets |
-| `set_memory_state(topic, state)` | Set hot/warm/compacted |
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `update_planet` | `topic`, `currentState`, `nextStep`, `status`, `goal`, `filePath`, `command`, `handoff` | Update or create a planet |
+| `logInteraction` | `topic`, `decision`, `fact`, `summary`, `currentState`, `nextStep`, `activity` | Persist decision, fact, state change, activity — all in one call |
+| `link_notes` | `fromNoteId`, `toNoteId`, `linkType`, `weight` | Connect two notes |
+| `link_planets` | `fromPlanet`, `toPlanet`, `relation`, `weight` | Connect two planets |
+| `note_update` | `noteId`, `pinned`, `tags` | Set pinned status (true/false) and/or replace comma-separated tags. At least one of `pinned` or `tags` required. |
+| `set_memory_state` | `topic`, `state` | Set hot/warm/compacted |
 
 ### Graph Navigation
-| Tool | Description |
-|------|-------------|
-| `get_note_neighbors(noteId)` | Find all notes linked to a note |
-| `get_planet_links(planet)` | Find all planets linked to a planet |
-| `get_neighbors_weighted(noteId, depth, minWeight)` | Recursive weighted traversal |
-| `get_subgraph(noteId, depth, minWeight)` | Extract structured subgraph |
-| `rank_neighbors(noteId, by)` | Sort neighbors by weight or confidence |
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `get_graph` | `noteId`, `depth` (default=1), `minWeight` (default=0.0), `ranked` (default=false) | Flat list of neighbors at depth=1 filtered by minWeight. When ranked=true, sorts by weight desc then confidence desc. When depth>1, returns full subgraph as JSON. |
+| `get_planet_links` | `planet` | Find all planets linked to a planet |
 
-### Agent-Driven Intelligence
-| Tool | Description |
-|------|-------------|
-| `compute_similarity(noteIdA, noteIdB)` | Returns both notes for agent to judge similarity |
-| `rerank(query, noteIds)` | Returns query + notes for agent to reorder by relevance |
+### Agent-Driven Intelligence (optional tier)
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `compute_similarity` | `noteIdA`, `noteIdB` | Returns both notes for agent to judge similarity |
+| `rerank` | `query`, `noteIds` | Returns query + notes for agent to reorder by relevance |
+
+These two tools rely on agent-driven semantic judgment rather than deterministic computation.
+They are only registered when `BASEMEM_ENABLE_ADVANCED_TOOLS=1` or `BASEMEM_ENABLE_ADVANCED_TOOLS=true` is set.
+Enable them when actively curating note quality; omit them for a leaner tool list in daily development.
 
 ### Lifecycle
-| Tool | Description |
-|------|-------------|
-| `summarize_planet(topic)` | Return all notes for agent summarization |
-| `compact_planet(topic)` | Keep summaries + 30 recent notes |
-| `edge_decay(factor, planet)` | Multiply all auto-link weights by factor |
-| `edge_prune(threshold, planet)` | Remove auto-links below weight threshold |
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `summarize_planet` | `topic`, `limit` | Return all notes for agent summarization |
+| `compact_planet` | `topic` | Keep summaries + 30 recent notes |
+| `edge_maintain` | `planet`, `decayFactor`, `pruneThreshold` | Apply weight decay (multiply all auto-link weights by factor) and/or prune edges below a weight threshold. Decay runs before prune so pruning reflects decayed weights. At least one of `decayFactor` or `pruneThreshold` required. |
 
 ## CLI Commands
 
@@ -87,7 +88,7 @@ mem agent-context
 mem list-planets
 mem session turn/context/read/sync
 mem recompute-links
-mem edge decay/prune
+mem edge maintain
 mem export / mem import
 ```
 
@@ -167,6 +168,7 @@ When `add_note` is called, the new note is automatically linked to existing note
 
 ```bash
 export BASEMEM_DB_PATH="./data/basemem.db"
+export BASEMEM_ENABLE_ADVANCED_TOOLS=1  # enables compute_similarity + rerank tools
 ```
 
 Default location: `~/.basemem/basemem.db`

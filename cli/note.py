@@ -70,8 +70,8 @@ def note_pin(ctx, note_id):
     """Pin a note so compact_planet never drops it."""
     from storage.sessions import SessionManager
     manager = SessionManager(ctx.obj['storage'])
-    ok, msg = manager.pin_note(note_id)
-    click.echo(f"[ok] {msg}" if ok else f"[!] {msg}")
+    msg = manager.note_update(note_id, pinned=True)
+    click.echo(f"[ok] {msg}")
 
 
 @note.command("unpin")
@@ -81,8 +81,8 @@ def note_unpin(ctx, note_id):
     """Unpin a previously pinned note."""
     from storage.sessions import SessionManager
     manager = SessionManager(ctx.obj['storage'])
-    ok, msg = manager.unpin_note(note_id)
-    click.echo(f"[ok] {msg}" if ok else f"[!] {msg}")
+    msg = manager.note_update(note_id, pinned=False)
+    click.echo(f"[ok] {msg}")
 
 
 @note.command("tag")
@@ -93,9 +93,8 @@ def note_tag(ctx, note_id, tags):
     """Tag a note with comma-separated keywords (replaces existing tags)."""
     from storage.sessions import SessionManager
     manager = SessionManager(ctx.obj['storage'])
-    tag_list = [t.strip() for t in tags.split(",") if t.strip()]
-    ok, msg = manager.tag_note(note_id, tag_list)
-    click.echo(f"[ok] {msg}" if ok else f"[!] {msg}")
+    msg = manager.note_update(note_id, tags=tags)
+    click.echo(f"[ok] {msg}")
 
 
 def _get_project_root():

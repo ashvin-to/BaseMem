@@ -1,4 +1,4 @@
-"""Edge CLI: decay and prune auto-links."""
+"""Edge CLI: maintain auto-links (decay and/or prune)."""
 
 import click
 
@@ -9,25 +9,14 @@ def edge():
     pass
 
 
-@edge.command("decay")
-@click.option('--factor', default=0.9, type=float, help='Multiply all auto-link weights by this factor')
+@edge.command("maintain")
+@click.option('--decay-factor', type=float, help='Multiply all auto-link weights by this factor')
+@click.option('--prune-threshold', type=float, help='Remove auto-links below this weight')
 @click.option('--planet', help='Limit to a specific planet')
 @click.pass_context
-def edge_decay(ctx, factor, planet):
-    """Apply weight decay to auto-links. Reduces old/unused connections."""
+def edge_maintain(ctx, decay_factor, prune_threshold, planet):
+    """Apply decay and/or prune to auto-links. Decay runs before prune so pruning reflects decayed weights. At least one of --decay-factor or --prune-threshold must be provided."""
     from storage.sessions import SessionManager
     manager = SessionManager(ctx.obj['storage'])
-    result = manager.edge_decay(factor=factor, planet=planet)
-    click.echo(f"Decayed {result['decayed']} edge(s) by factor {result['factor']}.")
-
-
-@edge.command("prune")
-@click.option('--threshold', default=0.05, type=float, help='Remove auto-links below this weight')
-@click.option('--planet', help='Limit to a specific planet')
-@click.pass_context
-def edge_prune(ctx, threshold, planet):
-    """Remove auto-links below a weight threshold."""
-    from storage.sessions import SessionManager
-    manager = SessionManager(ctx.obj['storage'])
-    result = manager.edge_prune(threshold=threshold, planet=planet)
-    click.echo(f"Pruned {result['pruned']} edge(s) below threshold {result['threshold']}.")
+    msg = manager.edge_maintain(planet=planet, decay_factor=decay_factor, prune_threshold=prune_threshold)
+    click.echo(msg)

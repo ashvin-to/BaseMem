@@ -508,19 +508,25 @@ class TestMigrationIdempotency:
         tables = {r["name"] for r in conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table'"
         ).fetchall()}
-        for tbl in ("planets", "notes", "note_links", "planet_links", "tasks"):
+        for tbl in ("planets", "notes", "note_links", "planet_links", "tasks", "sessions"):
             assert tbl in tables, f"Missing table: {tbl}"
 
         # Verify all expected columns on notes
         notes_cols = {r[1] for r in conn.execute("PRAGMA table_info(notes)").fetchall()}
-        for col in ("tags", "pinned"):
+        for col in ("tags", "pinned", "session_id"):
             assert col in notes_cols, f"Missing column notes.{col}"
 
         # Verify all expected columns on tasks
         tasks_cols = {r[1] for r in conn.execute("PRAGMA table_info(tasks)").fetchall()}
         for col in ("id", "topic", "title", "status", "priority",
-                    "depends_on", "files", "notes", "created_at", "completed_at"):
+                    "depends_on", "files", "notes", "created_at", "completed_at", "session_id"):
             assert col in tasks_cols, f"Missing column tasks.{col}"
+
+        # Verify all expected columns on sessions
+        sessions_cols = {r[1] for r in conn.execute("PRAGMA table_info(sessions)").fetchall()}
+        for col in ("id", "topic", "title", "status", "started_at", "ended_at",
+                    "last_active_at", "summary", "agent_id", "note_ids", "task_ids"):
+            assert col in sessions_cols, f"Missing column sessions.{col}"
 
         # Verify data survived
         planets = conn.execute("SELECT * FROM planets").fetchall()
@@ -532,7 +538,8 @@ class TestMigrationIdempotency:
         assert notes[0]["title"] == "old fixture note"
 
         # No duplicate columns from running migration twice
-        assert len(tasks_cols) == 10
+        assert len(tasks_cols) == 11
+        assert len(sessions_cols) == 11
 
         conn.close()
 
@@ -545,7 +552,7 @@ class TestMigrationIdempotency:
             conn.commit()
 
         # Verify no duplicate columns on any table
-        for tbl in ("planets", "notes", "note_links", "planet_links", "tasks"):
+        for tbl in ("planets", "notes", "note_links", "planet_links", "tasks", "sessions"):
             cols = {r[1] for r in conn.execute(f"PRAGMA table_info({tbl})").fetchall()}
             # Should be no duplicates — set dedup means unique only
             assert len(cols) == len(

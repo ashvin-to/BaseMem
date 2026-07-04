@@ -18,6 +18,30 @@ Never answer a project question without calling getContext first. Never use a ge
 
 const FLAG_FILENAME = '.basemem-active';
 
+function findProjectName() {
+  const cwd = process.cwd();
+  let current = cwd;
+  for (let i = 0; i <= 3; i++) {
+    try {
+      const pkgPath = path.join(current, 'package.json');
+      if (fs.existsSync(pkgPath)) {
+        const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+        if (pkg.name) return pkg.name;
+      }
+      const pyprojectPath = path.join(current, 'pyproject.toml');
+      if (fs.existsSync(pyprojectPath)) {
+        const content = fs.readFileSync(pyprojectPath, 'utf-8');
+        const match = content.match(/^name\s*=\s*"([^"]+)"/m);
+        if (match) return match[1];
+      }
+    } catch (_) {}
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return path.basename(cwd);
+}
+
 function main() {
   const configDir = getClaudeDir();
   const flagFile = path.join(configDir, FLAG_FILENAME);
@@ -37,10 +61,27 @@ function main() {
 
   fs.writeFileSync(flagFile, 'active', 'utf-8');
 
+  let additionalContext = BASEMEM_RULES;
+
+  try {
+    const projectName = findProjectName();
+    if (projectName) {
+      const { execSync } = require('child_process');
+      const ctx = execSync(`mem agent-context --topic "${projectName}"`, {
+        timeout: 3000,
+        encoding: 'utf-8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }).trim();
+      if (ctx) {
+        additionalContext = BASEMEM_RULES + '\n\n' + ctx;
+      }
+    }
+  } catch (_) {}
+
   const output = {
     hookSpecificOutput: {
       hookEventName: 'SessionStart',
-      additionalContext: BASEMEM_RULES,
+      additionalContext,
     },
   };
   console.log(JSON.stringify(output));

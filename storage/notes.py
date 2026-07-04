@@ -471,6 +471,23 @@ class NoteMixin:
         _pexec(self.storage.connection, "UPDATE notes SET tags = ? WHERE id = ?", (json.dumps(tags), nid))
         return True, f"Tagged note-{nid} with {tags}"
 
+    def note_update(self, note_id: int | str, pinned: bool | None = None, tags: str | None = None) -> str:
+        """Update a note's pinned status and/or tags. At least one of pinned or tags must be provided."""
+        if pinned is None and tags is None:
+            return "Error: at least one of pinned or tags must be provided."
+        parts = []
+        if pinned is not None:
+            if pinned:
+                ok, msg = self.pin_note(note_id)
+            else:
+                ok, msg = self.unpin_note(note_id)
+            parts.append(msg)
+        if tags is not None:
+            tag_list = [t.strip() for t in tags.split(",") if t.strip()]
+            ok, msg = self.tag_note(note_id, tag_list)
+            parts.append(msg)
+        return " | ".join(parts)
+
     def search_all(self, query: str, limit: int = 10) -> dict:
         like = f"%{query}%"
         cursor = self.storage.connection.cursor()

@@ -51,10 +51,22 @@ def _env_path() -> "str | None":
 import json
 import os
 import sqlite3
+from functools import wraps
 
 from mcp.server.fastmcp import FastMCP
 
 server = FastMCP("mem")
+
+
+def _optional_tool(*args, **kwargs):
+    """Decorator that only registers the tool if BASEMEM_ENABLE_ADVANCED_TOOLS=1/true.
+    These tools (compute_similarity, rerank) rely on agent-driven semantic judgment
+    rather than deterministic computation. Most users do not need them in daily use;
+    they add noise to the tool list. Enable only when actively curating note quality."""
+    val = os.environ.get("BASEMEM_ENABLE_ADVANCED_TOOLS", "")
+    if val in ("1", "true", "True"):
+        return server.tool(*args, **kwargs)
+    return lambda f: f
 
 
 
@@ -837,55 +849,17 @@ def link_notes(fromNoteId: str, toNoteId: str, linkType: str = "related", weight
     return msg
 
 
-@server.tool(description="Find notes linked to a note.")
-def get_note_neighbors(noteId: str) -> str:
-    """Get neighbors of a note."""
+
+
+
+@server.tool(description="Update a note: set pinned status and/or replace tags. At least one of pinned or tags must be provided.")
+def note_update(noteId: str, pinned: bool | None = None, tags: str | None = None) -> str:
+    """Update a note's pinned status and/or tags. Both parameters are optional, but at least one must be provided."""
     from storage.db import StorageManager
     from storage.sessions import SessionManager
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
-    neighbors = manager.get_note_neighbors(noteId)
-    if not neighbors:
-        return "No linked notes found."
-    lines = [f"Neighbors of {noteId}:\n"]
-    for n in neighbors:
-        name = n["title"] or n["content"][:80]
-        lines.append(f"- note-{n['id']} [{n['link_type']}] (w={n['weight']}) {name}")
-    return "\n".join(lines)
-
-
-@server.tool(description="Pin a note so compact_planet never drops it.")
-def note_pin(noteId: str) -> str:
-    """Pin a note to preserve it through compaction."""
-    from storage.db import StorageManager
-    from storage.sessions import SessionManager
-    storage = StorageManager(get_db_path())
-    manager = SessionManager(storage)
-    ok, msg = manager.pin_note(noteId)
-    return msg
-
-
-@server.tool(description="Unpin a note.")
-def note_unpin(noteId: str) -> str:
-    """Unpin a previously pinned note."""
-    from storage.db import StorageManager
-    from storage.sessions import SessionManager
-    storage = StorageManager(get_db_path())
-    manager = SessionManager(storage)
-    ok, msg = manager.unpin_note(noteId)
-    return msg
-
-
-@server.tool(description="Set tags on a note (replaces existing tags).")
-def note_tag(noteId: str, tags: str) -> str:
-    """Tag a note with comma-separated keywords."""
-    from storage.db import StorageManager
-    from storage.sessions import SessionManager
-    storage = StorageManager(get_db_path())
-    manager = SessionManager(storage)
-    tag_list = [t.strip() for t in tags.split(",") if t.strip()]
-    ok, msg = manager.tag_note(noteId, tag_list)
-    return msg
+    return manager.note_update(noteId, pinned=pinned, tags=tags)
 
 
 # ── Task MCP tools ─────────────────────────────────────────────
@@ -1010,12 +984,16 @@ def set_memory_state(topic: str, state: str) -> str:
     return msg
 
 
-# ── Graph-aware retrieval ─────────────────────────────────────
+# ── Collapsed graph tool ──────────────────────────────────────
 
 
-@server.tool(description="Weighted neighbor traversal with depth.")
-def get_neighbors_weighted(noteId: str, depth: int = 1, minWeight: float = 0.0) -> str:
-    """Weighted neighbor traversal with configurable depth."""
+@server.tool(description="Get graph data: flat neighbors (depth=1, default), ranked list (ranked=true), or subgraph JSON (depth>1).")
+def get_graph(noteId: str, depth: int = 1, minWeight: float = 0.0, ranked: bool = False) -> str:
+    """Get graph data around a note.
+    - depth=1 (default): flat list of direct neighbors filtered by minWeight.
+    - ranked=true: sorts by weight desc then confidence desc.
+    - depth>1: returns full subgraph structure as JSON (like old get_subgraph).
+    """
     from storage.db import StorageManager
     from storage.sessions import SessionManager
     storage = StorageManager(get_db_path())
@@ -1023,54 +1001,34 @@ def get_neighbors_weighted(noteId: str, depth: int = 1, minWeight: float = 0.0) 
     nid = manager._parse_note_id(noteId)
     if nid is None:
         return f"Invalid note ID: {noteId}"
-    results = manager.get_neighbors_weighted(nid, depth=depth, min_weight=minWeight)
-    if not results:
-        return "No neighbors found at this depth."
-    lines = [f"Neighbors (depth={depth}, min_weight={minWeight}):\n"]
-    for r in results:
-        lines.append(f"  note-{r['id']} [{r['link_type']}] (w={r['weight']}, d={r['_depth']}) {r['title'] or r['content'][:60]}")
-    return "\n".join(lines)
 
+    if depth > 1:
+        import json
+        result = manager.get_subgraph(nid, depth=depth, min_weight=minWeight)
+        return json.dumps(result, indent=2)
 
-@server.tool(description="Extract weighted subgraph as JSON.")
-def get_subgraph(noteId: str, depth: int = 2, minWeight: float = 0.2) -> str:
-    """Extract weighted subgraph around a note."""
-    import json
+    if ranked:
+        ranked_list = manager.rank_neighbors(nid)
+        if not ranked_list:
+            return "No neighbors found."
+        filtered = [r for r in ranked_list if r['weight'] >= minWeight]
+        if not filtered:
+            return "No neighbors found at this weight threshold."
+        lines = [f"Neighbors ranked by weight:\n"]
+        for i, r in enumerate(filtered, 1):
+            lines.append(f"  {i}. note-{r['id']} (w={r['weight']}, c={r.get('confidence','?')}) {r['title'] or r['content'][:60]}")
+        return "\n".join(lines)
 
-    from storage.db import StorageManager
-    from storage.sessions import SessionManager
-    storage = StorageManager(get_db_path())
-    manager = SessionManager(storage)
-    nid = manager._parse_note_id(noteId)
-    if nid is None:
-        return f"Invalid note ID: {noteId}"
-    result = manager.get_subgraph(nid, depth=depth, min_weight=minWeight)
-    return json.dumps(result, indent=2)
-
-
-@server.tool(description="Rank neighbors by weight or confidence.")
-def rank_neighbors(noteId: str, by: str = "weight") -> str:
-    """Rank neighbors by weight or confidence."""
-    from storage.db import StorageManager
-    from storage.sessions import SessionManager
-    storage = StorageManager(get_db_path())
-    manager = SessionManager(storage)
-    nid = manager._parse_note_id(noteId)
-    if nid is None:
-        return f"Invalid note ID: {noteId}"
-    ranked = manager.rank_neighbors(nid, by=by)
-    if not ranked:
+    neighbors = manager.get_neighbors_weighted(nid, depth=1, min_weight=minWeight)
+    if not neighbors:
         return "No neighbors found."
-    lines = [f"Neighbors ranked by {by}:\n"]
-    for i, r in enumerate(ranked, 1):
-        lines.append(f"  {i}. note-{r['id']} (w={r['weight']}, c={r.get('confidence','?')}) {r['title'] or r['content'][:60]}")
+    lines = [f"Neighbors (min_weight={minWeight}):\n"]
+    for r in neighbors:
+        lines.append(f"  note-{r['id']} [{r['link_type']}] (w={r['weight']}) {r['title'] or r['content'][:60]}")
     return "\n".join(lines)
 
 
-# ── Graph-aware retrieval (continued) ─────────────────────────
-
-
-@server.tool(description="Two notes for agent similarity comparison.")
+@_optional_tool(description="Two notes for agent similarity comparison.")
 def compute_similarity(noteIdA: str, noteIdB: str) -> str:
     """Return both notes for agent-driven semantic similarity comparison."""
     from storage.db import StorageManager
@@ -1098,7 +1056,7 @@ def compute_similarity(noteIdA: str, noteIdB: str) -> str:
     return "\n".join(result)
 
 
-@server.tool(description="Notes + query for agent reranking.")
+@_optional_tool(description="Notes + query for agent reranking.")
 def rerank(query: str, noteIds: list) -> str:
     """Return query + note contents for agent-driven reranking."""
     from storage.db import StorageManager
@@ -1128,26 +1086,14 @@ def rerank(query: str, noteIds: list) -> str:
     return "\n".join(parts)
 
 
-@server.tool(description="Decay auto-link weights by a factor.")
-def edge_decay(factor: float = 0.9, planet: str | None = None) -> str:
-    """Apply weight decay to auto-links."""
+@server.tool(description="Maintain auto-links: decay weights by a factor and/or prune below a threshold. Decay runs before prune so pruning reflects decayed weights. At least one of decayFactor or pruneThreshold must be provided.")
+def edge_maintain(planet: str | None = None, decayFactor: float | None = None, pruneThreshold: float | None = None) -> str:
+    """Apply decay and/or prune to auto-links. Decay runs first, then prune reflects decayed weights."""
     from storage.db import StorageManager
     from storage.sessions import SessionManager
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
-    result = manager.edge_decay(factor=factor, planet=planet)
-    return f"Decayed {result['decayed']} edge(s) by factor {result['factor']}."
-
-
-@server.tool(description="Prune edges below a weight threshold.")
-def edge_prune(threshold: float = 0.05, planet: str | None = None) -> str:
-    """Remove auto-links below weight threshold."""
-    from storage.db import StorageManager
-    from storage.sessions import SessionManager
-    storage = StorageManager(get_db_path())
-    manager = SessionManager(storage)
-    result = manager.edge_prune(threshold=threshold, planet=planet)
-    return f"Pruned {result['pruned']} edge(s) below threshold {result['threshold']}."
+    return manager.edge_maintain(planet=planet, decay_factor=decayFactor, prune_threshold=pruneThreshold)
 
 
 # ── Code Graph MCP Tools ─────────────────────────────────

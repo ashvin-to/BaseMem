@@ -251,21 +251,21 @@ class TestLinkTools:
         r = link_notes(fromNoteId=n["id"], toNoteId=n["id"])
         assert "itself" in r
 
-    def test_get_note_neighbors(self, seeded_db):
-        from mcp_server.server import get_note_neighbors
+    def test_get_graph_flat(self, seeded_db):
+        from mcp_server.server import get_graph
         db_path, storage, manager = seeded_db
         notes = manager.search_notes("graph-test-planet")
         nid = notes[0]["id"]
-        r = get_note_neighbors(noteId=f"note-{nid}")
+        r = get_graph(noteId=f"note-{nid}")
         assert "Neighbors" in r
         assert "note-" in r
 
-    def test_get_note_neighbors_empty(self, temp_db):
-        from mcp_server.server import get_note_neighbors
+    def test_get_graph_flat_empty(self, temp_db):
+        from mcp_server.server import get_graph
         db_path, storage, manager = temp_db
         n = manager.add_note("test", "isolated", "fact", "lonely")
-        r = get_note_neighbors(noteId=n["id"])
-        assert "No linked" in r
+        r = get_graph(noteId=n["id"])
+        assert "No neighbors" in r
 
     def test_link_planets(self, temp_db):
         from mcp_server.server import link_planets
@@ -314,97 +314,132 @@ class TestLinkTools:
 # ═══════════════════════════════════════════════════════════
 
 class TestGraphTools:
-    def test_get_neighbors_weighted(self, seeded_db):
-        from mcp_server.server import get_neighbors_weighted
+    def test_get_graph_flat_default(self, seeded_db):
+        from mcp_server.server import get_graph
         db_path, storage, manager = seeded_db
         notes = manager.search_notes("graph-test-planet")
         nid = notes[0]["id"]
-        r = get_neighbors_weighted(noteId=f"note-{nid}", depth=2, minWeight=0.0)
+        r = get_graph(noteId=f"note-{nid}")
         assert "Neighbors" in r
         assert len(r.splitlines()) > 1
 
-    def test_get_neighbors_weighted_min_weight(self, seeded_db):
-        from mcp_server.server import get_neighbors_weighted
+    def test_get_graph_flat_matches_storage_method(self, seeded_db):
+        """get_graph depth=1 should return same notes as manager.get_note_neighbors."""
+        from mcp_server.server import get_graph
         db_path, storage, manager = seeded_db
         notes = manager.search_notes("graph-test-planet")
         nid = notes[0]["id"]
-        r = get_neighbors_weighted(noteId=f"note-{nid}", depth=1, minWeight=0.9)
+        expected = {nb["id"] for nb in manager.get_note_neighbors(nid)}
+        r = get_graph(noteId=f"note-{nid}")
+        import re
+        found = set()
+        for m in re.finditer(r'note-(\d+)', r):
+            found.add(int(m.group(1)))
+        if expected:
+            assert found == expected, f"Expected IDs {expected}, found {found}"
+
+    def test_get_graph_min_weight(self, seeded_db):
+        from mcp_server.server import get_graph
+        db_path, storage, manager = seeded_db
+        notes = manager.search_notes("graph-test-planet")
+        nid = notes[0]["id"]
+        r = get_graph(noteId=f"note-{nid}", minWeight=0.9)
         if "No neighbors" in r:
-            assert True  # no edge >= 0.9
+            assert True
         else:
             assert "Neighbors" in r
 
-    def test_get_neighbors_weighted_no_links(self, temp_db):
-        from mcp_server.server import get_neighbors_weighted
+    def test_get_graph_no_links(self, temp_db):
+        from mcp_server.server import get_graph
         db_path, storage, manager = temp_db
         n = manager.add_note("test", "alone", "fact", "solo")
-        r = get_neighbors_weighted(noteId=n["id"])
+        r = get_graph(noteId=n["id"])
         assert "No neighbors" in r
 
-    def test_get_neighbors_weighted_invalid_id(self, seeded_db):
-        from mcp_server.server import get_neighbors_weighted
-        r = get_neighbors_weighted(noteId="note-99999")
+    def test_get_graph_invalid_id(self, seeded_db):
+        from mcp_server.server import get_graph
+        r = get_graph(noteId="note-99999")
         assert "No neighbors" in r or "Invalid" in r
 
-    def test_get_subgraph(self, seeded_db):
-        from mcp_server.server import get_subgraph
+    def test_get_graph_subgraph(self, seeded_db):
+        from mcp_server.server import get_graph
         db_path, storage, manager = seeded_db
         notes = manager.search_notes("graph-test-planet")
         nid = notes[0]["id"]
-        r = get_subgraph(noteId=f"note-{nid}", depth=2, minWeight=0.0)
+        r = get_graph(noteId=f"note-{nid}", depth=2, minWeight=0.0)
         data = json.loads(r)
         assert "nodes" in data
         assert "edges" in data
-        assert len(data["nodes"]) >= 2  # at least self + 1 neighbor
+        assert len(data["nodes"]) >= 2
 
-    def test_get_subgraph_deep(self, seeded_db):
-        from mcp_server.server import get_subgraph
+    def test_get_graph_subgraph_deep(self, seeded_db):
+        from mcp_server.server import get_graph
         db_path, storage, manager = seeded_db
         notes = manager.search_notes("graph-test-planet")
         nid = notes[0]["id"]
-        r = get_subgraph(noteId=f"note-{nid}", depth=3, minWeight=0.0)
+        r = get_graph(noteId=f"note-{nid}", depth=3, minWeight=0.0)
         data = json.loads(r)
         assert len(data["nodes"]) >= 2
         assert len(data["edges"]) >= 1
 
-    def test_get_subgraph_no_links(self, temp_db):
-        from mcp_server.server import get_subgraph
+    def test_get_graph_subgraph_no_links(self, temp_db):
+        from mcp_server.server import get_graph
         db_path, storage, manager = temp_db
         n = manager.add_note("test", "alone", "fact", "solo")
-        r = get_subgraph(noteId=n["id"])
+        r = get_graph(noteId=n["id"], depth=2)
         data = json.loads(r)
         assert "nodes" in data
-        assert len(data["nodes"]) >= 1  # self is always included
+        assert len(data["nodes"]) >= 1
         assert len(data["edges"]) == 0
 
-    def test_get_subgraph_invalid_id(self, seeded_db):
-        from mcp_server.server import get_subgraph
-        r = get_subgraph(noteId="note-99999")
+    def test_get_graph_subgraph_invalid_id(self, seeded_db):
+        from mcp_server.server import get_graph
+        r = get_graph(noteId="note-99999", depth=2)
         data = json.loads(r)
         assert data["nodes"] == []
 
-    def test_rank_neighbors(self, seeded_db):
-        from mcp_server.server import rank_neighbors
+    def test_get_graph_ranked(self, seeded_db):
+        from mcp_server.server import get_graph
         db_path, storage, manager = seeded_db
         notes = manager.search_notes("graph-test-planet")
         nid = notes[0]["id"]
-        r = rank_neighbors(noteId=f"note-{nid}", by="weight")
+        r = get_graph(noteId=f"note-{nid}", ranked=True)
         assert "ranked" in r.lower()
 
-    def test_rank_neighbors_no_links(self, temp_db):
-        from mcp_server.server import rank_neighbors
+    def test_get_graph_ranked_sorted_by_weight_desc(self, seeded_db):
+        """Ranked output must be sorted by weight descending."""
+        from mcp_server.server import get_graph
+        db_path, storage, manager = seeded_db
+        notes = manager.search_notes("graph-test-planet")
+        nid = notes[0]["id"]
+        r = get_graph(noteId=f"note-{nid}", ranked=True)
+        lines = r.strip().splitlines()
+        weights = []
+        for line in lines:
+            import re
+            m = re.search(r'w=([\d.]+)', line)
+            if m:
+                weights.append(float(m.group(1)))
+        if weights:
+            assert weights == sorted(weights, reverse=True), f"Expected descending weights, got {weights}"
+
+    def test_get_graph_ranked_no_links(self, temp_db):
+        from mcp_server.server import get_graph
         db_path, storage, manager = temp_db
         n = manager.add_note("test", "alone", "fact", "solo")
-        r = rank_neighbors(noteId=n["id"])
+        r = get_graph(noteId=n["id"], ranked=True)
         assert "No neighbors" in r
 
-    def test_rank_neighbors_by_confidence(self, seeded_db):
-        from mcp_server.server import rank_neighbors
+    def test_get_graph_ranked_min_weight(self, seeded_db):
+        from mcp_server.server import get_graph
         db_path, storage, manager = seeded_db
         notes = manager.search_notes("graph-test-planet")
         nid = notes[0]["id"]
-        r = rank_neighbors(noteId=f"note-{nid}", by="confidence")
-        assert "ranked" in r.lower()
+        r = get_graph(noteId=f"note-{nid}", ranked=True, minWeight=0.9)
+        if "No neighbors" in r:
+            assert True
+        else:
+            assert "ranked" in r.lower()
 
     def test_compute_similarity(self, seeded_db):
         from mcp_server.server import compute_similarity
@@ -447,47 +482,58 @@ class TestGraphTools:
         r = rerank(query="test", noteIds=["note-bogus"])
         assert "No valid" in r
 
-    def test_edge_decay(self, seeded_db):
-        from mcp_server.server import edge_decay
-        r = edge_decay(factor=0.5)
+    def test_edge_maintain_decay(self, seeded_db):
+        from mcp_server.server import edge_maintain
+        r = edge_maintain(decayFactor=0.5)
         assert "Decayed" in r
         # verify weights decreased
         nid = _first_note_id(seeded_db)
         before = _neighbor_weights(seeded_db, nid)
-        edge_decay(factor=0.5)
+        edge_maintain(decayFactor=0.5)
         after = _neighbor_weights(seeded_db, nid)
         if before:
             assert all(a <= b for a, b in zip(after, before, strict=False))
 
-    def test_edge_decay_by_planet(self, seeded_db):
-        from mcp_server.server import edge_decay
-        r = edge_decay(factor=0.9, planet="graph-test-planet")
+    def test_edge_maintain_decay_by_planet(self, seeded_db):
+        from mcp_server.server import edge_maintain
+        r = edge_maintain(decayFactor=0.9, planet="graph-test-planet")
         assert "Decayed" in r
 
-    def test_edge_decay_invalid_planet(self, temp_db):
-        from mcp_server.server import edge_decay
-        r = edge_decay(factor=0.9, planet="nonexistent")
+    def test_edge_maintain_decay_invalid_planet(self, temp_db):
+        from mcp_server.server import edge_maintain
+        r = edge_maintain(decayFactor=0.9, planet="nonexistent")
         assert "Decayed" in r  # 0 edges decayed
 
-    def test_edge_prune(self, seeded_db):
-        from mcp_server.server import edge_prune
+    def test_edge_maintain_prune(self, seeded_db):
+        from mcp_server.server import edge_maintain
         # First create a very low-weight edge
         db_path, storage, manager = seeded_db
         notes = manager.search_notes("graph-test-planet")
         if len(notes) >= 2:
             manager.link_notes(f"note-{notes[0]['id']}", f"note-{notes[1]['id']}", "related", 0.01)
-        r = edge_prune(threshold=0.05)
+        r = edge_maintain(pruneThreshold=0.05)
         assert "Pruned" in r
 
-    def test_edge_prune_by_planet(self, seeded_db):
-        from mcp_server.server import edge_prune
-        r = edge_prune(threshold=0.05, planet="graph-test-planet")
+    def test_edge_maintain_prune_by_planet(self, seeded_db):
+        from mcp_server.server import edge_maintain
+        r = edge_maintain(pruneThreshold=0.05, planet="graph-test-planet")
         assert "Pruned" in r
 
-    def test_edge_prune_invalid_planet(self, temp_db):
-        from mcp_server.server import edge_prune
-        r = edge_prune(threshold=0.05, planet="nonexistent")
+    def test_edge_maintain_prune_invalid_planet(self, temp_db):
+        from mcp_server.server import edge_maintain
+        r = edge_maintain(pruneThreshold=0.05, planet="nonexistent")
         assert "Pruned" in r  # 0 edges pruned
+
+    def test_edge_maintain_both(self, seeded_db):
+        from mcp_server.server import edge_maintain
+        r = edge_maintain(decayFactor=0.9, pruneThreshold=0.05)
+        assert "Decayed" in r
+        assert "Pruned" in r
+
+    def test_edge_maintain_neither(self, seeded_db):
+        from mcp_server.server import edge_maintain
+        r = edge_maintain()
+        assert "Error" in r
 
 
 # ═══════════════════════════════════════════════════════════
@@ -576,6 +622,188 @@ class TestCodeTools:
         assert "outside" in r.lower()
 
 
+# ═══════════════════════════════════════════════════════════
+# Note update tools
+# ═══════════════════════════════════════════════════════════
+
+class TestNoteUpdate:
+    def _nid(self, manager, raw_id):
+        """Parse note-{id} string to int."""
+        return manager._parse_note_id(raw_id)
+
+    def test_note_update_pin_only(self, temp_db):
+        from mcp_server.server import note_update
+        db_path, storage, manager = temp_db
+        n = manager.add_note("test", "nu-test", "fact", "test note")
+        note_id_str = n["id"]
+        r = note_update(noteId=note_id_str, pinned=True)
+        assert "Pinned" in r
+        row = manager.get_note(self._nid(manager, note_id_str))
+        assert row["pinned"] == 1
+
+    def test_note_update_unpin_only(self, temp_db):
+        from mcp_server.server import note_update
+        db_path, storage, manager = temp_db
+        n = manager.add_note("test", "nu-test", "fact", "test note")
+        note_id_str = n["id"]
+        manager.pin_note(note_id_str)
+        r = note_update(noteId=note_id_str, pinned=False)
+        assert "Unpinned" in r
+        row = manager.get_note(self._nid(manager, note_id_str))
+        assert row["pinned"] == 0
+
+    def test_note_update_tags_only(self, temp_db):
+        from mcp_server.server import note_update
+        db_path, storage, manager = temp_db
+        n = manager.add_note("test", "nu-test", "fact", "test note")
+        note_id_str = n["id"]
+        r = note_update(noteId=note_id_str, tags="alpha, beta")
+        assert "Tagged" in r
+        row = manager.get_note(self._nid(manager, note_id_str))
+        assert row["tags"] is not None
+        import json as _json
+        assert "alpha" in _json.loads(row["tags"])
+
+    def test_note_update_neither(self, temp_db):
+        from mcp_server.server import note_update
+        r = note_update(noteId="note-1")
+        assert "Error" in r
+
+    def test_note_update_both(self, temp_db):
+        from mcp_server.server import note_update
+        db_path, storage, manager = temp_db
+        n = manager.add_note("test", "nu-test", "fact", "test note")
+        note_id_str = n["id"]
+        r = note_update(noteId=note_id_str, pinned=True, tags="important")
+        assert "Pinned" in r
+        assert "Tagged" in r
+        row = manager.get_note(self._nid(manager, note_id_str))
+        assert row["pinned"] == 1
+        import json as _json
+        assert "important" in _json.loads(row["tags"])
+
+
+# ═══════════════════════════════════════════════════════════
+# Edge maintain combined operation
+# ═══════════════════════════════════════════════════════════
+
+class TestEdgeMaintainCombined:
+    def test_edge_maintain_decay_then_prune_weights(self, seeded_db):
+        from mcp_server.server import edge_maintain
+        db_path, storage, manager = seeded_db
+        notes = manager.search_notes("graph-test-planet")
+        if len(notes) >= 2:
+            # Add new notes to trigger auto-linking (auto-links are the ones
+            # affected by edge_decay; manager.link_notes creates explicit links)
+            n1 = manager.add_note("test", "graph-test-planet", "fact", "alpha test data")
+            n2 = manager.add_note("test", "graph-test-planet", "fact", "alpha test experiment")
+            nid = n1["id"]
+            # Get auto-link weights before
+            auto_before = _auto_neighbor_weights(manager, nid)
+            r = edge_maintain(decayFactor=0.5, pruneThreshold=0.3)
+            assert "Decayed" in r
+            assert "Pruned" in r
+            auto_after = _auto_neighbor_weights(manager, nid)
+            # After decay by 0.5, remaining auto weights should be <= before * 0.5
+            if auto_before and auto_after:
+                for w in auto_after:
+                    assert w <= max(auto_before) * 0.5 + 0.001
+
+
+# ═══════════════════════════════════════════════════════════
+# Advanced tools tier (BASEMEM_ENABLE_ADVANCED_TOOLS)
+# ═══════════════════════════════════════════════════════════
+
+class TestAdvancedToolsTier:
+    def _get_tool_names(self):
+        """Get current server tool names."""
+        from mcp_server.server import server as srv
+        return [t.name for t in srv._tool_manager.list_tools()]
+
+    def _reload_server_module(self):
+        """Reload the mcp_server.server module via importlib."""
+        import importlib
+        import sys
+        mod = importlib.import_module("mcp_server.server")
+        importlib.reload(mod)
+        # Update the module reference in sys.modules and clear the old attribute
+        sys.modules["mcp_server"].server = mod.server
+
+    def test_optional_tool_noop_when_unset(self, monkeypatch):
+        monkeypatch.delenv("BASEMEM_ENABLE_ADVANCED_TOOLS", raising=False)
+        self._reload_server_module()
+        names = self._get_tool_names()
+        assert "compute_similarity" not in names
+        assert "rerank" not in names
+
+    def test_optional_tool_registered_when_set(self, monkeypatch):
+        monkeypatch.setenv("BASEMEM_ENABLE_ADVANCED_TOOLS", "1")
+        self._reload_server_module()
+        names = self._get_tool_names()
+        assert "compute_similarity" in names
+        assert "rerank" in names
+
+    def test_optional_tool_registered_when_true(self, monkeypatch):
+        monkeypatch.setenv("BASEMEM_ENABLE_ADVANCED_TOOLS", "true")
+        self._reload_server_module()
+        names = self._get_tool_names()
+        assert "compute_similarity" in names
+        assert "rerank" in names
+
+    def test_optional_tool_registered_when_true(self, monkeypatch):
+        monkeypatch.setenv("BASEMEM_ENABLE_ADVANCED_TOOLS", "true")
+        self._reload_server_module()
+        names = self._get_tool_names()
+        assert "compute_similarity" in names
+        assert "rerank" in names
+
+    def test_functions_always_importable(self):
+        from mcp_server.server import compute_similarity, rerank
+        assert callable(compute_similarity)
+        assert callable(rerank)
+
+
+# ═══════════════════════════════════════════════════════════
+# SessionStart hook
+# ═══════════════════════════════════════════════════════════
+
+class TestSessionStartHook:
+    HOOK_SCRIPT = str(Path(__file__).parent.parent / "src" / "hooks" / "basemem-session-start.js")
+
+    def test_hook_succeeds_when_mem_not_on_path(self, monkeypatch):
+        """Hook must not crash when mem CLI is unavailable."""
+        import subprocess
+        # Remove mem from PATH
+        monkeypatch.setenv("PATH", "/usr/bin:/bin")
+        monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+        result = subprocess.run(
+            ["node", self.HOOK_SCRIPT],
+            capture_output=True, text=True, timeout=10,
+            env={**__import__('os').environ, "PATH": "/usr/bin:/bin"},
+        )
+        assert result.returncode == 0
+        # Should emit valid JSON
+        lines = result.stdout.strip().splitlines()
+        assert len(lines) >= 1
+        for line in lines:
+            data = json.loads(line)
+            assert "hookSpecificOutput" in data
+
+    def test_hook_emits_rules_without_context_when_mem_missing(self, monkeypatch):
+        """Without mem, the hook output should still contain BASEMEM_RULES."""
+        import subprocess
+        result = subprocess.run(
+            ["node", self.HOOK_SCRIPT],
+            capture_output=True, text=True, timeout=10,
+            env={**__import__('os').environ, "PATH": "/usr/bin:/bin"},
+        )
+        lines = result.stdout.strip().splitlines()
+        first = json.loads(lines[0])
+        ctx = first["hookSpecificOutput"]["additionalContext"]
+        assert "MCP tools" in ctx
+        assert "getContext" in ctx
+
+
 def _first_note_id(seeded_db):
     """Helper: get first note id in the seeded planet."""
     _, storage, manager = seeded_db
@@ -584,6 +812,19 @@ def _first_note_id(seeded_db):
 
 
 def _neighbor_weights(seeded_db, note_id):
-    """Helper: get neighbor weights for a note."""
+    """Helper: get neighbor weights for a note (all link types)."""
     _, storage, manager = seeded_db
     return [nb["weight"] for nb in manager.get_note_neighbors(note_id)]
+
+
+def _auto_neighbor_weights(manager, note_id):
+    """Helper: get auto-link neighbor weights only."""
+    raw_id = manager._parse_note_id(note_id)
+    if raw_id is None:
+        return []
+    cursor = manager.storage.connection.cursor()
+    rows = cursor.execute(
+        "SELECT weight FROM note_links WHERE (from_note_id = ? OR to_note_id = ?) AND source = 'auto'",
+        (raw_id, raw_id)
+    ).fetchall()
+    return [r[0] for r in rows]

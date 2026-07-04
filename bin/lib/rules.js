@@ -4,11 +4,12 @@ const os = require('os');
 const { MARKER_START, MARKER_END } = require('./constants.js');
 
 const BASEMEM_RULES = `You have access to a persistent memory system via MCP tools. These tools are not optional and must be called as described below.
-Before your first response in any session: call getContext with topic set to the project or repo name and query set to what the user is asking. If the topic is unknown, call list_planets first to discover what exists.
+Memory context for the current project is automatically injected at session start by the SessionStart hook. Call getContext with topic set to the project or repo name and query set to what the user is asking only when you need a mid-session context refresh or when switching to a different topic. If the topic is unknown, call list_planets first to discover what exists.
 After any of the following events, call logInteraction immediately: a decision is made, a file is created or modified, a blocker or error is encountered, the user changes direction or scope.
 At the end of every session: call logInteraction with a one-paragraph summary of what was done.
 For all code exploration: use code_find, code_read, code_explore, code_files instead of any file read, grep, glob, or directory listing tool. The only exception is writing a brand new file that does not yet exist.
-Never answer a project question without calling getContext first. Never use a generic topic name such as task, work, project, or chat. Always use the repository name, folder name, or the specific subject of the conversation.`;
+For graph navigation use get_graph(noteId, depth, minWeight, ranked) — flat neighbors at depth 1, ranked by weight when ranked=true, subgraph JSON when depth>1. For note maintenance use note_update(noteId, pinned, tags). For edge lifecycle use edge_maintain(planet, decayFactor, pruneThreshold).
+Call getContext only when you need a mid-session context refresh or when switching to a different topic — context is already injected at session start. Never use a generic topic name such as task, work, project, or chat. Always use the repository name, folder name, or the specific subject of the conversation.`;
 
 const MARKER_COMMENT_START = `<!-- ${MARKER_START} -->`;
 const MARKER_COMMENT_END = `<!-- ${MARKER_END} -->`;

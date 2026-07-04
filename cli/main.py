@@ -178,6 +178,19 @@ def recompute_links(ctx, topic, threshold, min_weight):
 
 
 @cli.command()
+def migrate():
+    """Run pending database schema migrations."""
+    from storage.db import StorageManager
+    from storage.sessions import _ensure_schema
+    from pathlib import Path
+    import os
+
+    db_path = os.environ.get("BASEMEM_DB_PATH") or str(Path.home() / ".basemem" / "basemem.db")
+    _ensure_schema(StorageManager(db_path).connection)
+    click.echo("Schema up-to-date.")
+
+
+@cli.command()
 @click.option('--planet', help='Export only a specific planet')
 @click.option('--output', '-o', default='basemem-export.json', help='Output file path')
 @click.pass_context
