@@ -453,8 +453,8 @@ class PlanetMixin:
         for n in pinned:
             lines.append(f"  pin: {n['content'][:300]}")
         for n in notes:
-            if n.get("kind") in ("decision", "issue", "fact") and (not q or q in (n.get("content") or "").lower()):
-                tag = {"decision": "dec", "issue": "iss", "fact": "fact"}.get(n["kind"], "note")
+            if n.get("kind") in ("decision", "issue", "fact", "summary") and (not q or q in (n.get("content") or "").lower()):
+                tag = {"decision": "dec", "issue": "iss", "fact": "fact", "summary": "sum"}.get(n["kind"], "note")
                 lines.append(f"  {tag}: {n['content'][:300]}")
 
         return "\n".join(lines)

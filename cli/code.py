@@ -62,7 +62,20 @@ def code_init(project_root, workers, watch):
             watcher.start()
             click.echo(f" Watching {root} for changes (Ctrl+C to stop)...")
             signal.signal(signal.SIGINT, lambda *_: (watcher.stop(), exit(0)))
-            signal.pause()
+            import time
+            from pathlib import Path
+            pid_file = Path(root) / ".basemem.daemon.pid"
+            while True:
+                time.sleep(5)
+                if pid_file.exists():
+                    try:
+                        if time.time() - pid_file.stat().st_mtime > 300:
+                            click.echo("Daemon idle timeout reached. Shutting down.")
+                            watcher.stop()
+                            pid_file.unlink(missing_ok=True)
+                            break
+                    except Exception:
+                        pass
     finally:
         if not watch:
             indexer.close()

@@ -345,7 +345,7 @@ class NoteMixin:
                 "",
                 "## Pinned Notes",
                 *[
-                    f"- [{n.get('kind', 'note')}] {self._trim_text(n.get('content') or n.get('title') or '', 220)}"
+                    f"- [{n.get('kind', 'note')}] {self._trim_text(n.get('content') or n.get('title') or '', 300)}"
                     for n in pinned_notes
                 ],
             ])
@@ -363,7 +363,7 @@ class NoteMixin:
                 "",
                 "## Key Notes",
                 *[
-                    f"- [{n.get('kind', 'note')}] {self._trim_text(n.get('content') or n.get('title') or '', 220)}"
+                    f"- [{n.get('kind', 'note')}] {self._trim_text(n.get('content') or n.get('title') or '', 300)}"
                     for n in all_notes[-8:]
                 ],
             ])
@@ -374,7 +374,7 @@ class NoteMixin:
                 "",
                 "## Recent Activity",
                 *[
-                    f"- {item.get('agent_id', 'unknown')} ({item.get('sender', 'ai')}): {self._trim_text(item.get('message', ''), 220)}"
+                    f"- {item.get('agent_id', 'unknown')} ({item.get('sender', 'ai')}): {self._trim_text(item.get('message', ''), 300)}"
                     for item in activity[-6:]
                 ],
             ])
@@ -397,7 +397,7 @@ class NoteMixin:
                     "",
                     "## Query-Relevant Memories",
                     *[
-                        f"- [{node.node_type.value}] {node.title}: {self._trim_text(node.content, 220)}"
+                        f"- [{node.node_type.value}] {node.title}: {self._trim_text(node.content, 300)}"
                         for node in related_nodes
                     ],
                 ])

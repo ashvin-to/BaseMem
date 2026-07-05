@@ -87,11 +87,53 @@ class CodeIndexer:
         if not root.is_dir():
             raise ValueError(f"Not a directory: {project_root}")
         self.project_root = str(root)
-        self.project_id = root.name
+        self.project_id = root.name.lower()
         self.db_path = str(root / CODE_DB_FILENAME)
         self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
+        
+        # Register generated file detection heuristic for search down-ranking
+        def is_generated(filepath: str) -> int:
+            if not filepath: return 0
+            import re
+            patterns = [
+                r'\.pb\.go$', r'\.pulsar\.go$', r'_grpc\.pb\.go$', r'_mock\.go$', r'_mocks\.go$', r'^mock_[^/]+\.go$',
+                r'\.generated\.', r'\.gen\.', r'^zzz_', r'\.min\.', r'openapi_client',
+            ]
+            if any(re.search(p, filepath) for p in patterns): return 1
+            if '/generated/' in filepath or '/gen/' in filepath or '/mocks/' in filepath or '/vendor/' in filepath: return 1
+            return 0
+        self.conn.create_function("is_generated", 1, is_generated)
+
+        self._ignore_patterns = []
+        self._load_ignore_files()
+
         ensure_code_schema(self.conn)
+
+    def _load_ignore_files(self):
+        """Load patterns from .gitignore and .basememignore."""
+        for filename in [".gitignore", ".basememignore"]:
+            ignore_path = Path(self.project_root) / filename
+            if ignore_path.exists():
+                try:
+                    for line in ignore_path.read_text().splitlines():
+                        line = line.strip()
+                        if line and not line.startswith('#'):
+                            self._ignore_patterns.append(line.rstrip('/'))
+                except Exception:
+                    pass
+
+    def _is_skipped(self, filepath: str) -> bool:
+        """Check if a file should be skipped based on SKIP_DIRS or ignore patterns."""
+        import fnmatch
+        p = Path(filepath)
+        if any(part in SKIP_DIRS for part in p.parts):
+            return True
+        rel = str(p.relative_to(self.project_root) if p.is_absolute() else p)
+        for pattern in self._ignore_patterns:
+            if fnmatch.fnmatch(rel, pattern) or fnmatch.fnmatch(rel, f"*/{pattern}") or fnmatch.fnmatch(rel, f"{pattern}/*") or fnmatch.fnmatch(rel, f"*/{pattern}/*"):
+                return True
+        return False
 
     def close(self):
         self.conn.close()
@@ -238,7 +280,7 @@ class CodeIndexer:
                           cs.language, cs.signature, cs.start_line, cs.end_line,
                           cs.docstring, cs.kind
                    FROM code_symbols cs
-                   ORDER BY cs.symbol_name"""
+                   ORDER BY is_generated(cs.file_path) ASC, cs.symbol_name"""
             )
             results: list = []
             for r in cur.fetchall():
@@ -251,35 +293,80 @@ class CodeIndexer:
                         break
             return results
 
+        type_filter = None
+        if "type:" in query:
+            match = re.search(r'type:([a-zA-Z_]+)', query)
+            if match:
+                type_filter = match.group(1).lower()
+                query = query.replace(match.group(0), "").strip()
+                if not query:
+                    # If only type: was provided, fallback to LIKE with empty query
+                    query = "%"
+        
         # FTS5 with error fallback
-        try:
+        if type_filter is None:
+            try:
+                cur = self.conn.execute(
+                    """SELECT cs.id, cs.file_path, cs.symbol_name, cs.symbol_type,
+                              cs.language, cs.signature, cs.start_line, cs.end_line,
+                              cs.docstring
+                       FROM code_symbols_fts fts
+                       JOIN code_symbols cs ON cs.id = fts.rowid
+                       WHERE code_symbols_fts MATCH ?
+                       ORDER BY is_generated(cs.file_path) ASC, rank
+                       LIMIT ?""",
+                    (query, limit),
+                )
+                results = [dict(r) for r in cur.fetchall()]
+                if results:
+                    return results
+            except Exception:
+                pass
+
+        # CamelCase segment fuzzy search
+        segments = re.findall(r'[A-Z]?[a-z]+|[A-Z]+(?=[A-Z]|$)|[0-9]+', query)
+        if len(segments) > 1 and query != "%":
+            like_conditions = " AND ".join(["(cs.symbol_name LIKE ? OR cs.file_path LIKE ?)"] * len(segments))
+            params = []
+            for s in segments:
+                params.extend([f"%{s}%", f"%{s}%"])
+            
+            type_sql = ""
+            if type_filter:
+                type_sql = " AND cs.symbol_type = ?"
+                params.append(type_filter)
+
             cur = self.conn.execute(
-                """SELECT cs.id, cs.file_path, cs.symbol_name, cs.symbol_type,
+                f"""SELECT cs.id, cs.file_path, cs.symbol_name, cs.symbol_type,
                           cs.language, cs.signature, cs.start_line, cs.end_line,
                           cs.docstring
-                   FROM code_symbols_fts fts
-                   JOIN code_symbols cs ON cs.id = fts.rowid
-                   WHERE code_symbols_fts MATCH ?
-                   ORDER BY rank
+                   FROM code_symbols cs
+                   WHERE {like_conditions}{type_sql}
+                   ORDER BY is_generated(cs.file_path) ASC, cs.symbol_name
                    LIMIT ?""",
-                (query, limit),
+                params + [limit],
             )
-            results = [dict(r) for r in cur.fetchall()]
-            if results:
-                return results
-        except Exception:
-            pass
+            fuzzy_results = [dict(r) for r in cur.fetchall()]
+            if fuzzy_results:
+                return fuzzy_results
 
-        like = f"%{query.strip()}%"
+        like = f"%{query.strip()}%" if query != "%" else "%"
+        
+        type_sql = ""
+        params_like = [like, like, like, like]
+        if type_filter:
+            type_sql = " AND cs.symbol_type = ?"
+            params_like.append(type_filter)
+            
         cur = self.conn.execute(
-            """SELECT cs.id, cs.file_path, cs.symbol_name, cs.symbol_type,
+            f"""SELECT cs.id, cs.file_path, cs.symbol_name, cs.symbol_type,
                       cs.language, cs.signature, cs.start_line, cs.end_line,
                       cs.docstring
                FROM code_symbols cs
-               WHERE cs.symbol_name LIKE ? OR cs.symbol_type LIKE ? OR cs.kind LIKE ?
-               ORDER BY cs.symbol_name
+               WHERE (cs.symbol_name LIKE ? OR cs.symbol_type LIKE ? OR cs.kind LIKE ? OR cs.file_path LIKE ?){type_sql}
+               ORDER BY is_generated(cs.file_path) ASC, cs.symbol_name
                LIMIT ?""",
-            (like, like, like, limit),
+            params_like + [limit],
         )
         return [dict(r) for r in cur.fetchall()]
 
@@ -374,13 +461,14 @@ class CodeIndexer:
 
     def _discover_files(self, root: Path):
         for dirpath, dirnames, filenames in os.walk(root):
-            dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+            dirnames[:] = [d for d in dirnames if not self._is_skipped(str(Path(dirpath) / d))]
             for fn in filenames:
                 ext = Path(fn).suffix.lower()
                 if ext in SKIP_EXTENSIONS:
                     continue
-                if CodeParser.supported_extension(ext):
-                    yield Path(dirpath) / fn
+                file_path = Path(dirpath) / fn
+                if not self._is_skipped(str(file_path)) and CodeParser.supported_extension(ext):
+                    yield file_path
 
     def list_symbols_by_file(self, file_path: str, limit: int = 100) -> list[dict]:
         """List symbols defined in a specific file. Pass limit=0 for all results."""
@@ -489,14 +577,14 @@ class CodeIndexer:
             cur = self.conn.execute(
                 f"""SELECT file_path, COUNT(*) as symbol_count, MAX(language) as language
                    FROM code_symbols WHERE file_path LIKE ? AND project_id = ?
-                   GROUP BY file_path ORDER BY file_path{limit_sql}""",
+                   GROUP BY file_path ORDER BY is_generated(file_path) ASC, file_path{limit_sql}""",
                 (f"%{prefix}%", self.project_id),
             )
         else:
             cur = self.conn.execute(
                 f"""SELECT file_path, COUNT(*) as symbol_count, MAX(language) as language
                    FROM code_symbols WHERE project_id = ?
-                   GROUP BY file_path ORDER BY file_path{limit_sql}""",
+                   GROUP BY file_path ORDER BY is_generated(file_path) ASC, file_path{limit_sql}""",
                 (self.project_id,),
             )
         return [dict(r) for r in cur.fetchall()]
@@ -551,6 +639,25 @@ class CodeIndexer:
         ).fetchall()
         for d in defs:
             seen_defs.add((d["file_path"], d["start_line"]))
+
+        # 1. Precise AST Callers / Imports
+        ast_refs = self.conn.execute(
+            """SELECT file_path, line_number, from_name as content 
+               FROM code_edges 
+               WHERE to_name = ? AND project_id = ?
+               LIMIT ?""",
+            (symbol_name, self.project_id, limit)
+        ).fetchall()
+        for r in ast_refs:
+            results.append({
+                "file_path": r["file_path"],
+                "line_number": r["line_number"],
+                "content": f"[AST Usage] called/imported by {r['content']}",
+            })
+            seen_defs.add((r["file_path"], r["line_number"]))
+            
+        if len(results) >= limit:
+            return results
 
         pattern = re.compile(re.escape(symbol_name))
         root = Path(self.project_root)

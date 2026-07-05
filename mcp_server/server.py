@@ -55,7 +55,40 @@ from functools import wraps
 
 from mcp.server.fastmcp import FastMCP
 
-server = FastMCP("mem")
+def _get_initial_instructions() -> "str | None":
+    try:
+        import os
+        from pathlib import Path
+        from storage.db import StorageManager
+        from storage.sessions import SessionManager
+
+        # 1. Resolve topic (project root name)
+        curr = Path.cwd().absolute()
+        root_name = curr.name
+        for parent in [curr] + list(curr.parents):
+            if (parent / "AGENTS.md").exists() or (parent / ".git").exists():
+                root_name = parent.name
+                break
+
+        # 2. Open DB
+        storage = StorageManager(get_db_path())
+        manager = SessionManager(storage)
+
+        # 3. Check active planet
+        active = manager.get_active_planet()
+        resolved_topic = root_name
+        if active:
+            resolved_topic = active.metadata.get("display_topic") or active.metadata.get("topic") or active.title
+
+        # 4. Generate context
+        return manager.build_agent_context(resolved_topic)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return f"Warning: Failed to automatically fetch context: {e}"
+
+
+server = FastMCP("mem", instructions=_get_initial_instructions())
 
 
 def _optional_tool(*args, **kwargs):

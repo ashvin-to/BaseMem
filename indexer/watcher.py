@@ -128,18 +128,17 @@ class CodeGraphWatcher:
             self._running = False
             logger.info("Code graph watcher stopped")
 
-    def _is_skipped(self, path: str) -> bool:
-        return any(f"/{d}/" in f"/{path}/" for d in SKIP_DIRS)
+
 
     def _handle_change(self, modified: list, created: list, deleted: list):
         if deleted:
             for f in deleted:
-                if self._is_skipped(f):
+                if self.indexer._is_skipped(f):
                     continue
                 self.indexer.remove_file(f)
                 print(f"  [del] {f}")
 
-        to_index = [f for f in (modified + created) if not self._is_skipped(f)]
+        to_index = [f for f in (modified + created) if not self.indexer._is_skipped(f)]
         if to_index:
             result = self.indexer.index_files(self.root_path, to_index)
             for f in to_index:
