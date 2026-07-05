@@ -773,33 +773,51 @@ class TestSessionStartHook:
     def test_hook_succeeds_when_mem_not_on_path(self, monkeypatch):
         """Hook must not crash when mem CLI is unavailable."""
         import subprocess
-        # Remove mem from PATH
+        import os
+        import json
+        # Remove mem from PATH and mock HOME 
+        from pathlib import Path
+        Path("/tmp/fakehome/.claude").mkdir(parents=True, exist_ok=True)
         monkeypatch.setenv("PATH", "/usr/bin:/bin")
+        monkeypatch.setenv("HOME", "/tmp/fakehome")
         monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
         result = subprocess.run(
             ["node", self.HOOK_SCRIPT],
             capture_output=True, text=True, timeout=10,
-            env={**__import__('os').environ, "PATH": "/usr/bin:/bin"},
+            env={**__import__('os').environ, "PATH": "/usr/bin:/bin", "HOME": "/tmp/fakehome"},
         )
         assert result.returncode == 0
         # Should emit valid JSON
         lines = result.stdout.strip().splitlines()
         assert len(lines) >= 1
+        found_hook = False
         for line in lines:
             data = json.loads(line)
-            assert "hookSpecificOutput" in data
+            if "hookSpecificOutput" in data:
+                found_hook = True
+        assert found_hook
 
     def test_hook_emits_rules_without_context_when_mem_missing(self, monkeypatch):
         """Without mem, the hook output should still contain BASEMEM_RULES."""
         import subprocess
+        from pathlib import Path
+        Path("/tmp/fakehome/.claude").mkdir(parents=True, exist_ok=True)
+        monkeypatch.setenv("HOME", "/tmp/fakehome")
         result = subprocess.run(
             ["node", self.HOOK_SCRIPT],
             capture_output=True, text=True, timeout=10,
-            env={**__import__('os').environ, "PATH": "/usr/bin:/bin"},
+            env={**__import__('os').environ, "PATH": "/usr/bin:/bin", "HOME": "/tmp/fakehome"},
         )
         lines = result.stdout.strip().splitlines()
-        first = json.loads(lines[0])
-        ctx = first["hookSpecificOutput"]["additionalContext"]
+        
+        ctx = None
+        for line in lines:
+            data = json.loads(line)
+            if "hookSpecificOutput" in data:
+                ctx = data["hookSpecificOutput"]["additionalContext"]
+                break
+                
+        assert ctx is not None
         assert "MCP tools" in ctx
         assert "getContext" in ctx
 

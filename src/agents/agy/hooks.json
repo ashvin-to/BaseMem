@@ -1,26 +1,9 @@
 {
-  "hooks": {
-    "SessionStart": [
+  "basemem-startup": {
+    "PreInvocation": [
       {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"${AGY_PLUGIN_ROOT:-$HOME/.gemini/antigravity-cli/plugins/basemem}/hooks/session-start.js\"",
-            "statusMessage": "Loading BaseMem memory context",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"${AGY_PLUGIN_ROOT:-$HOME/.gemini/antigravity-cli/plugins/basemem}/hooks/prompt-tracker.js\"",
-            "timeout": 5
-          }
-        ]
+        "type": "command",
+        "command": "node \"${extensionPath}/hooks/session-start.js\""
       }
     ]
   }

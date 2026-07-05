@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -12,6 +13,30 @@ try {
 } catch (_) {}
 
 const flagFile = path.join(os.homedir(), '.config/opencode/.basemem-active');
+
+function findProjectName() {
+  const cwd = process.cwd();
+  let current = cwd;
+  for (let i = 0; i <= 3; i++) {
+    try {
+      const pkgPath = path.join(current, 'package.json');
+      if (fs.existsSync(pkgPath)) {
+        const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+        if (pkg.name) return pkg.name;
+      }
+      const pyprojectPath = path.join(current, 'pyproject.toml');
+      if (fs.existsSync(pyprojectPath)) {
+        const content = fs.readFileSync(pyprojectPath, 'utf-8');
+        const match = content.match(/^name\s*=\s*"([^"]+)"/m);
+        if (match) return match[1];
+      }
+    } catch (_) {}
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return path.basename(cwd);
+}
 
 export const BaseMemPlugin = async ({ client, directory }) => {
   let injectedFirst = false;
@@ -31,14 +56,26 @@ export const BaseMemPlugin = async ({ client, directory }) => {
           fs.writeFileSync(flagFile, 'active', 'utf-8');
         } catch (_) {}
 
+        let memContext = '';
+        try {
+          const projectName = findProjectName();
+          if (projectName) {
+            memContext = execSync(`mem agent-context --topic "${projectName}"`, {
+              timeout: 3000,
+              encoding: 'utf-8',
+              stdio: ['ignore', 'pipe', 'pipe'],
+            }).trim();
+          }
+        } catch (_) {}
+
         if (output?.messages?.length) {
           const firstUser = output.messages.find(m => m.info?.role === 'user');
           if (firstUser && firstUser.parts?.length) {
-            const bootstrap = `<EXTREMELY_IMPORTANT>
-You have BaseMem memory available via MCP tools.
-
-${BASEMEM_RULES}
-</EXTREMELY_IMPORTANT>`;
+            let bootstrap = '';
+            if (memContext) {
+              bootstrap += `<KNOWLEDGE_BASE_CONTEXT>\n${memContext}\n</KNOWLEDGE_BASE_CONTEXT>\n\n`;
+            }
+            bootstrap += `<EXTREMELY_IMPORTANT>\nYou have BaseMem memory available via MCP tools.\n\n${BASEMEM_RULES}\n</EXTREMELY_IMPORTANT>`;
 
             if (!firstUser.parts.some(p => p.type === 'text' && p.text.includes('EXTREMELY_IMPORTANT'))) {
               firstUser.parts.unshift({ ...firstUser.parts[0], text: bootstrap });
@@ -48,7 +85,7 @@ ${BASEMEM_RULES}
       }
 
       if (isUser) {
-        const reminder = '\n\n[Memory Reminder] Use MCP memory tools (getContext, logInteraction, code_find, etc.) and call getContext before answering project questions.';
+        const reminder = '\n\n[Memory Reminder] Use MCP memory tools (getContext, logInteraction, code_find, etc.) and check the KNOWLEDGE_BASE_CONTEXT block above before calling getContext — it may already be injected.';
         if (output?.messages?.length) {
           const lastUser = output.messages.findLast(m => m.info?.role === 'user');
           if (lastUser && lastUser.parts?.length) {

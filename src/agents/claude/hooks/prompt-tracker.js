@@ -4,5 +4,5 @@ let input = '';
 process.stdin.on('data', chunk => { input += chunk; });
 process.stdin.on('end', () => {
   try { JSON.parse(input); } catch (_) {}
-  emitTrackerOutput('agy');
+  emitTrackerOutput('claude');
 });

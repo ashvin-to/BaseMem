@@ -3,11 +3,13 @@ name: using-basemem
 description: BaseMem memory protocol
 ---
 
+IMPORTANT: Project memory context may be automatically injected at session start. If the EXTREMELY_IMPORTANT block above contains context data, it is already injected — do not call getContext or list_planets. If it says "No context was automatically fetched", call getContext once with your current project topic. In either case, do not call list_planets.
+
 ## Topic — always use project folder name or chat subject, never generic.
 
 | Step | Tool | When |
 |------|------|------|
-| **Start** | `getContext(topic, query)` | First turn, before answering |
+| **Start** | `getContext(topic, query)` | Only when switching topics or needing a mid-session refresh |
 | **During** | `logInteraction(topic, decision=, fact=, ...)` | Every non-trivial decision/fact/state change |
 | **End** | `logInteraction(topic, summary=, activity="done")` | Session end |
 

@@ -1,0 +1,11 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "\"${extensionPath}/hooks/session-start\"",
+        "async": false
+      }
+    ]
+  }
+}
