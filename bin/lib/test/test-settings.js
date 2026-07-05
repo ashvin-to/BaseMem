@@ -40,7 +40,7 @@ assert.doesNotThrow(() => validateHookFields({
 console.log('PASS validateHookFields: handles non-array gracefully');
 
 // ── mergeSettings ────────────────────────────────────────────────
-const BASEMEM_CMD = 'node basemem-start.js';
+const BASEMEM_CMD = 'node session-start.js';
 const BASEMEM_STATUS = '/path/to/basemem-statusline.sh';
 
 mergeSettings(settingsPath, {
@@ -59,7 +59,7 @@ assert.strictEqual(config.hooks.SessionStart[0].command, BASEMEM_CMD);
 assert.strictEqual(config.statusLine.command, BASEMEM_STATUS);
 console.log('PASS mergeSettings: initial merge');
 
-// Idempotent — same merge again doesn't duplicate (detected by "basemem" in command)
+// Idempotent — same merge again doesn't duplicate (detected by session-start in command)
 mergeSettings(settingsPath, {
   hooks: {
     SessionStart: [
@@ -77,7 +77,7 @@ console.log('PASS mergeSettings: idempotent');
 mergeSettings(settingsPath, {
   hooks: {
     UserPromptSubmit: [
-      { type: 'command', command: 'node basemem-prompt.js', timeout: 5 },
+      { type: 'command', command: 'node prompt-tracker.js', timeout: 5 },
     ],
   },
 });
@@ -121,7 +121,7 @@ console.log('PASS removeHookEntries: no-op on missing file');
 fs.writeFileSync(settingsPath, JSON.stringify({
   hooks: {
     SessionStart: [
-      { type: 'command', command: 'node basemem-start.js' },
+      { type: 'command', command: 'node session-start.js' },
     ],
     OtherEvent: [
       { type: 'command', command: 'node other.js' },

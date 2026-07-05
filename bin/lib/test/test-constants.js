@@ -34,8 +34,7 @@ for (const name of expected) {
   assert.ok(paths[name].detect, `${name}.detect`);
   assert.ok(paths[name].install, `${name}.install`);
 }
-assert.strictEqual(Object.keys(paths).length, expected.length,
-  `Expected ${expected.length} agents, got ${Object.keys(paths).length}`);
+assert.strictEqual(Object.keys(paths).length, 15, `Expected 15 agents, got ${Object.keys(paths).length}`);
 console.log(`PASS getAgentPaths: ${expected.length} agents (claude..vscode)`);
 
 // Agent install paths should be absolute

@@ -38,10 +38,12 @@ function readJson(filePath) {
   return JSON.parse(stripJsonc(raw));
 }
 
-function hookContainsBasemem(entry) {
-  if (entry.command && typeof entry.command === 'string' && entry.command.toLowerCase().includes('basemem')) return true;
-  if (entry.hooks && Array.isArray(entry.hooks)) {
-    for (const sub of entry.hooks) {
+function hookContainsBasemem(obj) {
+  if (obj.command && obj.command.includes('session-start.js')) return true;
+  if (obj.command && obj.command.includes('prompt-tracker.js')) return true;
+  if (obj.command && obj.command.includes('basemem-statusline')) return true;
+  if (obj.hooks && Array.isArray(obj.hooks)) {
+    for (const sub of obj.hooks) {
       if (hookContainsBasemem(sub)) return true;
     }
   }

@@ -91,12 +91,20 @@ function getAgentPaths() {
       install: path.join(home, '.gemini', 'GEMINI.md'),
     },
     agy: {
-      detect: path.join(home, '.agy'),
-      install: path.join(home, '.agy', 'AGENTS.md'),
+      detect: path.join(home, '.gemini', 'antigravity-cli'),
+      install: path.join(home, '.gemini', 'config', 'rules', 'basemem.md'),
     },
     vscode: {
       detect: path.join(home, '.vscode'),
       install: path.join(home, '.vscode', 'basemem.md'),
+    },
+    kiro: {
+      detect: path.join(home, '.kiro'),
+      install: path.join(home, '.kiro', 'steering', 'basemem.md'),
+    },
+    hermes: {
+      detect: path.join(home, '.hermes'),
+      install: path.join(home, '.hermes', 'HERMES.md'),
     },
   };
 }

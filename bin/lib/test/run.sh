@@ -3,7 +3,7 @@ set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 FAIL=0
 
-for test in test-constants test-rules test-settings test-install; do
+for test in test-constants test-rules test-settings test-install test_hooks; do
   echo "─── $test ───"
   if node "$DIR/$test.js" 2>&1; then
     echo ""
