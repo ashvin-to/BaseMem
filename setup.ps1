@@ -155,13 +155,7 @@ if (Test-Path $GeminiExtDir) { Remove-Item -Recurse -Force $GeminiExtDir }
 New-Item -ItemType Directory -Path $GeminiExtDir -Force | Out-Null
 Copy-Item -Recurse -Force "$BaseDir\extensions\gemini\*" $GeminiExtDir
 
-# Antigravity plugin
-$PluginDir = "$env:USERPROFILE\.gemini\config\plugins\basemem"
-New-Item -ItemType Directory -Path "$env:USERPROFILE\.gemini\config\plugins" -Force | Out-Null
-if (Test-Path $PluginDir) { Remove-Item -Recurse -Force $PluginDir }
-New-Item -ItemType Directory -Path $PluginDir -Force | Out-Null
-Copy-Item -Recurse -Force "$BaseDir\extensions\gemini\*" $PluginDir
-Copy-Item -Path "$PluginDir\gemini-extension.json" -Destination "$PluginDir\plugin.json" -Force
+
 
 # Gemini MCP config (install.js also writes this, but write it here too for Windows paths)
 $GeminiMcp = "$env:USERPROFILE\.gemini\config\mcp_config.json"

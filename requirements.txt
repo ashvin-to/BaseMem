@@ -10,6 +10,7 @@ mcp>=1.0.0
 tree-sitter>=0.25.0
 tree-sitter-language-pack>=1.8.0
 watchdog>=4.0.0
+psutil>=5.0.0
 
 # Testing
 pytest>=7.4.0

@@ -43,18 +43,8 @@ $BASE_DIR/venv/bin/python3 $BASE_DIR/mem.py --db $DATA_DIR/basemem.db \"\$@\""
 write_executable "$MEM_BIN_DIR/mem" "$MEM_WRAPPER"
 
 # --- MCP server entry point ---
-echo "Installing MCP server entry point..."
-cat <<'PYEOF' >"$BASE_DIR/mem-mcp.py"
-#!/usr/bin/env python3
-"""MCP server entry point for BaseMem agent memory."""
-import sys
-from pathlib import Path
-BASE_DIR = Path(__file__).parent.absolute()
-sys.path.insert(0, str(BASE_DIR))
-from mcp_server.server import server
-if __name__ == "__main__":
-    server.run()
-PYEOF
+echo "Configuring MCP server entry point..."
+# mem-mcp.py is now checked into the repo as a daemon proxy
 chmod 755 "$BASE_DIR/mem-mcp.py"
 
 MCP_PYTHON="$BASE_DIR/venv/bin/python3"
@@ -99,17 +89,7 @@ BASEMEM_MCP_SCRIPT="$MCP_SCRIPT" \
 BASEMEM_DB_PATH="$BASEMEM_DB_PATH" \
 node "$BASE_DIR/bin/lib/install.js" install-all
 
-echo "Installing Antigravity plugin..."
-ANTIGRAVITY_PLUGIN_DIR="$HOME/.gemini/config/plugins/basemem"
-mkdir -p "$HOME/.gemini/config/plugins"
-rm -rf "$ANTIGRAVITY_PLUGIN_DIR"
-cp -r "$BASE_DIR/extensions/gemini/." "$ANTIGRAVITY_PLUGIN_DIR"
-mv "$ANTIGRAVITY_PLUGIN_DIR/gemini-extension.json" "$ANTIGRAVITY_PLUGIN_DIR/plugin.json"
-
-echo "Generating Antigravity MCP tool schemas..."
-if [ -f "$BASE_DIR/generate_antigravity_schemas.py" ]; then
-  python3 "$BASE_DIR/generate_antigravity_schemas.py" || true
-fi
+echo "(skipped: generate_antigravity_schemas.py not present)"
 
 ENABLEMENT_FILE="$HOME/.gemini/extensions/extension-enablement.json"
 mkdir -p "$(dirname "$ENABLEMENT_FILE")"
@@ -129,11 +109,6 @@ write_json "$HOME/.gemini/settings.json" \
   "mcpServers.mem.args" "[\"$MCP_SCRIPT\"]" \
   "mcpServers.mem.env.BASEMEM_DB_PATH" "$BASEMEM_DB_PATH"
 
-echo "Configuring MCP for Antigravity..."
-write_json "$HOME/.gemini/config/mcp_config.json" \
-  "mcpServers.mem.command" "$MCP_PYTHON" \
-  "mcpServers.mem.args" "[\"$MCP_SCRIPT\"]" \
-  "mcpServers.mem.env.BASEMEM_DB_PATH" "$BASEMEM_DB_PATH"
 
 echo "Configuring MCP for Codex CLI..."
 codex mcp add --env "BASEMEM_DB_PATH=$BASEMEM_DB_PATH" mem -- "$MCP_PYTHON" "$MCP_SCRIPT" 2>/dev/null || true
@@ -228,10 +203,11 @@ echo "  opencode        ~/.config/opencode/opencode.jsonc"
 echo "  Cursor          ~/.cursor/mcp.json"
 echo "  Windsurf        ~/.windsurf/mcp_config.json"
 echo "  Codex CLI       ~/.codex/config.toml"
+echo "  Antigravity     ~/.gemini/antigravity-cli/plugins/basemem/mcp_config.json"
 echo ""
 echo "Extensions, skills & guidance:"
 echo "  Gemini          ~/.gemini/extensions/00-basemem/"
-echo "  Antigravity     ~/.gemini/config/plugins/basemem/"
+echo "  Antigravity     ~/.gemini/antigravity-cli/plugins/basemem/"
 echo "  Codex CLI       ~/.codex/skills/basemem/"
 echo "  Claude Code     ~/.claude/CLAUDE.md"
 echo "  Codex CLI       ~/.codex/AGENTS.md"

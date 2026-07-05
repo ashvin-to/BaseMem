@@ -140,18 +140,7 @@ $MCP_PYTHON $BASE_DIR/mem.py --db $BASEMEM_DB_PATH \"\$@\""
 write_executable "$MEM_BIN_DIR/mem" "$MEM_WRAPPER"
 
 # ── MCP entry point ───────────────────────────────────────────────
-if [[ ! -f "$MCP_SCRIPT" ]]; then
-  cat <<'PYEOF' >"$MCP_SCRIPT"
-#!/usr/bin/env python3
-"""MCP server entry point for BaseMem agent memory."""
-import sys
-from pathlib import Path
-BASE_DIR = Path(__file__).parent.absolute()
-sys.path.insert(0, str(BASE_DIR))
-from mcp_server.server import server
-if __name__ == "__main__":
-    server.run()
-PYEOF
+if [[ -f "$MCP_SCRIPT" ]]; then
   chmod 755 "$MCP_SCRIPT"
 fi
 
@@ -170,13 +159,6 @@ if [[ -z "$SKIP_GEMINI" && -d "$BASE_DIR/extensions/gemini" ]]; then
   EXT_DIR="$HOME/.gemini/extensions/00-basemem"
   rm -rf "$EXT_DIR"
   cp -r "$BASE_DIR/extensions/gemini/." "$EXT_DIR"
-
-  echo "Installing Antigravity plugin..."
-  PLUGIN_DIR="$HOME/.gemini/config/plugins/basemem"
-  mkdir -p "$HOME/.gemini/config/plugins"
-  rm -rf "$PLUGIN_DIR"
-  cp -r "$BASE_DIR/extensions/gemini/." "$PLUGIN_DIR"
-  mv "$PLUGIN_DIR/gemini-extension.json" "$PLUGIN_DIR/plugin.json"
 
   if [[ -f "$BASE_DIR/generate_antigravity_schemas.py" ]]; then
     echo "Generating Antigravity MCP tool schemas..."

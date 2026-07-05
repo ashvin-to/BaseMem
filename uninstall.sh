@@ -177,6 +177,7 @@ rm -rf "$HOME/.claude/hooks"
 rm -rf "$HOME/.codex/hooks"
 rm -rf "$HOME/.config/opencode/plugins"
 rm -rf "$HOME/.gemini/antigravity-cli/plugins/basemem"
+rm -rf "$HOME/.gemini/config/plugins/basemem"
 
 # --- Step 6: Remove basemem permissions from allow-lists ---
 echo "  Removing bad permissions..."
