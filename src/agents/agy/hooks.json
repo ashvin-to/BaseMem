@@ -5,6 +5,12 @@
         "type": "command",
         "command": "node \"${extensionPath}/hooks/session-start.js\""
       }
+    ],
+    "PostInvocation": [
+      {
+        "type": "command",
+        "command": "node \"${extensionPath}/hooks/session-stop.js\""
+      }
     ]
   }
 }

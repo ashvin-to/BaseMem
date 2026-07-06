@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/basemem-session-start.js\"",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/session-start.js\"",
             "statusMessage": "Loading BaseMem memory context",
             "timeout": 10
           }
@@ -18,7 +18,18 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/basemem-prompt-tracker.js\"",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/prompt-tracker.js\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/session-stop.js\"",
             "timeout": 5
           }
         ]

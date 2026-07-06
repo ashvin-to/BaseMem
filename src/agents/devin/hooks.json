@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CODEX_PLUGIN_ROOT:-$HOME/.codex}/hooks/session-start.js\"",
+            "command": "node \"${DEVIN_PLUGIN_ROOT}/hooks/session-start.js\"",
             "statusMessage": "Loading BaseMem memory context",
             "timeout": 10
           }
@@ -18,7 +18,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CODEX_PLUGIN_ROOT:-$HOME/.codex}/hooks/prompt-tracker.js\"",
+            "command": "node \"${DEVIN_PLUGIN_ROOT}/hooks/prompt-tracker.js\"",
             "timeout": 5
           }
         ]
@@ -29,7 +29,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CODEX_PLUGIN_ROOT:-$HOME/.codex}/hooks/session-stop.js\"",
+            "command": "node \"${DEVIN_PLUGIN_ROOT}/hooks/session-stop.js\"",
             "timeout": 5
           }
         ]
