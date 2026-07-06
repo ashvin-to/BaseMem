@@ -1,0 +1,17 @@
+{
+  "name": "basemem-kilo-plugin",
+  "version": "1.0.0",
+  "description": "BaseMem memory integration plugin for Kilo Code",
+  "type": "module",
+  "main": "./basemem.js",
+  "exports": {
+    "./server": {
+      "import": "./basemem.js",
+      "config": {}
+    }
+  },
+  "engines": {
+    "opencode": "^1.0.0"
+  },
+  "dependencies": {}
+}

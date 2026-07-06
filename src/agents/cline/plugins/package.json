@@ -1,0 +1,8 @@
+{
+  "name": "basemem-cline-plugin",
+  "version": "1.0.0",
+  "description": "BaseMem memory integration plugin for Cline",
+  "type": "module",
+  "main": "./basemem.js",
+  "dependencies": {}
+}
