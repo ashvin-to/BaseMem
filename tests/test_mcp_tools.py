@@ -205,16 +205,16 @@ class TestNoteTools:
         r = search_nodes(query="zzzzzzzzz")
         assert "No matches" in r or "no matches" in r.lower()
 
-    def test_summarize_planet(self, temp_db):
-        from mcp_server.server import summarize_planet
+    def test_read_planet_with_limit(self, temp_db):
+        from mcp_server.server import read_planet
         db_path, storage, manager = temp_db
         manager.add_note("test", "sum-test", "decision", "key insight")
-        r = summarize_planet(topic="sum-test")
+        r = read_planet(topic="sum-test", limit=50)
         assert "key insight" in r
 
-    def test_summarize_planet_not_found(self, temp_db):
-        from mcp_server.server import summarize_planet
-        r = summarize_planet(topic="no-such-planet")
+    def test_read_planet_not_found(self, temp_db):
+        from mcp_server.server import read_planet
+        r = read_planet(topic="no-such-planet")
         assert "No planet found" in r
 
     def test_compact_planet(self, temp_db):
@@ -232,23 +232,23 @@ class TestNoteTools:
 
 class TestLinkTools:
     def test_link_notes(self, temp_db):
-        from mcp_server.server import link_notes
+        from mcp_server.server import link
         db_path, storage, manager = temp_db
         n1 = manager.add_note("test", "link-test", "fact", "node A")
         n2 = manager.add_note("test", "link-test", "fact", "node B")
-        r = link_notes(fromNoteId=n1["id"], toNoteId=n2["id"], linkType="related", weight=0.9)
+        r = link(fromId=n1["id"], toId=n2["id"], linkType="related", weight=0.9, kind="notes")
         assert "Linked" in r
 
     def test_link_notes_invalid(self, temp_db):
-        from mcp_server.server import link_notes
-        r = link_notes(fromNoteId="note-999", toNoteId="note-888")
+        from mcp_server.server import link
+        r = link(fromId="note-999", toId="note-888", kind="notes")
         assert "Linked" in r or "Invalid" in r
 
     def test_link_notes_self(self, temp_db):
-        from mcp_server.server import link_notes
+        from mcp_server.server import link
         db_path, storage, manager = temp_db
         n = manager.add_note("test", "self-test", "fact", "alone")
-        r = link_notes(fromNoteId=n["id"], toNoteId=n["id"])
+        r = link(fromId=n["id"], toId=n["id"], kind="notes")
         assert "itself" in r
 
     def test_get_graph_flat(self, seeded_db):
@@ -268,16 +268,16 @@ class TestLinkTools:
         assert "No neighbors" in r
 
     def test_link_planets(self, temp_db):
-        from mcp_server.server import link_planets
+        from mcp_server.server import link
         db_path, storage, manager = temp_db
         manager.update_planet("test", "planet-a", current_state="a")
         manager.update_planet("test", "planet-b", current_state="b")
-        r = link_planets(fromPlanet="planet-a", toPlanet="planet-b", relation="related", weight=1.0)
+        r = link(fromId="planet-a", toId="planet-b", linkType="related", weight=1.0, kind="planets")
         assert "Linked" in r
 
     def test_link_planets_missing(self, temp_db):
-        from mcp_server.server import link_planets
-        r = link_planets(fromPlanet="real", toPlanet="ghost")
+        from mcp_server.server import link
+        r = link(fromId="real", toId="ghost", kind="planets")
         assert "not found" in r.lower()
 
     def test_get_planet_links(self, temp_db):

@@ -41,27 +41,25 @@ mem session sync "topic-name" --agent-id "your-unique-suffix"
 
 ## MCP Tools
 
-**35 core tools (37 with `BASEMEM_ENABLE_ADVANCED_TOOLS=1`).**
+**29 core tools (34 with `BASEMEM_ENABLE_ADVANCED_TOOLS=1`).**
 
 ### Context & Discovery
 | Tool | Parameters | Description |
 |------|-----------|-------------|
 | `getContext` | `topic`, `project`, `query` | Call for mid-session context refresh or when switching topics. Context is automatically injected at session start via the SessionStart hook. Response includes a sessions block (active sessions + last closed/paused session summary). |
-| `read_planet` | `topic` | Full planet details with all notes |
+| `read_planet` | `topic`, `limit` (optional) | Full planet details; pass `limit` to get raw notes for agent summarization (replaces the old `summarize_planet`) |
 | `list_planets` | — | Discover what topics exist |
 | `search_nodes` | `query`, `limit` | Full-text search across all content |
 | `search_notes` | `topic`, `kind`, `query`, `limit` | Filtered note search |
-| `get_node` | `nodeId` | Read any node by ID |
+
 
 ### Writing
 | Tool | Parameters | Description |
 |------|-----------|-------------|
 | `update_planet` | `topic`, `currentState`, `nextStep`, `status`, `goal`, `filePath`, `command`, `handoff` | Update or create a planet |
 | `logInteraction` | `topic`, `decision`, `fact`, `summary`, `currentState`, `nextStep`, `activity` | Persist decision, fact, state change, activity — all in one call |
-| `link_notes` | `fromNoteId`, `toNoteId`, `linkType`, `weight` | Connect two notes |
-| `link_planets` | `fromPlanet`, `toPlanet`, `relation`, `weight` | Connect two planets |
+| `link` | `fromId`, `toId`, `linkType` (default=related), `weight` (default=1.0), `kind` (default=notes; or "planets") | Link two notes or two planets |
 | `note_update` | `noteId`, `pinned`, `tags` | Set pinned status (true/false) and/or replace comma-separated tags. At least one of `pinned` or `tags` required. |
-| `set_memory_state` | `topic`, `state` | Set hot/warm/compacted |
 
 ### Graph Navigation
 | Tool | Parameters | Description |
@@ -74,15 +72,17 @@ mem session sync "topic-name" --agent-id "your-unique-suffix"
 |------|-----------|-------------|
 | `compute_similarity` | `noteIdA`, `noteIdB` | Returns both notes for agent to judge similarity |
 | `rerank` | `query`, `noteIds` | Returns query + notes for agent to reorder by relevance |
+| `set_memory_state` | `topic`, `state` | Set hot/warm/compacted tier |
+| `get_node` | `nodeId` | Read any node by ID |
+| `code_list_projects` | `searchRoot` (optional) | Scan filesystem for all indexed code projects |
 
-These two tools rely on agent-driven semantic judgment rather than deterministic computation.
+These five tools rely on agent-driven semantic judgment or are useful only during curation/debugging.
 They are only registered when `BASEMEM_ENABLE_ADVANCED_TOOLS=1` or `BASEMEM_ENABLE_ADVANCED_TOOLS=true` is set.
-Enable them when actively curating note quality; omit them for a leaner tool list in daily development.
+Enable them for curation, debugging, or project discovery; omit them for a leaner tool list in daily development.
 
 ### Lifecycle
 | Tool | Parameters | Description |
 |------|-----------|-------------|
-| `summarize_planet` | `topic`, `limit` | Return all notes for agent summarization |
 | `compact_planet` | `topic` | Keep summaries + 30 recent notes |
 | `edge_maintain` | `planet`, `decayFactor`, `pruneThreshold` | Apply weight decay (multiply all auto-link weights by factor) and/or prune edges below a weight threshold. Decay runs before prune so pruning reflects decayed weights. At least one of `decayFactor` or `pruneThreshold` required. |
 
@@ -90,8 +90,7 @@ Enable them when actively curating note quality; omit them for a leaner tool lis
 | Tool | Parameters | Description |
 |------|-----------|-------------|
 | `session_start` | `topic`, `title`, `agent_id` | Start a new session (returns session_id) |
-| `session_end` | `session_id`, `summary` (optional) | Close a session |
-| `session_pause` | `session_id` | Pause a session (make inactive) |
+| `session_end` | `session_id`, `summary` (optional), `hard` (default=false) | Close a session. When `hard=true`, also unpins all stamped notes and detaches stamped tasks |
 | `session_resume` | `session_id`, `agent_id` | Resume a paused session |
 | `session_read` | `session_id` | Full session details with expanded notes and tasks |
 | `session_list` | `topic` (optional), `status` (optional) | List sessions, optionally filtered |
@@ -226,7 +225,7 @@ Both `getContext` and `agent-context` include a **Sessions** block above the not
 
 ```bash
 export BASEMEM_DB_PATH="./data/basemem.db"
-export BASEMEM_ENABLE_ADVANCED_TOOLS=1  # enables compute_similarity + rerank tools
+export BASEMEM_ENABLE_ADVANCED_TOOLS=1  # enables compute_similarity, rerank, set_memory_state, get_node, code_list_projects
 export BASEMEM_SESSION_TIMEOUT_HOURS=24  # session auto-pause timeout (min 1)
 ```
 

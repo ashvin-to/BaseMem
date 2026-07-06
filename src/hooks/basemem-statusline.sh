@@ -1,8 +1,16 @@
 #!/usr/bin/env bash
-# Statusline indicator for Claude Code / compatible agents
+# Statusline indicator for Claude Code / Cursor / compatible agents
 set -euo pipefail
 
-CONFIG_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+# Detect environment based on available variables
+if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
+  CONFIG_DIR="${CLAUDE_CONFIG_DIR}"
+elif [ -n "${CURSOR_CONFIG_DIR:-}" ]; then
+  CONFIG_DIR="${CURSOR_CONFIG_DIR}"
+else
+  CONFIG_DIR="${HOME}/.claude"
+fi
+
 FLAG_FILE="${CONFIG_DIR}/.basemem-active"
 
 RESOLVED_FLAG=$(readlink -f "$FLAG_FILE" 2>/dev/null || echo "")

@@ -5,7 +5,7 @@ A Task is a **distinct entity** from a Note, not a kind of Note.
 | | Task | Note |
 |---|---|---|
 | **Purpose** | Actionable work item with workflow state | Everything else — decisions, facts, context |
-| **State** | Status lifecycle (todo → in_progress → blocked/done) | Immutable record |
+| **State** | Status lifecycle (todo → in_progress → blocked/done/cancelled) | Immutable record |
 | **Relations** | Explicit dependency graph (`depends_on`) | Semantic similarity links (`note_links`) |
 | **Tracking** | Priority, files, referenced notes | Kind, tags, pinned |
 
@@ -18,7 +18,7 @@ A task may reference notes through its `notes` field; a note should **not** dupl
 | `id` | int | Auto-increment primary key |
 | `topic` | str | Planet topic (matching the `notes.topic` convention) |
 | `title` | str | Task summary |
-| `status` | str | One of `todo`, `in_progress`, `blocked`, `done` |
+| `status` | str | One of `todo`, `in_progress`, `blocked`, `done`, `cancelled` |
 | `priority` | str | One of `low`, `medium`, `high` |
 | `depends_on` | list[int] | Task IDs that must complete first |
 | `files` | list[str] | File paths relevant to this task |

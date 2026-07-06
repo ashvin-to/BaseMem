@@ -1,6 +1,6 @@
 # BaseMem: AI Knowledge Base System
 
-Lightweight knowledge base for AI agents. Planets hold task context, notes persist decisions, linked edges form a learnable graph. MCP tools let any agent read and write the same data. **Designed as a plugin for existing chat interfaces** (Claude Code, Codex, Gemini CLI, etc.).
+Lightweight, persistent memory for AI agents. Planets hold task context, notes persist decisions, linked edges form a learnable graph. **34 MCP tools** let any agent read and write the same data, and **session-start hooks/plugins** auto-inject memory context into every chat session — no manual `getContext` call needed.
 
 ## Quick Start
 
@@ -8,7 +8,6 @@ Lightweight knowledge base for AI agents. Planets hold task context, notes persi
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ashvin-to/basemem/main/install.sh | bash
-# or: wget -qO- https://raw.githubusercontent.com/ashvin-to/basemem/main/install.sh | bash
 ```
 
 ### From repo
@@ -19,34 +18,56 @@ cd BaseMem
 chmod +x setup.sh && ./setup.sh
 ```
 
+### Install for your agent
+
+```bash
+# Install rules + MCP config + hooks for all detected agents
+node bin/lib/install.js install-all
+
+# Or per-agent
+node bin/lib/install.js install claude
+node bin/lib/install.js install opencode
+node bin/lib/install.js uninstall codex
+```
+
 ### Verify
 
 ```bash
+mem list-planets
 mem planet create "my-project" --goal "Build feature X"
 mem note add "my-project" --type decision -m "Use SQLite for persistence"
-mem session start "my-project" "Sprint 1"
-mem agent-context --topic "my-project" --query "what did we decide?"
 ```
 
-## Supported Agents
+## How It Works
 
-BaseMem writes rule files, MCP config, and hooks for 13 agents:
+BaseMem installs **hooks** (for agents that support them) or **plugins** (for agent platforms with plugin systems) that fire at session/turn start. These hooks:
 
-| Agent | Rules | MCP | Hooks | Config Path |
-|-------|-------|-----|-------|-------------|
-| Claude Code | `CLAUDE.md` | `mcpServers` | hooks session-start, prompt-tracker, statusline | `~/.claude/settings.json` |
-| Cursor | `.mdc` | `mcpServers` | -- | `~/.cursor/mcp.json` |
-| Windsurf | `.md` | `mcpServers` | -- | `~/.windsurf/mcp_config.json` |
-| VS Code | -- | `servers` key | -- | `.vscode/mcp.json` |
-| GitHub Copilot | `copilot-instructions.md` | -- | -- | -- |
-| Cline | `.md` | `mcpServers` | -- | `~/.cline/.../cline_mcp_settings.json` |
-| Continue | `.md` | `mcpServers` | -- | `~/.continue/config.json` |
-| Zed | `.md` | `mcpServers` | -- | `~/.config/zed/settings.json` |
-| Codex CLI | `.md` | TOML | hooks | `~/.codex/config.toml` |
-| OpenCode | `.md` | `mcp` key | plugin | `~/.config/opencode/opencode.jsonc` |
-| Gemini CLI | `.md` | `mcpServers` | -- | `~/.gemini/settings.json` |
-| Antigravity | `.md` | `mcpServers` | hooks | `~/.gemini/.../mcp_config.json` |
-| Aider | `.md` | -- | -- | -- |
+1. Detect the current project directory
+2. Call `mem agent-context` to fetch stored memory for that project
+3. Inject the context directly into the agent's prompt — no extra tool calls
+
+If context was fetched successfully, the agent sees it as a `KNOWLEDGE_BASE_CONTEXT` block and knows not to call `getContext`. If no context exists, a fallback message tells the agent to call `getContext` once.
+
+**Supported agents by capability:**
+
+| Agent | Capabilities | Detected By |
+|-------|-------------|-------------|
+| Claude Code | rules + MCP + hooks | `~/.claude/settings.json` |
+| Codex CLI | rules + MCP + hooks | `~/.codex/config.toml` |
+| Antigravity (AGy) | rules + MCP + hooks | `~/.gemini/.../mcp_config.json` |
+| OpenCode | rules + MCP + plugin | `~/.config/opencode/opencode.jsonc` |
+| Cursor | rules + MCP + hooks | `~/.cursor/mcp.json` |
+| Devin | rules + MCP + hooks + plugin | `~/.config/devin/` |
+| Cline | rules + MCP + plugin | `~/.cline/` |
+| Kilo | rules + MCP + plugin | `~/.config/kilo/` |
+| Kiro | rules + MCP + hooks | `~/.config/kiro/` |
+| Gemini CLI | rules + MCP + plugin | `~/.gemini/settings.json` |
+| Continue | rules + MCP | `~/.continue/config.json` |
+| Zed | rules + MCP | `~/.config/zed/settings.json` |
+| GitHub Copilot | rules | `copilot-instructions.md` |
+| Aider | rules | `~/.aider/` (binary detection) |
+| VS Code | MCP | `.vscode/mcp.json` |
+| Hermes | rules + MCP | (binary detection) |
 
 Run `node bin/lib/install.js detect` to see which are detected on your system.
 
@@ -55,55 +76,44 @@ Run `node bin/lib/install.js detect` to see which are detected on your system.
 ### One-shot (all detected agents)
 
 ```bash
-# Install rules + MCP + hooks for all detected agents
-node bin/lib/install.js install-all
-
-# Remove everything
-node bin/lib/install.js uninstall-all
+node bin/lib/install.js install-all     # rules + MCP + hooks for every detected agent
+node bin/lib/install.js uninstall-all   # remove everything
 ```
 
 ### Per-agent
 
 ```bash
-node bin/lib/install.js install claude     # rules + hooks + MCP for Claude Code only
-node bin/lib/install.js uninstall codex    # remove Codex rules + hooks + MCP
+node bin/lib/install.js install claude
+node bin/lib/install.js uninstall codex
 ```
 
 ### MCP only
 
 ```bash
-node bin/lib/install.js install-mcp        # MCP entries for all agents with MCP support
-node bin/lib/install.js install-mcp cursor # MCP entry for Cursor only
-node bin/lib/install.js uninstall-mcp      # Remove all MCP entries
+node bin/lib/install.js install-mcp
+node bin/lib/install.js install-mcp cursor
+node bin/lib/install.js uninstall-mcp
 ```
 
 ### Standalone installer options
 
 ```bash
-bash install.sh --dir ~/custom/path    # Install to custom directory
-bash install.sh --version v0.1.0       # Install specific tag
-bash install.sh --no-gemini            # Skip Gemini extension
+bash install.sh --dir ~/custom/path
+bash install.sh --version v0.1.0
+bash install.sh --no-gemini
 ```
 
 ## Running Tests
 
-### Python
-
 ```bash
-pytest tests/ -v
-```
-
-### JS installer
-
-```bash
-bash bin/lib/test/run.sh
+pytest tests/ -v              # Python tests (MCP tools, sessions, tasks, API)
+bash bin/lib/test/run.sh      # JS installer tests
 ```
 
 ## Docs
-- **[doc/memory.md](./doc/memory.md)** — planets, notes, graphs, CLI, data models, auto-linking, memory tiers
 
+- **[doc/memory.md](./doc/memory.md)** — planets, notes, graphs, CLI, data models, auto-linking, memory tiers, all 34 MCP tools
 - **[doc/code-intelligence.md](./doc/code-intelligence.md)** — tree-sitter code indexing, code tools, zero-read edit workflow
-
 - **[doc/tasks.md](./doc/tasks.md)** — task system, CLI, MCP tools, dependency cycle prevention
 
 ## Architecture
@@ -115,56 +125,56 @@ All interfaces (CLI, MCP, Flask) read and write the same SQLite tables — no sy
 ### Core Components
 
 1. **Storage Layer** (`storage/`) — SQLite + FTS5, `SessionManager`, schema: planets, notes, note_links, planet_links, sessions, tasks; config via env vars
-2. **MCP Server** (`mcp_server/server.py`) — 35 MCP tools (memory + code + tasks + sessions; 37 with `BASEMEM_ENABLE_ADVANCED_TOOLS=1`)
-3. **Web Hub** (`server.py`) — Flask REST API, D3.js graph visualization
-4. **CLI** (`cli/`) — subcommands: planet, note, task, session, code, edge
-5. **Code Intelligence** (`indexer/`) — tree-sitter powered, per-project `.basemem.code.db`
+2. **MCP Server** (`mcp_server/server.py`) — 29 core MCP tools (34 with `BASEMEM_ENABLE_ADVANCED_TOOLS=1`)
+3. **Hook System** (`src/hooks/`) — session-start hook scripts shared across agents, context fetching via `mem agent-context`, conditional preamble injection
+4. **Agent Plugins** (`src/agents/`) — per-agent plugin/hook definitions (opencode, cline, gemini, kilo, kiro, etc.)
+5. **Web Hub** (`server.py`) — Flask REST API, D3.js graph visualization
+6. **CLI** (`cli/`) — subcommands: planet, note, task, session, code, edge
+7. **Code Intelligence** (`indexer/`) — tree-sitter powered, per-project `.basemem.code.db`
 
 ### Project Structure
 
 ```
 BaseMem/
 ├── cli/              # CLI subcommands (planet, note, task, session, code, edge)
-│   ├── main.py
-│   ├── planet.py
-│   ├── note.py
-│   ├── task.py
-│   ├── session.py
-│   ├── code.py
-│   └── edge.py
-├── graph/            # Graph engine
-├── indexer/          # Code intelligence (tree-sitter)
-├── mcp_server/       # MCP server (35 tools, 37 with BASEMEM_ENABLE_ADVANCED_TOOLS)
+├── graph/            # Graph engine (auto-linking, traversal)
+├── indexer/          # Code intelligence (tree-sitter indexing, search, trace)
+├── mcp_server/       # MCP server — 29 core tools (34 with advanced)
 ├── storage/          # SQLite storage layer
-│   ├── config.py     # Env var config
-│   ├── sessions.py   # Session manager
+│   ├── sessions.py   # Session manager (auto-recovery, stamping, context)
 │   ├── planets.py    # Planet CRUD
 │   ├── notes.py      # Note CRUD + linking
-│   └── tasks.py      # Task CRUD
+│   └── tasks.py      # Task CRUD + dependency cycle detection
+├── src/
+│   ├── hooks/        # Shared session-start hook scripts
+│   │   ├── lib/
+│   │   │   ├── context.js    # mem agent-context fetcher with topic fallback
+│   │   │   └── output.js     # Format-aware hook output (claude, codex, cursor, agy)
+│   │   └── basemem-session-start.js
+│   └── agents/       # Per-agent hook configs + plugins
+│       ├── opencode/  # OpenCode V2 plugin
+│       ├── cline/     # Cline AgentPlugin
+│       ├── gemini/    # Gemini extension
+│       └── ...
+├── bin/
+│   └── lib/
+│       ├── install.js    # CLI installer (rules + MCP + hooks + plugins)
+│       ├── constants.js  # Agent paths, markers
+│       ├── rules.js      # Rule file write/remove
+│       └── settings.js   # Settings merge/clean
 ├── models.py         # Data models
 ├── server.py         # Flask REST API + D3 viz
 ├── mem.py            # CLI entry point
 ├── mem-mcp.py        # MCP entry point
 ├── setup.sh / setup.ps1
-├── install.sh / install.ps1     # Standalone installers (git/tarball)
-├── extensions/gemini/
-├── bin/
-│   └── lib/
-│       ├── constants.js         # Agent paths, markers
-│       ├── rules.js             # Rule file write/remove
-│       ├── settings.js          # Settings merge/clean
-│       ├── install.js           # CLI installer (rules + MCP + hooks)
-│       └── test/                # JS test suite
-├── src/
-│   ├── hooks/                   # Shared hook scripts (session-start, etc.)
-│   └── agents/                  # Per-agent hook configs + plugins
+├── install.sh / install.ps1
+├── extensions/gemini/  # Gemini CLI extension
 ├── tests/
-├── README.md
 ├── doc/
 │   ├── memory.md
 │   ├── code-intelligence.md
 │   └── tasks.md
-├── LICENSE
+└── README.md
 ```
 
 ## Development

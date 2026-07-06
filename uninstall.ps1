@@ -27,7 +27,7 @@ function Remove-McpEntry {
         if (-not $config) { return }
         $changed = $false
 
-        # Claude/Cursor/Windsurf format: mcpServers
+        # Claude/Cursor/Devin format: mcpServers
         if ($config.PSObject.Properties.Name -contains 'mcpServers' -and
             $config.mcpServers.PSObject.Properties.Name -contains $Key) {
             $config.mcpServers.PSObject.Properties.Remove($Key)
@@ -116,7 +116,7 @@ Remove-McpEntry -FilePath "$env:USERPROFILE\.gemini\config\mcp_config.json" -Key
 Remove-McpEntry -FilePath "$env:USERPROFILE\.claude\settings.json" -Key "mem"
 Remove-McpEntry -FilePath "$env:USERPROFILE\.config\opencode\opencode.jsonc" -Key "mem"
 Remove-McpEntry -FilePath "$env:USERPROFILE\.cursor\mcp.json" -Key "mem"
-Remove-McpEntry -FilePath "$env:USERPROFILE\.windsurf\mcp_config.json" -Key "mem"
+Remove-McpEntry -FilePath "$env:USERPROFILE\.config\devin\mcp_config.json" -Key "mem"
 
 # Remove host guidance files
 Write-Host "Removing host guidance files..." -ForegroundColor Yellow
@@ -193,6 +193,6 @@ if ($currentPath -like "*$binDir*") {
 
 Write-Host "------------------------------------------------" -ForegroundColor Cyan
 Write-Host "BaseMem uninstall complete." -ForegroundColor Green
-Write-Host "MCP configs cleaned from Claude Code, opencode, Cursor, Windsurf."
+Write-Host "MCP configs cleaned from Claude Code, opencode, Cursor, Devin."
 Write-Host "Open a new terminal session to refresh PATH." -ForegroundColor Yellow
 Write-Host "------------------------------------------------" -ForegroundColor Cyan

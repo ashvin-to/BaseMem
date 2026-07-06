@@ -168,9 +168,9 @@ write_json "$HOME/.cursor/mcp.json" \
   "mcpServers.mem.args" "[\"$MCP_SCRIPT\"]" \
   "mcpServers.mem.env.BASEMEM_DB_PATH" "$BASEMEM_DB_PATH"
 
-echo "Configuring MCP for Windsurf..."
-mkdir -p "$HOME/.windsurf"
-write_json "$HOME/.windsurf/mcp_config.json" \
+echo "Configuring MCP for Devin..."
+mkdir -p "$HOME/.config/devin"
+write_json "$HOME/.config/devin/mcp_config.json" \
   "mcpServers.mem.command" "$MCP_PYTHON" \
   "mcpServers.mem.args" "[\"$MCP_SCRIPT\"]" \
   "mcpServers.mem.env.BASEMEM_DB_PATH" "$BASEMEM_DB_PATH"
@@ -201,7 +201,7 @@ echo "  Gemini CLI      ~/.gemini/settings.json"
 echo "  Claude Code     ~/.claude/settings.json"
 echo "  opencode        ~/.config/opencode/opencode.jsonc"
 echo "  Cursor          ~/.cursor/mcp.json"
-echo "  Windsurf        ~/.windsurf/mcp_config.json"
+echo "  Devin           ~/.config/devin/mcp_config.json"
 echo "  Codex CLI       ~/.codex/config.toml"
 echo "  Antigravity     ~/.gemini/antigravity-cli/plugins/basemem/mcp_config.json"
 echo ""

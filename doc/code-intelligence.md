@@ -41,7 +41,7 @@ mem code list-projects
 | `code_files(projectRoot, prefix, pattern, limit)` | List indexed files, or `pattern='**/*.json'` for glob wildcard search |
 | `code_impact(symbolName, projectRoot, depth, limit)` | Transitive reverse dependency graph |
 | `code_trace(symbolName, projectRoot, direction, depth, limit)` | Recursive inbound/outbound call chain |
-| `code_list_projects(searchRoot)` | Scan filesystem for all indexed projects |
+| `code_list_projects(searchRoot)` | Scan filesystem for all indexed projects *(requires `BASEMEM_ENABLE_ADVANCED_TOOLS=1`)* |
 
 ## CLI Commands
 
