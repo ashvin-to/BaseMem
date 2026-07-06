@@ -93,9 +93,9 @@ server = FastMCP("mem", instructions=_get_initial_instructions())
 
 def _optional_tool(*args, **kwargs):
     """Decorator that only registers the tool if BASEMEM_ENABLE_ADVANCED_TOOLS=1/true.
-    These tools (compute_similarity, rerank) rely on agent-driven semantic judgment
-    rather than deterministic computation. Most users do not need them in daily use;
-    they add noise to the tool list. Enable only when actively curating note quality."""
+    These tools (compute_similarity, rerank, set_memory_state, get_node, code_list_projects)
+    are useful for curation and discovery but not needed mid-conversation.
+    They add noise to the tool list. Enable only when actively curating or debugging."""
     val = os.environ.get("BASEMEM_ENABLE_ADVANCED_TOOLS", "")
     if val in ("1", "true", "True"):
         return server.tool(*args, **kwargs)
@@ -386,7 +386,7 @@ def code_trace(
         indexer.close()
 
 
-@server.tool(description="Scan for indexed code projects.")
+@_optional_tool(description="Scan for indexed code projects.")
 def code_list_projects(searchRoot: str = "") -> str:
     """Scan for all .basemem.code.db files on the system."""
     from indexer.indexer import find_code_projects
@@ -588,19 +588,21 @@ def getContext(topic: str = "", project: str = "", query: str = "") -> str:
     return "\n".join(lines)
 
 
-@server.tool(description="Full planet details: state, notes, files, commands.")
-def read_planet(topic: str) -> str:
-    """Read all details of a specific planet/topic."""
+@server.tool(description="Full planet details: state, notes, files, commands. raw=true returns notes for agent summarization.")
+def read_planet(topic: str, raw: bool = False, limit: int = 50) -> str:
+    """Read all details of a specific planet/topic. With raw=true, return notes for agent summarization."""
     from storage.db import StorageManager
-    from storage.planets import _get_notes
     from storage.sessions import SessionManager
+    storage = StorageManager(get_db_path())
+    manager = SessionManager(storage)
+    if raw:
+        return manager.summarize_planet(topic, limit=limit)
 
+    from storage.planets import _get_notes
     db_path = get_db_path()
     if not os.path.isfile(db_path):
         return f"No knowledge base found at {db_path}."
 
-    storage = StorageManager(db_path)
-    manager = SessionManager(storage)
     proxy = manager.get_planet(topic)
     if not proxy:
         return f"No planet found for topic '{topic}'."
@@ -709,16 +711,6 @@ def update_planet(
 
 
 
-
-
-@server.tool(description="Get raw notes for agent summarization.")
-def summarize_planet(topic: str, limit: int = 50) -> str:
-    """Return all notes for a planet formatted for agent summarization."""
-    from storage.db import StorageManager
-    from storage.sessions import SessionManager
-    storage = StorageManager(get_db_path())
-    manager = SessionManager(storage)
-    return manager.summarize_planet(topic, limit=limit)
 
 
 @server.tool(description="Trim old notes, keep summaries + 30 recent.")
@@ -838,8 +830,8 @@ def search_notes(topic: str, kind: str = "", query: str = "", limit: int = 10) -
     return "\n".join(lines)
 
 
-@server.tool(description="Read a full node by ID.")
-def get_node(nodeId: str) -> str:
+@_optional_tool(description="Read a full node by ID.")
+def get_node(nodeId: str | int) -> str:
     """Read a full node by its ID."""
     from storage.db import StorageManager
     from storage.sessions import SessionManager
@@ -870,23 +862,22 @@ def get_node(nodeId: str) -> str:
     )
 
 
-@server.tool(description="Link two notes with type and weight.")
-def link_notes(fromNoteId: str, toNoteId: str, linkType: str = "related", weight: float = 1.0) -> str:
-    """Link two notes with a typed relationship. Valid types: related, depends, implements, fixes, duplicates, supersedes, causes, blocks, tests, references"""
-    """Link two notes together."""
+@server.tool(description="Link two items (notes or planets) with type and weight. kind='notes' (default) or 'planets'.")
+def link(fromId: str | int, toId: str | int, linkType: str = "related", weight: float = 1.0, kind: str = "notes") -> str:
+    """Link two items: notes (default) or planets. For planets use kind='planets' with planet names as IDs."""
     from storage.db import StorageManager
     from storage.sessions import SessionManager
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
-    ok, msg = manager.link_notes(fromNoteId, toNoteId, linkType, weight)
+    if kind == "planets":
+        ok, msg = manager.link_planets(str(fromId), str(toId), linkType, weight)
+    else:
+        ok, msg = manager.link_notes(fromId, toId, linkType, weight)
     return msg
 
 
-
-
-
 @server.tool(description="Update a note: set pinned status and/or replace tags. At least one of pinned or tags must be provided.")
-def note_update(noteId: str, pinned: bool | None = None, tags: str | None = None) -> str:
+def note_update(noteId: str | int, pinned: bool | None = None, tags: str | None = None) -> str:
     """Update a note's pinned status and/or tags. Both parameters are optional, but at least one must be provided."""
     from storage.db import StorageManager
     from storage.sessions import SessionManager
@@ -976,17 +967,6 @@ def task_block(task_id: int, reason: str | None = None) -> str:
 # ── Planet links ─────────────────────────────────────────────
 
 
-@server.tool(description="Link two planets with a relation type.")
-def link_planets(fromPlanet: str, toPlanet: str, relation: str = "related", weight: float = 1.0) -> str:
-    """Link two planets together."""
-    from storage.db import StorageManager
-    from storage.sessions import SessionManager
-    storage = StorageManager(get_db_path())
-    manager = SessionManager(storage)
-    ok, msg = manager.link_planets(fromPlanet, toPlanet, relation, weight)
-    return msg
-
-
 @server.tool(description="Get planets linked to a planet.")
 def get_planet_links(planet: str) -> str:
     """Get planets linked to the given planet."""
@@ -1006,7 +986,7 @@ def get_planet_links(planet: str) -> str:
 # ── Memory tiers ──────────────────────────────────────────────
 
 
-@server.tool(description="Set memory tier: hot, warm, compacted.")
+@_optional_tool(description="Set memory tier: hot, warm, compacted.")
 def set_memory_state(topic: str, state: str) -> str:
     """Set memory tier for a planet."""
     from storage.db import StorageManager
@@ -1021,7 +1001,7 @@ def set_memory_state(topic: str, state: str) -> str:
 
 
 @server.tool(description="Get graph data: flat neighbors (depth=1, default), ranked list (ranked=true), or subgraph JSON (depth>1).")
-def get_graph(noteId: str, depth: int = 1, minWeight: float = 0.0, ranked: bool = False) -> str:
+def get_graph(noteId: str | int, depth: int = 1, minWeight: float = 0.0, ranked: bool = False) -> str:
     """Get graph data around a note.
     - depth=1 (default): flat list of direct neighbors filtered by minWeight.
     - ranked=true: sorts by weight desc then confidence desc.
@@ -1143,13 +1123,18 @@ def session_start(topic: str, title: str, agent_id: str) -> str:
     return f"Session created: id={sid}, topic='{topic}', title='{title}', agent='{agent_id}'."
 
 
-@server.tool(description="End a session: mark as closed with an optional summary.")
-def session_end(session_id: int, summary: str = "") -> str:
-    """Close a session and optionally attach a summary."""
+@server.tool(description="End or pause a session. pause=true sets status=paused without closing. Default: close with optional summary.")
+def session_end(session_id: int, pause: bool = False, summary: str = "") -> str:
+    """Close or pause a session."""
     from storage.db import StorageManager
     from storage.sessions import SessionManager
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
+    if pause:
+        ok = manager.pause_session(session_id)
+        if not ok:
+            return f"Session {session_id} not found."
+        return f"Session {session_id} paused."
     ok = manager.close_session(session_id, summary=summary or None)
     if not ok:
         return f"Session {session_id} not found."
@@ -1157,19 +1142,6 @@ def session_end(session_id: int, summary: str = "") -> str:
     status = session.get("status", "?")
     s = session.get("summary", "")
     return f"Session {session_id} closed. Status: {status}. Summary: {s[:200]}" if s else f"Session {session_id} closed."
-
-
-@server.tool(description="Pause a session: mark as paused without closing it.")
-def session_pause(session_id: int) -> str:
-    """Pause a session."""
-    from storage.db import StorageManager
-    from storage.sessions import SessionManager
-    storage = StorageManager(get_db_path())
-    manager = SessionManager(storage)
-    ok = manager.pause_session(session_id)
-    if not ok:
-        return f"Session {session_id} not found."
-    return f"Session {session_id} paused."
 
 
 @server.tool(description="Resume a paused session: set back to active with a new agent_id.")
@@ -1233,7 +1205,7 @@ def session_read(session_id: int) -> str:
 
 
 @server.tool(description="List sessions for a topic, optionally filtered by status.")
-def session_list(topic: str, status: str = "") -> str:
+def session_list(topic: str = "", status: str = "") -> str:
     """List sessions for a planet."""
     from storage.db import StorageManager
     from storage.sessions import SessionManager

@@ -40,6 +40,7 @@ function readJson(filePath) {
 
 function hookContainsBasemem(obj) {
   if (obj.command && obj.command.includes('session-start.js')) return true;
+  if (obj.command && obj.command.includes('session-stop.js')) return true;
   if (obj.command && obj.command.includes('prompt-tracker.js')) return true;
   if (obj.command && obj.command.includes('basemem-statusline')) return true;
   if (obj.hooks && Array.isArray(obj.hooks)) {

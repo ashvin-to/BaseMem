@@ -26,7 +26,7 @@ console.log('PASS getClaudeDir: CLAUDE_CONFIG_DIR override');
 
 // ── getAgentPaths ─────────────────────────────────────────────────
 const paths = constants.getAgentPaths();
-const expected = ['claude', 'cursor', 'windsurf', 'cline', 'copilot', 'continue',
+const expected = ['claude', 'cursor', 'devin', 'cline', 'copilot', 'continue',
   'zed', 'aider', 'codex', 'opencode', 'gemini', 'agy', 'vscode'];
 
 for (const name of expected) {

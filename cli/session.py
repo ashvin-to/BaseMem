@@ -253,7 +253,7 @@ def end(ctx, session_id, summary):
 @click.argument('session-id', type=int)
 @click.pass_context
 def pause(ctx, session_id):
-    """Pause a session."""
+    """Pause a session (calls session_end with pause=true)."""
     from storage.sessions import SessionManager
     manager = SessionManager(ctx.obj['storage'])
     ok = manager.pause_session(session_id)

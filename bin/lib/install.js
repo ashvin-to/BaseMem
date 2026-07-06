@@ -18,16 +18,17 @@ const AGENTS = [
   { name: 'codex',     format: 'markdown', capabilities: ['rules', 'mcp', 'hooks'] },
   { name: 'agy',       format: 'markdown', capabilities: ['rules', 'mcp', 'hooks'] },
   { name: 'opencode',  format: 'markdown', capabilities: ['rules', 'mcp', 'plugin'] },
-  { name: 'cursor',    format: 'mdc',      capabilities: ['rules', 'mcp'] },
-  { name: 'windsurf',  format: 'markdown', capabilities: ['rules', 'mcp'] },
+  { name: 'cursor',    format: 'mdc',      capabilities: ['rules', 'mcp', 'hooks'] },
+  { name: 'devin',     format: 'markdown', capabilities: ['rules', 'mcp', 'hooks', 'plugin'] },
   { name: 'continue',  format: 'markdown', capabilities: ['rules', 'mcp'] },
-  { name: 'cline',     format: 'markdown', capabilities: ['rules', 'mcp'] },
+  { name: 'cline',     format: 'markdown', capabilities: ['rules', 'mcp', 'plugin'] },
   { name: 'zed',       format: 'markdown', capabilities: ['rules', 'mcp'] },
   { name: 'gemini',    format: 'markdown', capabilities: ['rules', 'mcp', 'plugin'] },
   { name: 'copilot',   format: 'markdown', capabilities: ['rules'] },
   { name: 'aider',     format: 'markdown', capabilities: ['rules'], detectBinary: true },
   { name: 'vscode',    format: 'markdown', capabilities: ['mcp'], detectBinary: true, binaryName: 'code', skipRules: true },
-  { name: 'kiro',      format: 'markdown', capabilities: ['rules', 'mcp'] },
+  { name: 'kilo',      format: 'markdown', capabilities: ['rules', 'mcp', 'plugin'] },
+  { name: 'kiro',      format: 'markdown', capabilities: ['rules', 'mcp', 'hooks'] },
   { name: 'hermes',    format: 'markdown', capabilities: ['rules', 'mcp'] },
 ];
 
@@ -166,16 +167,27 @@ function scanUnknownAgents() {
 }
 
 function hookSourceDir(name) {
+  if (name === 'cline' || name === 'kilo') {
+    return path.join(BASEMEM_ROOT, 'src/agents', name, 'plugins');
+  }
   return path.join(BASEMEM_ROOT, 'src/agents', name, 'hooks');
 }
 
 function hookInstallDir(name) {
   const home = os.homedir();
+  const xdgConfig = process.env.XDG_CONFIG_HOME && process.env.XDG_CONFIG_HOME.trim().length > 0
+    ? process.env.XDG_CONFIG_HOME
+    : path.join(home, '.config');
   const map = {
     claude:   path.join(home, '.claude', 'hooks'),
     codex:    path.join(home, '.codex', 'hooks'),
+    cursor:   path.join(home, '.cursor', 'hooks', 'basemem'),
     opencode: path.join(home, '.config', 'opencode', 'plugins'),
     agy:      path.join(home, '.gemini', 'antigravity-cli', 'plugins', 'basemem', 'hooks'),
+    devin:    path.join(xdgConfig, 'devin', 'hooks'),
+    cline:    path.join(home, '.cline', 'plugins', 'basemem'),
+    kilo:     path.join(home, '.config', 'kilo', 'plugin', 'basemem'),
+    kiro:     path.join(home, '.kiro', 'hooks', 'basemem'),
   };
   return map[name];
 }
@@ -206,12 +218,13 @@ function getMCPConfigPath(name) {
     codex:    path.join(home, '.codex', 'config.toml'),
     opencode: path.join(xdgConfig, 'opencode', 'opencode.jsonc'),
     cursor:   path.join(home, '.cursor', 'mcp.json'),
-    windsurf: path.join(home, '.windsurf', 'mcp_config.json'),
+    devin:    path.join(xdgConfig, 'devin', 'mcp_config.json'),
     cline:    path.join(home, '.cline', 'data', 'settings', 'cline_mcp_settings.json'),
     continue: path.join(home, '.continue', 'config.json'),
     zed:      path.join(xdgConfig, 'zed', 'settings.json'),
     gemini:   path.join(home, '.gemini', 'settings.json'),
     vscode:   path.join(BASEMEM_ROOT, '.vscode', 'mcp.json'),
+    kilo:     path.join(xdgConfig, 'kilo', 'opencode.jsonc'),
     kiro:     path.join(home, '.kiro', 'settings', 'mcp.json'),
     hermes:   path.join(home, '.hermes', 'config.yaml'),
   };
@@ -421,12 +434,101 @@ function buildClaudeHooksAdditions(installDir) {
           ],
         },
       ],
+      Stop: [
+        {
+          hooks: [
+            {
+              type: 'command',
+              command: `node "${installDir}/session-stop.js"`,
+              timeout: 5,
+            },
+          ],
+        },
+      ],
     },
     statusLine: {
       type: 'command',
       command: `${installDir}/basemem-statusline.sh`,
     },
   };
+}
+
+const BASEMEM_CURSOR_SESSION_CMD = 'node ./hooks/basemem/session-start.js';
+const BASEMEM_CURSOR_PROMPT_CMD = 'node ./hooks/basemem/prompt-tracker.js';
+
+function isBasememCursorHook(entry) {
+  const cmd = entry && entry.command ? entry.command : '';
+  return cmd.includes('basemem/session-start') || cmd.includes('basemem/prompt-tracker');
+}
+
+function getCursorHooksPath() {
+  return path.join(os.homedir(), '.cursor', 'hooks.json');
+}
+
+function writeCursorHooksJSON() {
+  const hooksPath = getCursorHooksPath();
+  fs.mkdirSync(path.dirname(hooksPath), { recursive: true });
+
+  let data = { version: 1, hooks: {} };
+  if (fs.existsSync(hooksPath)) {
+    try {
+      data = JSON.parse(fs.readFileSync(hooksPath, 'utf-8'));
+    } catch (_) {}
+  }
+  if (!data.hooks) data.hooks = {};
+  if (!data.version) data.version = 1;
+
+  for (const key of Object.keys(data.hooks)) {
+    if (!Array.isArray(data.hooks[key])) continue;
+    data.hooks[key] = data.hooks[key].filter(entry => !isBasememCursorHook(entry));
+    if (data.hooks[key].length === 0) delete data.hooks[key];
+  }
+
+  if (!data.hooks.sessionStart) data.hooks.sessionStart = [];
+  data.hooks.sessionStart.unshift({
+    command: BASEMEM_CURSOR_SESSION_CMD,
+    timeout: 10,
+  });
+
+  if (!data.hooks.beforeSubmitPrompt) data.hooks.beforeSubmitPrompt = [];
+  data.hooks.beforeSubmitPrompt.unshift({
+    command: BASEMEM_CURSOR_PROMPT_CMD,
+    timeout: 5,
+  });
+
+  fs.writeFileSync(hooksPath, JSON.stringify(data, null, 2) + '\n', 'utf-8');
+  return { merged: true, path: hooksPath };
+}
+
+function removeCursorHooks() {
+  const hooksPath = getCursorHooksPath();
+  if (!fs.existsSync(hooksPath)) return { removed: false };
+
+  let data;
+  try {
+    data = JSON.parse(fs.readFileSync(hooksPath, 'utf-8'));
+  } catch {
+    return { removed: false };
+  }
+  if (!data.hooks) return { removed: false };
+
+  let changed = false;
+  for (const key of Object.keys(data.hooks)) {
+    if (!Array.isArray(data.hooks[key])) continue;
+    const before = data.hooks[key].length;
+    data.hooks[key] = data.hooks[key].filter(entry => !isBasememCursorHook(entry));
+    if (data.hooks[key].length !== before) changed = true;
+    if (data.hooks[key].length === 0) delete data.hooks[key];
+  }
+
+  if (!changed) return { removed: false };
+
+  if (Object.keys(data.hooks).length === 0) {
+    fs.unlinkSync(hooksPath);
+  } else {
+    fs.writeFileSync(hooksPath, JSON.stringify(data, null, 2) + '\n', 'utf-8');
+  }
+  return { removed: true, path: hooksPath };
 }
 
 function writeCodexHooksTOML(installDir) {
@@ -441,6 +543,7 @@ function writeCodexHooksTOML(installDir) {
 
   const sessionStartPath = path.join(installDir, 'session-start.js');
   const promptTrackerPath = path.join(installDir, 'prompt-tracker.js');
+  const sessionStopPath = path.join(installDir, 'session-stop.js');
 
   raw += `\n\n[[hooks.SessionStart]]
 matcher = "startup|resume"
@@ -456,6 +559,13 @@ timeout = 10
 [[hooks.UserPromptSubmit.hooks]]
 type = "command"
 command = "node \\"${promptTrackerPath}\\""
+timeout = 5
+
+[[hooks.Stop]]
+
+[[hooks.Stop.hooks]]
+type = "command"
+command = "node \\"${sessionStopPath}\\""
 timeout = 5
 `;
 
@@ -553,6 +663,21 @@ function deployHooks(name) {
     return { deployed: true, dest };
   }
 
+  if (name === 'cline' || name === 'kilo') {
+    // Cline/Kilo use plugins, not hooks
+    fs.mkdirSync(dest, { recursive: true });
+    const entries = fs.readdirSync(src);
+    for (const entry of entries) {
+      const full = path.join(src, entry);
+      if (fs.statSync(full).isFile()) {
+        const target = path.join(dest, entry);
+        fs.copyFileSync(full, target);
+        if (entry.endsWith('.js')) fs.chmodSync(target, 0o755);
+      }
+    }
+    return { deployed: true, dest };
+  }
+
   fs.mkdirSync(dest, { recursive: true });
 
   const entries = fs.readdirSync(src);
@@ -561,12 +686,12 @@ function deployHooks(name) {
     if (fs.statSync(full).isFile()) {
       const target = path.join(dest, entry);
       copyWithRewrite(full, target);
-      if (entry.endsWith('.sh')) fs.chmodSync(target, 0o755);
+      if (entry.endsWith('.sh') || entry.endsWith('.js')) fs.chmodSync(target, 0o755);
     }
   }
 
   // Also copy statusline scripts from src/hooks
-  if (name === 'claude') {
+  if (name === 'claude' || name === 'cursor') {
     const statuslineSrc = path.join(BASEMEM_ROOT, 'src/hooks');
     if (fs.existsSync(statuslineSrc)) {
       for (const entry of fs.readdirSync(statuslineSrc)) {
@@ -593,6 +718,7 @@ function settingsHasBasemem(settingsPath) {
 }
 
 function install(name) {
+  const home = os.homedir();
   const agent = getAgent(name);
   const info = detect(name);
   const paths = getAgentPaths()[name];
@@ -618,11 +744,8 @@ function install(name) {
       const settingsPath = getSettingsPath(name);
       if (settingsPath) {
         const installDir = hookInstallDir(name);
-        const already = settingsHasBasemem(settingsPath);
-        if (!already) {
-          mergeSettings(settingsPath, buildClaudeHooksAdditions(installDir));
-          settingsResult = { merged: true, path: settingsPath };
-        }
+        mergeSettings(settingsPath, buildClaudeHooksAdditions(installDir));
+        settingsResult = { merged: true, path: settingsPath };
       }
     }
 
@@ -636,12 +759,53 @@ function install(name) {
       }
     }
 
+    if (name === 'cursor') {
+      settingsResult = writeCursorHooksJSON();
+    }
+
+    if (name === 'devin') {
+      const hooksJsonSrc = path.join(BASEMEM_ROOT, 'src', 'agents', 'devin', 'hooks.json');
+      if (fs.existsSync(hooksJsonSrc)) {
+        const hooksJsonDest = path.join(hookInstallDir(name), 'hooks.json');
+        fs.mkdirSync(path.dirname(hooksJsonDest), { recursive: true });
+        fs.copyFileSync(hooksJsonSrc, hooksJsonDest);
+        settingsResult = { merged: true, path: hooksJsonDest };
+      }
+    }
+
     if (name === 'agy') {
       // Register plugin with agy CLI
       const pluginRoot = path.resolve(hookInstallDir('agy'), '..');
       try {
         execSync(`agy plugin install "${pluginRoot}" 2>/dev/null`, { stdio: 'pipe' });
       } catch (_) {}
+    }
+
+    if (name === 'kiro') {
+      const hookDir = hookInstallDir('kiro');
+      // Create agent config that registers BaseMem hooks
+      const agentsDir = path.join(home, '.kiro', 'agents');
+      fs.mkdirSync(agentsDir, { recursive: true });
+      const agentConfig = {
+        name: 'basemem',
+        description: 'BaseMem memory integration — context injection and memory tracking',
+        tools: ['*'],
+        includeMcpJson: true,
+        hooks: {
+          agentSpawn: [
+            { command: `node "${hookDir}/session-start.js"`, timeout_ms: 10000 },
+          ],
+          userPromptSubmit: [
+            { command: `node "${hookDir}/prompt-tracker.js"`, timeout_ms: 5000 },
+          ],
+          stop: [
+            { command: `node "${hookDir}/stop.js"`, timeout_ms: 5000 },
+          ],
+        },
+      };
+      const agentPath = path.join(agentsDir, 'basemem.json');
+      fs.writeFileSync(agentPath, JSON.stringify(agentConfig, null, 2) + '\n', 'utf-8');
+      settingsResult = { merged: true, path: agentPath };
     }
   }
 
@@ -653,6 +817,65 @@ function install(name) {
         fs.mkdirSync(path.dirname(pluginDest), { recursive: true });
         fs.copyFileSync(pluginSrc, pluginDest);
         settingsResult = { merged: true, path: pluginDest };
+      }
+    }
+    if (name === 'devin') {
+      const pluginSrc = path.join(BASEMEM_ROOT, 'src', 'agents', 'devin', 'plugin.js');
+      if (fs.existsSync(pluginSrc)) {
+        const pluginDest = path.join(hookInstallDir(name), 'basemem.js');
+        fs.mkdirSync(path.dirname(pluginDest), { recursive: true });
+        fs.copyFileSync(pluginSrc, pluginDest);
+        settingsResult = { merged: true, path: pluginDest };
+      }
+    }
+    if (name === 'cline') {
+      const pluginSrc = path.join(BASEMEM_ROOT, 'src', 'agents', 'cline', 'plugins');
+      if (fs.existsSync(pluginSrc)) {
+        const pluginDest = hookInstallDir('cline');
+        fs.mkdirSync(pluginDest, { recursive: true });
+        const entries = fs.readdirSync(pluginSrc);
+        for (const entry of entries) {
+          const full = path.join(pluginSrc, entry);
+          if (fs.statSync(full).isFile()) {
+            fs.copyFileSync(full, path.join(pluginDest, entry));
+          }
+        }
+        settingsResult = { merged: true, path: pluginDest };
+        try {
+          execSync(`cline plugin install "${pluginDest}" 2>/dev/null`, { stdio: 'pipe' });
+        } catch (_) {}
+      }
+    }
+    if (name === 'kilo') {
+      const pluginSrc = path.join(BASEMEM_ROOT, 'src', 'agents', 'kilo', 'plugins');
+      if (fs.existsSync(pluginSrc)) {
+        const pluginDest = hookInstallDir('kilo');
+        fs.mkdirSync(pluginDest, { recursive: true });
+        const entries = fs.readdirSync(pluginSrc);
+        for (const entry of entries) {
+          const full = path.join(pluginSrc, entry);
+          if (fs.statSync(full).isFile()) {
+            fs.copyFileSync(full, path.join(pluginDest, entry));
+          }
+        }
+        settingsResult = { merged: true, path: pluginDest };
+      }
+    }
+  }
+
+  if (name === 'opencode') {
+    const configPath = getMCPConfigPath('opencode');
+    if (configPath && fs.existsSync(configPath)) {
+      const data = readJSONSafe(configPath);
+      if (data) {
+        if (!data.instructions || !data.instructions.includes('AGENTS.md')) {
+          data.instructions = data.instructions || [];
+          if (!data.instructions.includes('AGENTS.md')) {
+            data.instructions.unshift('AGENTS.md');
+          }
+          fs.writeFileSync(configPath, JSON.stringify(data, null, 2) + '\n', 'utf-8');
+          settingsResult = { merged: true, path: configPath };
+        }
       }
     }
   }
@@ -804,6 +1027,41 @@ function uninstall(name) {
         cleaned.push(settingsPath);
       }
     }
+    if (name === 'cursor') {
+      const r = removeCursorHooks();
+      if (r.removed) cleaned.push(r.path);
+    }
+    if (name === 'cline') {
+      try {
+        execSync(`cline plugin uninstall basemem-cline-plugin 2>/dev/null`, { stdio: 'pipe' });
+      } catch (_) {}
+    }
+    if (name === 'kilo') {
+      try {
+        execSync(`kilo plugin uninstall basemem-kilo-plugin 2>/dev/null`, { stdio: 'pipe' });
+      } catch (_) {}
+    }
+    if (name === 'kiro') {
+      const agentPath = path.join(os.homedir(), '.kiro', 'agents', 'basemem.json');
+      if (fs.existsSync(agentPath)) {
+        fs.unlinkSync(agentPath);
+        removed.push(agentPath);
+      }
+    }
+    if (name === 'opencode') {
+      const configPath = getMCPConfigPath('opencode');
+      if (configPath && fs.existsSync(configPath)) {
+        const data = readJSONSafe(configPath);
+        if (data && data.instructions) {
+          const filtered = data.instructions.filter(i => i !== 'AGENTS.md');
+          if (filtered.length !== data.instructions.length) {
+            data.instructions = filtered.length ? filtered : undefined;
+            fs.writeFileSync(configPath, JSON.stringify(data, null, 2) + '\n', 'utf-8');
+            cleaned.push(configPath);
+          }
+        }
+      }
+    }
   }
 
   let mcpRemoved = false;
@@ -838,6 +1096,8 @@ module.exports = {
   removeMCPEntry,
   writeCodexHooksTOML,
   removeCodexHooks,
+  writeCursorHooksJSON,
+  removeCursorHooks,
   writeCLIWrapper,
 };
 
@@ -984,8 +1244,8 @@ if (require.main === module || process.argv[2]) {
   console.assert(testAgent.format === 'mdc', 'cursor is mdc');
   console.assert(testAgent.name === 'cursor', 'name');
 
-  const testAgent2 = getAgent('windsurf');
-  console.assert(testAgent2.format === 'markdown', 'windsurf is markdown');
+  const testAgent2 = getAgent('devin');
+  console.assert(testAgent2.format === 'markdown', 'devin is markdown');
 
   const d = detect('aider');
   console.assert('detected' in d, 'detect returns detected');

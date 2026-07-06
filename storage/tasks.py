@@ -32,7 +32,7 @@ class TaskMixin:
     _now: Any
     get_or_create_task_planet: Any
 
-    VALID_STATUSES = {"todo", "in_progress", "blocked", "done"}
+    VALID_STATUSES = {"todo", "in_progress", "blocked", "done", "cancelled"}
     VALID_PRIORITIES = {"low", "medium", "high"}
 
     def _check_dependency_cycle(self, task_id: int, depends_on: list[int], visited: set | None = None) -> bool:

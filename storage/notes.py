@@ -335,7 +335,7 @@ class NoteMixin:
             lines.extend([
                 "",
                 "## Next Steps",
-                *[f"- {self._trim_text(step, 180)}" for step in next_steps[-5:]],
+                *[f"- {self._trim_text(step, 180)}" for step in next_steps[:3]],
             ])
 
         all_notes = metadata.get("notes", [])
@@ -358,24 +358,26 @@ class NoteMixin:
                 *session_lines,
             ])
 
-        if all_notes:
+        key_notes = [n for n in all_notes if n.get('status') not in ('closed', 'resolved')]
+        if key_notes:
             lines.extend([
                 "",
                 "## Key Notes",
                 *[
                     f"- [{n.get('kind', 'note')}] {self._trim_text(n.get('content') or n.get('title') or '', 300)}"
-                    for n in all_notes[-8:]
+                    for n in key_notes[-4:]
                 ],
             ])
 
         activity = metadata.get("recent_activity", [])
-        if activity:
+        non_retrieval = [a for a in activity if "context retrieved" not in (a.get("message", "") or "").lower()]
+        if non_retrieval:
             lines.extend([
                 "",
                 "## Recent Activity",
                 *[
                     f"- {item.get('agent_id', 'unknown')} ({item.get('sender', 'ai')}): {self._trim_text(item.get('message', ''), 300)}"
-                    for item in activity[-6:]
+                    for item in non_retrieval[-3:]
                 ],
             ])
 
@@ -409,14 +411,6 @@ class NoteMixin:
                 "## Handoff",
                 self._trim_text(handoff, 400),
             ])
-
-        lines.extend([
-            "",
-            "## Instructions",
-            "- Use this memory before answering.",
-            "- Prefer existing decisions unless the user asks to revisit them.",
-            "- After answering, log durable updates back into the knowledge base.",
-        ])
 
         return "\n".join(lines)
 

@@ -27,9 +27,9 @@ function getAgentPaths() {
     ? path.join(appData, 'Cursor', 'rules')
     : path.join(home, '.cursor', 'rules');
 
-  const windsurfBase = isWindows
-    ? path.join(appData, 'Windsurf', 'rules')
-    : path.join(home, '.windsurf', 'rules');
+  const devinBase = isWindows
+    ? path.join(appData, 'Devin', 'rules')
+    : path.join(home, '.config', 'devin', 'rules');
 
   const continueBase = isWindows
     ? path.join(appData, 'Continue')
@@ -54,9 +54,9 @@ function getAgentPaths() {
       detect: cursorBase,
       install: path.join(cursorBase, 'basemem.mdc'),
     },
-    windsurf: {
-      detect: windsurfBase,
-      install: path.join(windsurfBase, 'basemem.md'),
+    devin: {
+      detect: devinBase,
+      install: path.join(devinBase, 'basemem.md'),
     },
     cline: {
       detect: [path.join(home, '.clinerules'), path.join(home, '.cline')],
@@ -97,6 +97,10 @@ function getAgentPaths() {
     vscode: {
       detect: path.join(home, '.vscode'),
       install: path.join(home, '.vscode', 'basemem.md'),
+    },
+    kilo: {
+      detect: path.join(home, '.config', 'kilo'),
+      install: path.join(home, '.config', 'kilo', 'basemem.md'),
     },
     kiro: {
       detect: path.join(home, '.kiro'),
