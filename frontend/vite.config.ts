@@ -422,6 +422,7 @@ function basememApiPlugin() {
 
 // https://vite.dev/config/
 export default defineConfig({
+  base: '/BaseMem/',
   plugins: [react(), tailwindcss(), basememApiPlugin()],
   resolve: {
     alias: {
