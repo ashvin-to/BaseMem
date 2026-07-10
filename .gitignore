@@ -74,9 +74,9 @@ BOOKMARKLET.md
 .codex
 .codegraph/
 
-# Frontend (removed)
-frontend/
-*.html
+# Frontend build output
+frontend/dist/
+/*.html
 .basemem.code.db
 .basemem-active
 
