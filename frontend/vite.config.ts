@@ -3,7 +3,6 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import path from 'path'
 import os from 'os'
-import Database from 'better-sqlite3'
 
 // Custom Vite plugin to serve BaseMem SQLite data without needing Python backend
 function basememApiPlugin() {
@@ -12,6 +11,15 @@ function basememApiPlugin() {
     configureServer(server: any) {
       server.middlewares.use(async (req: any, res: any, next: any) => {
         if (!req.url.startsWith('/api/')) return next()
+        let Database: any
+        try {
+          const mod = await import('better-sqlite3')
+          Database = mod.default
+        } catch {
+          res.statusCode = 503
+          res.setHeader('Content-Type', 'application/json')
+          return res.end(JSON.stringify({ error: 'SQLite not available in this environment' }))
+        }
         
         try {
           const dbPath = path.join(os.homedir(), '.basemem', 'basemem.db')
@@ -422,7 +430,7 @@ function basememApiPlugin() {
 
 // https://vite.dev/config/
 export default defineConfig({
-  base: '/BaseMem/',
+  base: process.env.VERCEL ? '/' : '/BaseMem/',
   plugins: [react(), tailwindcss(), basememApiPlugin()],
   resolve: {
     alias: {
