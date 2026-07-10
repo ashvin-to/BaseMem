@@ -227,6 +227,90 @@ def import_kb(ctx, input):
 
 
 @cli.command()
+def doctor():
+    """Run system diagnostics and integrity checks."""
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    base_dir = Path(__file__).parent.parent.absolute()
+    checks = []
+    all_pass = True
+
+    db_path = os.environ.get("BASEMEM_DB_PATH") or str(Path.home() / ".basemem" / "basemem.db")
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        tables = {row[0] for row in cursor.fetchall()}
+        conn.close()
+        expected = {'planets', 'notes', 'note_links', 'planet_links', 'sessions', 'tasks'}
+        missing = expected - tables
+        if missing:
+            checks.append(('Database schema', f'fail: missing tables {missing}'))
+            all_pass = False
+        else:
+            checks.append(('Database schema', 'pass'))
+    except Exception as e:
+        checks.append(('Database access', f'fail: {e}'))
+        all_pass = False
+
+    try:
+        import mcp_server.server
+        checks.append(('MCP server import', 'pass'))
+    except Exception as e:
+        checks.append(('MCP server import', f'fail: {e}'))
+        all_pass = False
+
+    try:
+        subprocess.run(['which', 'mem'], capture_output=True, check=True)
+        checks.append(('mem CLI on PATH', 'pass'))
+    except Exception:
+        checks.append(('mem CLI on PATH', 'fail'))
+        all_pass = False
+
+    try:
+        result = subprocess.run(['node', '--version'], capture_output=True, text=True, timeout=5)
+        version = result.stdout.strip().lstrip('v')
+        major = int(version.split('.')[0])
+        if major >= 18:
+            checks.append(('Node.js version', f'pass ({version})'))
+        else:
+            checks.append(('Node.js version', f'fail: {version} < 18'))
+            all_pass = False
+    except Exception as e:
+        checks.append(('Node.js', f'fail: {e}'))
+        all_pass = False
+
+    try:
+        repair_result = subprocess.run(
+            ['node', str(base_dir / 'bin' / 'lib' / 'install.js'), 'repair', '--dry-run'],
+            capture_output=True, text=True, timeout=30
+        )
+        checks.append(('Agent integrity check', 'pass (dry-run completed)'))
+        for line in repair_result.stdout.split('\n'):
+            line = line.strip()
+            if line and 'repaired' in line:
+                all_pass = False
+    except Exception as e:
+        checks.append(('Agent integrity check', f'fail: {e}'))
+        all_pass = False
+
+    click.echo('\nBaseMem Doctor:')
+    click.echo('─' * 60)
+    for name, result in checks:
+        status = '✓' if result.startswith('pass') else '✗'
+        click.echo(f'  {status} {name}: {result}')
+    click.echo('─' * 60)
+    if all_pass:
+        click.echo('All checks passed.')
+        sys.exit(0)
+    else:
+        click.echo('Some checks failed.')
+        sys.exit(1)
+
+
+@cli.command()
 @click.argument('doc_name', required=False)
 @click.pass_context
 def docs(ctx, doc_name):

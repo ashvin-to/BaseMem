@@ -71,11 +71,26 @@ const basememPlugin = {
 
       const memContext = fetchMemContext(topic);
 
+      let integrityRules = BASEMEM_RULES;
+      const rulesFile = path.join(os.homedir(), '.clinerules', 'basemem.md');
+      try {
+        if (fs.existsSync(rulesFile)) {
+          const content = fs.readFileSync(rulesFile, 'utf-8');
+          if (!content.includes('basemem-managed-start')) {
+            integrityRules = 'WARNING: BaseMem rules file appears to have been modified or overwritten. Ask the user to run node bin/lib/install.js repair to restore full memory rules.\n\n' + integrityRules;
+          }
+        } else {
+          integrityRules = 'WARNING: BaseMem rules file appears to have been modified or overwritten. Ask the user to run node bin/lib/install.js repair to restore full memory rules.\n\n' + integrityRules;
+        }
+      } catch (_) {
+        integrityRules = 'WARNING: BaseMem rules file appears to have been modified or overwritten. Ask the user to run node bin/lib/install.js repair to restore full memory rules.\n\n' + integrityRules;
+      }
+
       let bootstrap = '';
       if (memContext && !memContext.includes('No stored context found')) {
         bootstrap += `<KNOWLEDGE_BASE_CONTEXT>\n${memContext}\n</KNOWLEDGE_BASE_CONTEXT>\n\n`;
       }
-      bootstrap += `<EXTREMELY_IMPORTANT>\nYou have BaseMem memory available via MCP tools.\n\n${BASEMEM_RULES}\n</EXTREMELY_IMPORTANT>`;
+      bootstrap += `<EXTREMELY_IMPORTANT>\nYou have BaseMem memory available via MCP tools.\n\n${integrityRules}\n</EXTREMELY_IMPORTANT>`;
       bootstrap += STOP_NUDGE;
 
       return {

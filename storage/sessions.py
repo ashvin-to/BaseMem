@@ -12,10 +12,8 @@ from models import Node, NodeType
 from .config import get_session_timeout_hours
 from .db import StorageManager
 from .notes import NoteMixin
-from .planets import (
-    PlanetMixin,
-    _exec as _pexec,
-)
+from storage.db import exec_stmt
+from .planets import PlanetMixin
 from .tasks import TaskMixin
 
 logger = logging.getLogger(__name__)

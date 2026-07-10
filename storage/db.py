@@ -28,6 +28,11 @@ from models import Edge, EdgeType, Node, NodeType
 logger = logging.getLogger(__name__)
 
 
+def exec_stmt(conn: sqlite3.Connection, sql: str, params: tuple | list = ()) -> None:
+    conn.execute(sql, params)
+    conn.commit()
+
+
 class StorageManager:
     """
     Manages persistence of nodes, edges, and metadata in SQLite with FTS5 support.

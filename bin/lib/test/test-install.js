@@ -198,7 +198,8 @@ console.log('PASS install(opencode): tier 2 rules (context injected)');
 const paths_cl = getAgentPaths()['claude'];
 const claudeInstall = install('claude');
 assert.ok(claudeInstall.rule.written, 'claude rule written');
-const clContent = fs.readFileSync(paths_cl.install, 'utf-8');
+const clBasememMd = path.join(path.dirname(paths_cl.install), 'basemem.md');
+const clContent = fs.readFileSync(clBasememMd, 'utf-8');
 assert.ok(clContent.includes('already injected above'),
   'claude gets tier 1 rules (context already injected)');
 console.log('PASS install(claude): tier 1 rules (context injected)');

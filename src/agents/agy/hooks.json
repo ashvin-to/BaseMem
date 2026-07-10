@@ -5,8 +5,10 @@
         "type": "command",
         "command": "node \"${extensionPath}/hooks/session-start.js\""
       }
-    ],
-    "PostInvocation": [
+    ]
+  },
+  "basemem-stop": {
+    "Stop": [
       {
         "type": "command",
         "command": "node \"${extensionPath}/hooks/session-stop.js\""

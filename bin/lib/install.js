@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { execSync } = require('child_process');
-const { MARKER_START, MARKER_END, getAgentPaths, FLAG_FILENAME } = require('./constants.js');
+const { MARKER_START, MARKER_END, getAgentPaths, FLAG_FILENAME, getClaudeDir } = require('./constants.js');
 
 const MARKER_COMMENT_START = `<!-- ${MARKER_START} -->`;
 const { writeRuleFile, removeRuleBlock, BASEMEM_RULES_TIER1, BASEMEM_RULES_TIER2, BASEMEM_RULES_TIER3 } = require('./rules.js');
@@ -729,8 +729,24 @@ function install(name) {
 
   const rule = { installed: paths.install, written: false, tier: effectiveTier };
   if (!agent.skipRules) {
-    writeRuleFile(paths.install, agent.format, rulesText);
-    rule.written = true;
+    if (name === 'claude') {
+      const basememMd = path.join(getClaudeDir(), 'basemem.md');
+      writeRuleFile(basememMd, agent.format, rulesText);
+      rule.written = true;
+      rule.installed = basememMd;
+      const claudeMd = path.join(getClaudeDir(), 'CLAUDE.md');
+      const importLine = '@~/.claude/basemem.md';
+      let content = '';
+      try { content = fs.readFileSync(claudeMd, 'utf-8'); } catch (_) {}
+      const lines = content.split('\n').map(l => l.trim());
+      if (!lines.some(l => l === importLine)) {
+        const append = content.length > 0 && !content.endsWith('\n') ? '\n' : '';
+        fs.writeFileSync(claudeMd, content + append + importLine + '\n', 'utf-8');
+      }
+    } else {
+      writeRuleFile(paths.install, agent.format, rulesText);
+      rule.written = true;
+    }
   }
 
   let hooksResult = { deployed: false, reason: 'no hooks' };
@@ -1016,6 +1032,23 @@ function uninstall(name) {
         removeHookEntries(settingsPath);
         cleaned.push(settingsPath);
       }
+      const claudeDir = getClaudeDir();
+      const claudeMd = path.join(claudeDir, 'CLAUDE.md');
+      const importLine = '@~/.claude/basemem.md';
+      if (fs.existsSync(claudeMd)) {
+        let content = fs.readFileSync(claudeMd, 'utf-8');
+        const lines = content.split('\n');
+        const filtered = lines.filter(l => l.trim() !== importLine);
+        if (filtered.length !== lines.length) {
+          fs.writeFileSync(claudeMd, filtered.join('\n'), 'utf-8');
+          cleaned.push(claudeMd);
+        }
+      }
+      const basememMd = path.join(claudeDir, 'basemem.md');
+      if (fs.existsSync(basememMd)) {
+        fs.unlinkSync(basememMd);
+        removed.push(basememMd);
+      }
     }
     if (name === 'codex') {
       const r = removeCodexHooks();
@@ -1183,6 +1216,66 @@ if (require.main === module || process.argv[2]) {
     if (res.cleaned.length) parts.push(`cleaned ${res.cleaned.length} settings`);
     if (res.mcpRemoved) parts.push('mcp');
     console.log(`${agentName}: ${parts.length ? parts.join(', ') : 'no action'}`);
+    process.exit(0);
+  }
+
+  if (cmd === 'repair') {
+    const targetName = process.argv[3] && !process.argv[3].startsWith('--') ? process.argv[3] : null;
+    const agentsToRepair = targetName ? [getAgent(targetName)] : AGENTS;
+    const results = [];
+    for (const agent of agentsToRepair) {
+      const paths = getAgentPaths()[agent.name];
+      const rulesFilePath = agent.name === 'claude' ? path.join(getClaudeDir(), 'basemem.md') : paths.install;
+      let missingRules = false;
+      let missingImport = false;
+      let missingFile = false;
+
+      if (!fs.existsSync(rulesFilePath)) {
+        missingFile = true;
+      } else {
+        const content = fs.readFileSync(rulesFilePath, 'utf-8');
+        if (!content.includes(MARKER_COMMENT_START)) {
+          missingRules = true;
+        }
+      }
+
+      if (agent.name === 'claude') {
+        const claudeMd = path.join(getClaudeDir(), 'CLAUDE.md');
+        if (!fs.existsSync(claudeMd)) {
+          missingImport = true;
+        } else {
+          const content = fs.readFileSync(claudeMd, 'utf-8');
+          if (!content.includes('@~/.claude/basemem.md')) {
+            missingImport = true;
+          }
+        }
+      }
+
+      const intact = !missingFile && !missingRules && !missingImport;
+      const detail = [];
+      if (missingFile) detail.push('rules file not found');
+      if (missingRules) detail.push('marker missing from rules');
+      if (missingImport) detail.push('import line missing from CLAUDE.md');
+
+      install(agent.name);
+      
+      if (!intact) {
+        results.push({ agent: agent.name, status: 'repaired', detail: detail.join(', ') });
+      } else {
+        results.push({ agent: agent.name, status: 'intact (synced)', detail: '' });
+      }
+    }
+    if (process.argv.includes('--dry-run')) {
+      console.log('Agent\t\tStatus\t\tDetail');
+      for (const r of results) {
+        console.log(`${r.agent}\t\t${r.status}\t\t${r.detail}`);
+      }
+    } else {
+      console.log('Agent\t\tStatus\t\tDetail');
+      for (const r of results) {
+        console.log(`${r.agent}\t\t${r.status}\t\t${r.detail}`);
+      }
+    }
     process.exit(0);
   }
 

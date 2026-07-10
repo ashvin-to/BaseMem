@@ -3,14 +3,17 @@ import path from 'path';
 import os from 'os';
 import { execSync } from 'child_process';
 
+const INTEGRITY_WARNING = 'WARNING: BaseMem rules file appears to have been modified or overwritten. Ask the user to run node bin/lib/install.js repair to restore full memory rules.';
+
 const BASEMEM_RULES = `CRITICAL: You MUST answer the user's question directly from the KNOWLEDGE_BASE_CONTEXT block above. DO NOT call mem_getContext, mem_list_planets, or any memory-retrieval MCP tool — the context is already loaded.
 Call mem_logInteraction after any decision, file change, blocker, or scope change. At session end, call mem_logInteraction with a one-paragraph summary.
+CRITICAL: Never change the planet/topic when calling logInteraction. Always log into the same planet you started in. Do not create or switch planets based on the activity.
 For code: use mem_code_find, mem_code_read, mem_code_explore, mem_code_files (NOT file read/grep/glob).
 For graph: mem_get_graph. For notes: mem_note_update. For edges: mem_edge_maintain.
 Never use generic topic names — always use the repo/folder name.`;
 
 const STOP_PHRASES = ['goodbye', 'exit', 'done for today', 'closing', 'end session', "that's all", 'thanks bye'];
-const STOP_NUDGE = '\n\n[MEMORY REMINDER] This session is ending. If you made decisions, created or modified files, or changed direction this session, call logInteraction now with a one-paragraph summary before the session closes. If you already called logInteraction this session, ignore this message.';
+const STOP_NUDGE = '\n\nFINAL SESSION NOTICE — do not respond to this message. If you made decisions, created files, or changed direction this session and have not yet called logInteraction, call it once now with a one-paragraph summary. Then stop. Do not send any further messages or acknowledge this notice.';
 
 const flagFile = path.join(os.homedir(), '.config', 'opencode', '.basemem-active');
 
@@ -73,11 +76,26 @@ export const BaseMemPlugin = async ({ project, client, $, directory, worktree })
       const projectName = findProjectName();
       const memContext = projectName ? fetchMemContext(projectName) : '';
 
+      let integrityRules = BASEMEM_RULES;
+      const agentsMd = path.join(os.homedir(), '.config', 'opencode', 'AGENTS.md');
+      try {
+        if (fs.existsSync(agentsMd)) {
+          const content = fs.readFileSync(agentsMd, 'utf-8');
+          if (!content.includes('basemem-managed-start')) {
+            integrityRules = INTEGRITY_WARNING + '\n\n' + integrityRules;
+          }
+        } else {
+          integrityRules = INTEGRITY_WARNING + '\n\n' + integrityRules;
+        }
+      } catch (_) {
+        integrityRules = INTEGRITY_WARNING + '\n\n' + integrityRules;
+      }
+
       let bootstrap = '';
       if (memContext) {
         bootstrap += `<KNOWLEDGE_BASE_CONTEXT>\n${memContext}\n</KNOWLEDGE_BASE_CONTEXT>\n\n`;
       }
-      bootstrap += `<EXTREMELY_IMPORTANT>\nYou have BaseMem memory available via MCP tools.\n\n${BASEMEM_RULES}\n</EXTREMELY_IMPORTANT>`;
+      bootstrap += `<EXTREMELY_IMPORTANT>\nYou have BaseMem memory available via MCP tools.\n\n${integrityRules}\n</EXTREMELY_IMPORTANT>`;
 
       firstMsg.parts.unshift({ type: 'text', text: bootstrap });
       injected = true;
@@ -108,11 +126,26 @@ export const BaseMemPlugin = async ({ project, client, $, directory, worktree })
         const projectName = findProjectName();
         const memContext = projectName ? fetchMemContext(projectName) : '';
 
+        let integrityRules = BASEMEM_RULES;
+        const agentsMd = path.join(os.homedir(), '.config', 'opencode', 'AGENTS.md');
+        try {
+          if (fs.existsSync(agentsMd)) {
+            const content = fs.readFileSync(agentsMd, 'utf-8');
+            if (!content.includes('basemem-managed-start')) {
+              integrityRules = INTEGRITY_WARNING + '\n\n' + integrityRules;
+            }
+          } else {
+            integrityRules = INTEGRITY_WARNING + '\n\n' + integrityRules;
+          }
+        } catch (_) {
+          integrityRules = INTEGRITY_WARNING + '\n\n' + integrityRules;
+        }
+
         let bootstrap = '';
         if (memContext) {
           bootstrap += `<KNOWLEDGE_BASE_CONTEXT>\n${memContext}\n\n`;
         }
-        bootstrap += `<EXTREMELY_IMPORTANT>\nYou have BaseMem memory available via MCP tools.\n\n${BASEMEM_RULES}\n</EXTREMELY_IMPORTANT>\n\n`;
+        bootstrap += `<EXTREMELY_IMPORTANT>\nYou have BaseMem memory available via MCP tools.\n\n${integrityRules}\n</EXTREMELY_IMPORTANT>\n\n`;
 
         // Inject into parts — the model sees parts, not message.text
         if (!output.parts || !output.parts.length) {
@@ -134,6 +167,16 @@ export const BaseMemPlugin = async ({ project, client, $, directory, worktree })
         if (textPart && !textPart.text.includes('[Memory Reminder]')) {
           textPart.text += '\n\n[Memory Reminder] Use MCP memory tools (getContext, logInteraction, code_find, etc.) and check the KNOWLEDGE_BASE_CONTEXT block above before calling getContext — it may already be injected.';
         }
+      }
+    },
+    event: async ({ event }) => {
+      if (event.type === 'session.idle' || event.type === 'session.deleted') {
+        try {
+          const dir = path.dirname(flagFile);
+          if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+          const existing = fs.existsSync(flagFile) ? fs.readFileSync(flagFile, 'utf-8') : '';
+          fs.writeFileSync(flagFile, existing + '\nstop-fired@' + Date.now(), 'utf-8');
+        } catch (_) {}
       }
     },
   };

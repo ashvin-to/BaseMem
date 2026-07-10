@@ -8,6 +8,8 @@ import sqlite3
 import uuid
 from typing import TYPE_CHECKING, Any
 
+from storage.db import exec_stmt
+
 if TYPE_CHECKING:
     from storage.db import StorageManager
 
@@ -30,11 +32,6 @@ STOPWORDS = {
     "which", "what", "about", "up", "down",
     "let", "get", "got", "also", "make", "made",
 }
-
-
-def _exec(conn: sqlite3.Connection, sql: str, params: tuple | list = ()) -> None:
-    conn.execute(sql, params)
-    conn.commit()
 
 
 class NoteMixin:
@@ -80,7 +77,6 @@ class NoteMixin:
         title: str | None = None,
         status: str = "open",
     ) -> dict:
-        from .planets import _exec as _pexec
         from .planets import _get_planet_row
 
         topic_slug = self.normalize_topic(topic)
@@ -90,12 +86,12 @@ class NoteMixin:
 
         kind = kind.lower().strip() or "fact"
         now = self._now()
-        _pexec(
+        exec_stmt(
             self.storage.connection,
             "INSERT INTO notes (topic, kind, content, title, agent_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (topic_slug, kind, content, title or content[:80], agent_id, status, now, now),
         )
-        _pexec(
+        exec_stmt(
             self.storage.connection,
             "UPDATE planets SET updated_at = ? WHERE topic = ?",
             (now, topic_slug),
@@ -115,7 +111,7 @@ class NoteMixin:
         if note_row and hasattr(self, 'get_active_session'):
             session = self.get_active_session(topic_slug, agent_id)
             if session:
-                _pexec(self.storage.connection, "UPDATE notes SET session_id = ? WHERE id = ?", (session["id"], note_row["id"]))
+                exec_stmt(self.storage.connection, "UPDATE notes SET session_id = ? WHERE id = ?", (session["id"], note_row["id"]))
                 self.stamp_note(session["id"], note_row["id"])
 
         count = self.get_note_count(topic)
@@ -130,7 +126,6 @@ class NoteMixin:
     def log_chat_to_planet(
         self, _folder_name: str, topic: str, content: str, agent_id: str, _sender: str = "ai"
     ) -> str | None:
-        from .planets import _exec as _pexec
         from .planets import _get_planet_row
 
         topic_slug = self.normalize_topic(topic)
@@ -138,12 +133,12 @@ class NoteMixin:
         if not row:
             self.get_or_create_task_planet(topic, topic)
         now = self._now()
-        _pexec(
+        exec_stmt(
             self.storage.connection,
             "INSERT INTO notes (topic, kind, content, agent_id, status, created_at, updated_at) VALUES (?, 'turn', ?, ?, 'open', ?, ?)",
             (topic_slug, content, agent_id, now, now),
         )
-        _pexec(
+        exec_stmt(
             self.storage.connection,
             "UPDATE planets SET updated_at = ? WHERE topic = ?",
             (now, topic_slug),
@@ -161,7 +156,6 @@ class NoteMixin:
     def link_notes(
         self, from_note_id: int | str, to_note_id: int | str, link_type: str = "related", weight: float = 1.0
     ) -> tuple[bool, str]:
-        from .planets import _exec as _pexec
 
         from_id = self._parse_note_id(from_note_id)
         to_id = self._parse_note_id(to_note_id)
@@ -170,7 +164,7 @@ class NoteMixin:
         if from_id == to_id:
             return False, "Cannot link a note to itself"
         from_id, to_id = sorted([from_id, to_id])
-        _pexec(
+        exec_stmt(
             self.storage.connection,
             "INSERT OR IGNORE INTO note_links (from_note_id, to_note_id, link_type, weight, confidence, source) VALUES (?, ?, ?, ?, 1.0, 'explicit')",
             (from_id, to_id, link_type, weight),
@@ -208,7 +202,6 @@ class NoteMixin:
         return rows
 
     def _auto_link_note(self, note_id: int, topic_slug: str) -> None:
-        from .planets import _exec as _pexec
 
         cursor = self.storage.connection.cursor()
         new_row = cursor.execute(
@@ -234,7 +227,7 @@ class NoteMixin:
                 from_id, to_id = sorted([note_id, row["id"]])
                 weight = round(score, 3)
                 confidence = round(min(1.0, score * 1.5), 3)
-                _pexec(
+                exec_stmt(
                     self.storage.connection,
                     "INSERT OR IGNORE INTO note_links (from_note_id, to_note_id, link_type, weight, confidence, source) VALUES (?, ?, 'auto', ?, ?, 'auto')",
                     (from_id, to_id, weight, confidence),
@@ -444,7 +437,6 @@ class NoteMixin:
         return [dict(r) for r in rows]
 
     def pin_note(self, note_id: int | str) -> tuple[bool, str]:
-        from .planets import _exec as _pexec
 
         nid = self._parse_note_id(note_id)
         if nid is None:
@@ -452,11 +444,10 @@ class NoteMixin:
         row = self.get_note(nid)
         if not row:
             return False, f"Note not found: {note_id}"
-        _pexec(self.storage.connection, "UPDATE notes SET pinned = 1 WHERE id = ?", (nid,))
+        exec_stmt(self.storage.connection, "UPDATE notes SET pinned = 1 WHERE id = ?", (nid,))
         return True, f"Pinned note-{nid}"
 
     def unpin_note(self, note_id: int | str) -> tuple[bool, str]:
-        from .planets import _exec as _pexec
 
         nid = self._parse_note_id(note_id)
         if nid is None:
@@ -464,11 +455,10 @@ class NoteMixin:
         row = self.get_note(nid)
         if not row:
             return False, f"Note not found: {note_id}"
-        _pexec(self.storage.connection, "UPDATE notes SET pinned = 0 WHERE id = ?", (nid,))
+        exec_stmt(self.storage.connection, "UPDATE notes SET pinned = 0 WHERE id = ?", (nid,))
         return True, f"Unpinned note-{nid}"
 
     def tag_note(self, note_id: int | str, tags: list[str]) -> tuple[bool, str]:
-        from .planets import _exec as _pexec
 
         nid = self._parse_note_id(note_id)
         if nid is None:
@@ -476,7 +466,7 @@ class NoteMixin:
         row = self.get_note(nid)
         if not row:
             return False, f"Note not found: {note_id}"
-        _pexec(self.storage.connection, "UPDATE notes SET tags = ? WHERE id = ?", (json.dumps(tags), nid))
+        exec_stmt(self.storage.connection, "UPDATE notes SET tags = ? WHERE id = ?", (json.dumps(tags), nid))
         return True, f"Tagged note-{nid} with {tags}"
 
     def note_update(self, note_id: int | str, pinned: bool | None = None, tags: str | None = None) -> str:
@@ -515,7 +505,6 @@ class NoteMixin:
         return {"planets": planets, "notes": notes}
 
     def reinforce_link(self, from_note_id: int, to_note_id: int, increment: float = 0.05):
-        from .planets import _exec as _pexec
 
         from_id, to_id = sorted([from_note_id, to_note_id])
         cursor = self.storage.connection.cursor()
@@ -525,14 +514,13 @@ class NoteMixin:
         ).fetchone()
         if row:
             new_weight = round(min(1.0, row["weight"] + increment), 3)
-            _pexec(
+            exec_stmt(
                 self.storage.connection,
                 "UPDATE note_links SET weight = ?, updated_at = ? WHERE from_note_id = ? AND to_note_id = ? AND link_type = 'auto'",
                 (new_weight, self._now(), from_id, to_id),
             )
 
     def recompute_links(self, topic: str | None = None, threshold: float = 0.1, min_weight: float = 0.05) -> dict:
-        from .planets import _exec as _pexec
 
         cursor = self.storage.connection.cursor()
         if topic:
@@ -561,20 +549,20 @@ class NoteMixin:
                     confidence = round(min(1.0, score * 1.5), 3)
                     if existing:
                         new_weight = round((existing["weight"] + score) / 2, 3)
-                        _pexec(
+                        exec_stmt(
                             self.storage.connection,
                             "UPDATE note_links SET weight = ?, confidence = ?, updated_at = ? WHERE from_note_id = ? AND to_note_id = ? AND link_type = 'auto'",
                             (new_weight, confidence, self._now(), from_id, to_id),
                         )
                     else:
-                        _pexec(
+                        exec_stmt(
                             self.storage.connection,
                             "INSERT INTO note_links (from_note_id, to_note_id, link_type, weight, confidence, source) VALUES (?, ?, 'auto', ?, ?, 'auto')",
                             (from_id, to_id, round(score, 3), confidence),
                         )
                         created += 1
                 elif existing and score < min_weight:
-                    _pexec(
+                    exec_stmt(
                         self.storage.connection,
                         "DELETE FROM note_links WHERE from_note_id = ? AND to_note_id = ? AND link_type = 'auto'",
                         (from_id, to_id),

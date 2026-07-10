@@ -6,6 +6,8 @@ import json
 import sqlite3
 from typing import TYPE_CHECKING, Any
 
+from storage.db import exec_stmt
+
 if TYPE_CHECKING:
     from storage.db import StorageManager
 
@@ -17,11 +19,6 @@ def _get_tasks(conn: sqlite3.Connection, topic: str) -> list[dict]:
         (topic,),
     ).fetchall()
     return [dict(r) for r in rows]
-
-
-def _exec(conn: sqlite3.Connection, sql: str, params: tuple | list = ()) -> None:
-    conn.execute(sql, params)
-    conn.commit()
 
 
 class TaskMixin:
@@ -74,7 +71,6 @@ class TaskMixin:
         files: list[str] | None = None,
         notes: list[int] | None = None,
     ) -> dict:
-        from .planets import _exec as _pexec
         from .planets import _get_planet_row
 
         topic_slug = self.normalize_topic(topic)
@@ -94,12 +90,12 @@ class TaskMixin:
         file_list = sorted(set(files)) if files else []
         note_list = sorted(set(int(n) for n in notes)) if notes else []
         now = self._now()
-        _pexec(
+        exec_stmt(
             self.storage.connection,
             "INSERT INTO tasks (topic, title, status, priority, depends_on, files, notes, created_at) VALUES (?, ?, 'todo', ?, ?, ?, ?, ?)",
             (topic_slug, title, priority, json.dumps(deps), json.dumps(file_list), json.dumps(note_list), now),
         )
-        _pexec(
+        exec_stmt(
             self.storage.connection,
             "UPDATE planets SET updated_at = ? WHERE topic = ?",
             (now, topic_slug),
@@ -113,7 +109,7 @@ class TaskMixin:
         if task_row and hasattr(self, 'get_active_session'):
             sessions = self.list_sessions(topic_slug, status='active')
             if sessions:
-                _pexec(self.storage.connection, "UPDATE tasks SET session_id = ? WHERE id = ?", (sessions[0]["id"], task_row["id"]))
+                exec_stmt(self.storage.connection, "UPDATE tasks SET session_id = ? WHERE id = ?", (sessions[0]["id"], task_row["id"]))
                 self.stamp_task(sessions[0]["id"], task_row["id"])
         return result
 
@@ -126,8 +122,6 @@ class TaskMixin:
         files: list[str] | None = None,
         notes: list[int] | None = None,
     ) -> tuple[bool, str]:
-        from .planets import _exec as _pexec
-
         cursor = self.storage.connection.cursor()
         row = cursor.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
         if not row:
@@ -170,12 +164,12 @@ class TaskMixin:
             params.append(json.dumps([int(n) for n in sorted(set(notes))]))
         if updates:
             params.append(task_id)
-            _pexec(
+            exec_stmt(
                 self.storage.connection,
                 f"UPDATE tasks SET {', '.join(updates)} WHERE id = ?",
                 tuple(params),
             )
-            _pexec(
+            exec_stmt(
                 self.storage.connection,
                 "UPDATE planets SET updated_at = ? WHERE topic = ?",
                 (self._now(), task["topic"]),
@@ -183,7 +177,7 @@ class TaskMixin:
         if not task.get("session_id") and hasattr(self, 'get_active_session'):
             sessions = self.list_sessions(task["topic"], status='active')
             if sessions:
-                _pexec(self.storage.connection, "UPDATE tasks SET session_id = ? WHERE id = ?", (sessions[0]["id"], task_id))
+                exec_stmt(self.storage.connection, "UPDATE tasks SET session_id = ? WHERE id = ?", (sessions[0]["id"], task_id))
                 self.stamp_task(sessions[0]["id"], task_id)
         return True, f"Task {task_id} updated"
 

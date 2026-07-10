@@ -8,6 +8,7 @@ import sqlite3
 from typing import TYPE_CHECKING, Any
 
 from models import Node, NodeType
+from storage.db import exec_stmt
 
 if TYPE_CHECKING:
     from storage.db import StorageManager
@@ -173,13 +174,13 @@ class PlanetMixin:
         if row:
             aliases = set(json.loads(row["aliases"]) if row["aliases"] and row["aliases"].strip() else [])
             aliases.update({topic, topic_slug})
-            _exec(
+            exec_stmt(
                 self.storage.connection,
                 "UPDATE planets SET display_topic = ?, aliases = ?, updated_at = ? WHERE topic = ?",
                 (row["display_topic"] or topic, json.dumps(sorted(aliases)), self._now(), topic_slug),
             )
         else:
-            _exec(
+            exec_stmt(
                 self.storage.connection,
                 "INSERT INTO planets (topic, display_topic, aliases, current_state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
                 (topic_slug, topic, json.dumps(sorted({topic, topic_slug})),
@@ -247,7 +248,7 @@ class PlanetMixin:
             updates.append("updated_at = ?")
             params.append(self._now())
             params.append(topic_slug)
-            _exec(
+            exec_stmt(
                 self.storage.connection,
                 f"UPDATE planets SET {', '.join(updates)} WHERE topic = ?",
                 params,
@@ -323,7 +324,7 @@ class PlanetMixin:
         else:
             cursor.execute("DELETE FROM notes WHERE topic = ?", (topic_slug,))
 
-        _exec(
+        exec_stmt(
             self.storage.connection,
             "UPDATE planets SET memory_state = 'compacted', updated_at = ? WHERE topic = ?",
             (self._now(), topic_slug),
@@ -344,7 +345,7 @@ class PlanetMixin:
         if not to_row:
             return False, f"Planet '{to_topic}' not found"
         from_id, to_id = sorted([from_row["id"], to_row["id"]])
-        _exec(
+        exec_stmt(
             self.storage.connection,
             "INSERT OR IGNORE INTO planet_links (from_planet_id, to_planet_id, relation, weight) VALUES (?, ?, ?, ?)",
             (from_id, to_id, relation, weight),
@@ -400,7 +401,7 @@ class PlanetMixin:
         if state not in ("hot", "warm", "compacted"):
             return False, "State must be hot, warm, or compacted"
         slug = self.normalize_topic(topic)
-        _exec(
+        exec_stmt(
             self.storage.connection,
             "UPDATE planets SET memory_state = ?, updated_at = ? WHERE topic = ?",
             (state, self._now(), slug),
@@ -492,12 +493,12 @@ class PlanetMixin:
         )
         self.storage.add_node(moon_node)
 
-        _exec(
+        exec_stmt(
             self.storage.connection,
             "UPDATE planets SET updated_at = ? WHERE topic = ?",
             (timestamp, topic_slug),
         )
-        _exec(
+        exec_stmt(
             self.storage.connection,
             "INSERT INTO notes (topic, kind, content, agent_id, created_at, updated_at) VALUES (?, 'turn', ?, ?, ?, ?)",
             (topic_slug, f"Archived moon {moon_id}.", agent_id, timestamp, timestamp),
@@ -614,6 +615,4 @@ class PlanetMixin:
         return result
 
 
-def _exec(conn: sqlite3.Connection, sql: str, params: tuple | list = ()) -> None:
-    conn.execute(sql, params)
-    conn.commit()
+

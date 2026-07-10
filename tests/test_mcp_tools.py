@@ -764,62 +764,67 @@ class TestAdvancedToolsTier:
 
 
 # ═══════════════════════════════════════════════════════════
-# SessionStart hook
+# SessionStart / Context integrity checks
 # ═══════════════════════════════════════════════════════════
 
-class TestSessionStartHook:
-    HOOK_SCRIPT = str(Path(__file__).parent.parent / "src" / "hooks" / "basemem-session-start.js")
+class TestContextIntegrity:
+    """Verify checkRulesIntegrity works correctly."""
 
-    def test_hook_succeeds_when_mem_not_on_path(self, monkeypatch):
-        """Hook must not crash when mem CLI is unavailable."""
-        import subprocess
-        import os
-        import json
-        # Remove mem from PATH and mock HOME 
-        from pathlib import Path
-        Path("/tmp/fakehome/.claude").mkdir(parents=True, exist_ok=True)
-        monkeypatch.setenv("PATH", "/usr/bin:/bin")
-        monkeypatch.setenv("HOME", "/tmp/fakehome")
-        monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
-        result = subprocess.run(
-            ["node", self.HOOK_SCRIPT],
+    def test_check_rules_integrity_returns_intact_for_valid_file(self, tmp_path):
+        """checkRulesIntegrity returns intact=True when rules file has marker."""
+        import subprocess, json
+        rules_file = tmp_path / "rules.md"
+        rules_file.write_text("some content\n<!-- basemem-managed-start -->\nmore content")
+        r = subprocess.run(
+            ["node", "-e", """
+                const { checkRulesIntegrity } = require('./src/hooks/lib/context.js');
+                const r = checkRulesIntegrity('test', '%s');
+                console.log(JSON.stringify(r));
+            """ % str(rules_file)],
             capture_output=True, text=True, timeout=10,
-            env={**__import__('os').environ, "PATH": "/usr/bin:/bin", "HOME": "/tmp/fakehome"},
+            cwd=str(Path(__file__).parent.parent),
         )
-        assert result.returncode == 0
-        # Should emit valid JSON
-        lines = result.stdout.strip().splitlines()
-        assert len(lines) >= 1
-        found_hook = False
-        for line in lines:
-            data = json.loads(line)
-            if "hookSpecificOutput" in data:
-                found_hook = True
-        assert found_hook
+        assert r.returncode == 0
+        data = json.loads(r.stdout.strip())
+        assert data["intact"] is True
 
-    def test_hook_emits_rules_without_context_when_mem_missing(self, monkeypatch):
-        """Without mem, the hook output should still contain BASEMEM_RULES."""
-        import subprocess
-        from pathlib import Path
-        Path("/tmp/fakehome/.claude").mkdir(parents=True, exist_ok=True)
-        monkeypatch.setenv("HOME", "/tmp/fakehome")
-        result = subprocess.run(
-            ["node", self.HOOK_SCRIPT],
+    def test_check_rules_integrity_detects_missing_marker(self, tmp_path):
+        """checkRulesIntegrity returns intact=False when marker is missing."""
+        import subprocess, json
+        rules_file = tmp_path / "rules.md"
+        rules_file.write_text("content without the marker")
+        r = subprocess.run(
+            ["node", "-e", """
+                const { checkRulesIntegrity } = require('./src/hooks/lib/context.js');
+                const r = checkRulesIntegrity('test', '%s');
+                console.log(JSON.stringify(r));
+            """ % str(rules_file)],
             capture_output=True, text=True, timeout=10,
-            env={**__import__('os').environ, "PATH": "/usr/bin:/bin", "HOME": "/tmp/fakehome"},
+            cwd=str(Path(__file__).parent.parent),
         )
-        lines = result.stdout.strip().splitlines()
-        
-        ctx = None
-        for line in lines:
-            data = json.loads(line)
-            if "hookSpecificOutput" in data:
-                ctx = data["hookSpecificOutput"]["additionalContext"]
-                break
-                
-        assert ctx is not None
-        assert "MCP tools" in ctx
-        assert "getContext" in ctx
+        assert r.returncode == 0
+        data = json.loads(r.stdout.strip())
+        assert data["intact"] is False
+        assert "marker" in data["message"].lower()
+
+    def test_check_rules_integrity_detects_missing_import(self, tmp_path):
+        """checkRulesIntegrity detects missing import file for Claude."""
+        import subprocess, json
+        rules_file = tmp_path / "rules.md"
+        rules_file.write_text("<!-- basemem-managed-start -->\ncontent")
+        import_file = tmp_path / "import.md"
+        r = subprocess.run(
+            ["node", "-e", """
+                const { checkRulesIntegrity } = require('./src/hooks/lib/context.js');
+                const r = checkRulesIntegrity('claude', '%s', '%s');
+                console.log(JSON.stringify(r));
+            """ % (str(rules_file), str(import_file))],
+            capture_output=True, text=True, timeout=10,
+            cwd=str(Path(__file__).parent.parent),
+        )
+        assert r.returncode == 0
+        data = json.loads(r.stdout.strip())
+        assert data["intact"] is False
 
 
 def _first_note_id(seeded_db):

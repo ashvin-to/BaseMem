@@ -54,7 +54,7 @@ If context was fetched successfully, the agent sees it as a `KNOWLEDGE_BASE_CONT
 |-------|-------------|-------------|
 | Claude Code | rules + MCP + hooks | `~/.claude/settings.json` |
 | Codex CLI | rules + MCP + hooks | `~/.codex/config.toml` |
-| Antigravity (AGy) | rules + MCP + hooks | `~/.gemini/.../mcp_config.json` |
+| Antigravity (agy) | rules + MCP + hooks | `~/.gemini/.../mcp_config.json` |
 | OpenCode | rules + MCP + plugin | `~/.config/opencode/opencode.jsonc` |
 | Cursor | rules + MCP + hooks | `~/.cursor/mcp.json` |
 | Devin | rules + MCP + hooks + plugin | `~/.config/devin/` |

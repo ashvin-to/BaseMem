@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 const os = require('os');
 const path = require('path');
-const { fetchContext } = require('../../../hooks/lib/context.js');
+const { fetchContext, checkRulesIntegrity } = require('../../../hooks/lib/context.js');
 const { writeFlagFile } = require('../../../hooks/lib/flagfile.js');
 const { BASEMEM_RULES_TIER1 } = require('../../../../bin/lib/rules.js');
 
@@ -24,6 +24,11 @@ process.stdin.on('end', () => {
 
   if (invocationNum === 1 || invocationNum === 0) {
     const configDir = process.env.AGY_PLUGIN_ROOT || path.join(os.homedir(), '.gemini', 'config', 'plugins', 'basemem');
+    const rulesFile = path.join(os.homedir(), '.gemini', 'config', 'rules', 'basemem.md');
+    const integrity = checkRulesIntegrity('agy', rulesFile);
+    if (!integrity.intact) {
+      process.stderr.write('BaseMem rules missing from agy config — run: node bin/lib/install.js repair\n');
+    }
     writeFlagFile(configDir);
     const contextResult = fetchContext();
     
@@ -39,6 +44,9 @@ process.stdin.on('end', () => {
     const replaceTarget = "Memory context for this project is already injected above — do not call getContext or list_planets at session start. Only use getContext mid-session if you need a refresh or switch topics.";
     
     let combined = BASEMEM_RULES_TIER1;
+    if (!integrity.intact) {
+      combined = 'WARNING: BaseMem rules were not found in your config. Memory rules may not be fully active. Ask the user to run node bin/lib/install.js repair to restore them.\n\n' + combined;
+    }
     if (combined.includes(replaceTarget)) {
       combined = combined.replace(replaceTarget, conditionalText);
     } else {

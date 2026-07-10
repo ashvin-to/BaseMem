@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { spawnSync } = require('child_process');
+const { checkRulesIntegrity } = require('../../../hooks/lib/context.js');
 
 const BASEMEM_ROOT = process.env.BASEMEM_ROOT || path.resolve(__dirname, '../../..');
 const memBinDir = process.env.BASEMEM_BIN_DIR || path.join(os.homedir(), '.local', 'bin');
@@ -63,12 +64,21 @@ function getContext() {
 writeFlag();
 const ctx = getContext();
 
+const rulesFile = path.join(os.homedir(), '.kiro', 'steering', 'basemem.md');
+const integrity = checkRulesIntegrity('kiro', rulesFile);
+if (!integrity.intact) {
+  process.stderr.write('BaseMem rules missing from kiro config — run: node bin/lib/install.js repair\n');
+}
+
 let BASEMEM_RULES = '';
 try {
   ({ BASEMEM_RULES } = require(path.resolve(BASEMEM_ROOT, 'bin/lib/rules.js')));
 } catch (_) {}
 
 let output = '';
+if (!integrity.intact) {
+  output = 'WARNING: BaseMem rules were not found in your config. Memory rules may not be fully active. Ask the user to run node bin/lib/install.js repair to restore them.\n\n';
+}
 if (ctx) {
   output += `<KNOWLEDGE_BASE_CONTEXT>\n${ctx}\n</KNOWLEDGE_BASE_CONTEXT>\n\n`;
 }
