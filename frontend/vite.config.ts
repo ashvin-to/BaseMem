@@ -288,7 +288,6 @@ function basememApiPlugin() {
                 }
               });
               
-              const totalNodes = nodesMap.size;
               const reactNodes = Array.from(nodesMap.values()).map((n, i) => {
                 // Fermat's spiral (Sunflower layout) for organic, non-overlapping nodes
                 const angle = i * 2.4; // ~137.5 degrees (Golden angle)

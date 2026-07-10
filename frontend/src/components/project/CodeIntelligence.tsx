@@ -17,13 +17,7 @@ interface FileNode {
   children: Record<string, FileNode>;
 }
 
-const LANG_MAP: Record<string, string> = {
-  ts: 'typescript', tsx: 'typescript', js: 'javascript', jsx: 'javascript',
-  rs: 'rust', py: 'python', go: 'go', java: 'java', rb: 'ruby',
-  css: 'css', scss: 'scss', html: 'html', json: 'json', md: 'markdown',
-  yaml: 'yaml', yml: 'yaml', toml: 'toml', sh: 'bash', bash: 'bash',
-  c: 'c', cpp: 'cpp', h: 'c', hpp: 'cpp',
-};
+
 
 const buildTree = (files: string[]) => {
   const root: FileNode = { name: 'root', path: '', isDir: true, children: {} };
@@ -154,7 +148,7 @@ export default function CodeIntelligence({ projectId }: { projectId?: string }) 
     return <div className="flex h-full items-center justify-center text-muted-foreground"><Loader2 className="w-6 h-6 animate-spin mr-2" /> Loading code intelligence...</div>;
   }
 
-  const displayFiles = codeFiles?.files?.length > 0 ? codeFiles.files : ((planet as Planet)?.files || []);
+  const displayFiles = (codeFiles?.files || (planet as Planet)?.files || []);
 
   return (
     <div className="flex flex-col h-full bg-background">
