@@ -18,7 +18,7 @@ const xdgConfig = process.env.XDG_CONFIG_HOME && process.env.XDG_CONFIG_HOME.tri
 const flagFile = path.join(xdgConfig, 'devin', '.basemem-active');
 
 function findProjectName() {
-  const cwd = process.cwd();
+  const cwd = (process.env.PWD && fs.existsSync(process.env.PWD)) ? process.env.PWD : process.cwd();
   let current = cwd;
   for (let i = 0; i <= 3; i++) {
     try {

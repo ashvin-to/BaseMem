@@ -429,7 +429,7 @@ function basememApiPlugin() {
 
 // https://vite.dev/config/
 export default defineConfig({
-  base: process.env.VERCEL ? '/' : '/BaseMem/',
+  base: '/',
   plugins: [react(), tailwindcss(), basememApiPlugin()],
   resolve: {
     alias: {

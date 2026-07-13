@@ -201,7 +201,6 @@ class TestSessions:
         assert "# Knowledge Base Context" in context
         assert "Keep agent handoff memory small and durable." in context
         assert "Use kb agent-context as the canonical entrypoint." in context
-        assert "Patched the wrapper to export context." in context
 
 
 if __name__ == "__main__":

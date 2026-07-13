@@ -66,7 +66,7 @@ const basememPlugin = {
   },
   hooks: {
     before_agent_start(context) {
-      const cwd = context?.cwd || process.cwd();
+      const cwd = context?.cwd || (process.env.PWD && fs.existsSync(process.env.PWD) ? process.env.PWD : process.cwd());
       const topic = findProjectName(cwd);
 
       const memContext = fetchMemContext(topic);

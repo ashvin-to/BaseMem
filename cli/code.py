@@ -170,8 +170,7 @@ def code_node(identifier, root):
             click.echo(f"  sig: {sym['signature']}")
         if sym.get('docstring'):
             click.echo(f"  doc: {sym['docstring'][:200]}")
-        if callers:
-            callers_str = ", ".join(f"{c['symbol_name']}:{c['line_number']}" for c in callers[:10])
+        callers_str = ", ".join(f"{c['symbol_name']}:{c['line_number']}" for c in callers[:10]) if callers else "(none)"
         click.echo(f"  callers: {callers_str}")
         if callees:
             callees_str = ", ".join(f"{c['to_name']}:{c['line_number']}" for c in callees[:10])
@@ -450,8 +449,8 @@ def code_explore(query, root, max_files):
                     end = min(len(lines), sym['end_line'] + 1)
                     click.echo(f"  source ({sym['start_line']}-{sym['end_line']}):")
                     for i in range(start, end):
-                        marker = "→" if start + i == sym['start_line'] - start else " "
-                        click.echo(f"    {marker} L{sym['start_line'] - start + i}: {lines[start + i]}")
+                        marker = "→" if i == sym['start_line'] - 1 else " "
+                        click.echo(f"    {marker} L{i + 1}: {lines[i]}")
     finally:
         indexer.close()
 

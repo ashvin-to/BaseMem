@@ -20,10 +20,7 @@ function writeFlag() {
 }
 
 function getContext() {
-  let cwd = process.cwd();
-  if (cwd === os.homedir() && process.env.PWD && process.env.PWD !== os.homedir()) {
-    cwd = process.env.PWD;
-  }
+  let cwd = (process.env.PWD && fs.existsSync(process.env.PWD)) ? process.env.PWD : process.cwd();
 
   let current = cwd;
   let topic = null;

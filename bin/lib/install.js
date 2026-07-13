@@ -939,14 +939,20 @@ function ensureEditableInstall() {
   if (!fs.existsSync(python)) return { ok: false, reason: 'no venv python' };
   try {
     execSync(`${python} -c "import models; import cli; import storage" 2>/dev/null`, { stdio: 'ignore' });
+    try {
+      execSync(`${python} -c "from indexer.parser import ensure_grammars; ensure_grammars()"`, { stdio: 'ignore' });
+    } catch (_) {}
     return { ok: true };
   } catch (_) {}
   try {
     execSync(`${python} -m pip install -q -e "${BASEMEM_ROOT}"`, { stdio: 'pipe' });
-    return { ok: true, reinstalled: true };
   } catch (e) {
     return { ok: false, reason: e.stderr?.toString() || String(e) };
   }
+  try {
+    execSync(`${python} -c "from indexer.parser import ensure_grammars; ensure_grammars()"`, { stdio: 'ignore' });
+  } catch (_) {}
+  return { ok: true, reinstalled: true };
 }
 
 function writeCLIWrapper() {

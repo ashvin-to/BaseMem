@@ -53,6 +53,18 @@ def _get_grammar(lang: str) -> Language | None:
         return None
 
 
+def ensure_grammars():
+    """Download any missing tree-sitter grammar .so files for languages in _LANGUAGE_SO."""
+    from tree_sitter_language_pack import cache_dir, downloaded_languages
+    cache = Path(cache_dir())
+    downloaded = set(downloaded_languages())
+    needed = [lang for lang in _LANGUAGE_SO if lang not in downloaded]
+    if not needed:
+        return
+    from tree_sitter_language_pack import download
+    download(needed)
+
+
 _SKIP_EXTENSIONS = frozenset({
     ".md", ".markdown", ".rst", ".txt", ".tex",
     ".json", ".jsonc", ".json5",

@@ -7,7 +7,7 @@ const INTEGRITY_WARNING = 'WARNING: BaseMem rules file appears to have been modi
 
 const BASEMEM_RULES = `CRITICAL: You MUST answer the user's question directly from the KNOWLEDGE_BASE_CONTEXT block above. DO NOT call mem_getContext, mem_list_planets, or any memory-retrieval MCP tool — the context is already loaded.
 Call mem_logInteraction after any decision, file change, blocker, or scope change. At session end, call mem_logInteraction with a one-paragraph summary.
-CRITICAL: Never change the planet/topic when calling logInteraction. Always log into the same planet you started in. Do not create or switch planets based on the activity.
+CRITICAL: Always log into the planet matching the current working directory (detected automatically by the plugin). Do not stay locked to a previous topic.
 For code: use mem_code_find, mem_code_read, mem_code_explore, mem_code_files (NOT file read/grep/glob).
 For graph: mem_get_graph. For notes: mem_note_update. For edges: mem_edge_maintain.
 Never use generic topic names — always use the repo/folder name.`;
@@ -18,7 +18,7 @@ const STOP_NUDGE = '\n\nFINAL SESSION NOTICE — do not respond to this message.
 const flagFile = path.join(os.homedir(), '.config', 'opencode', '.basemem-active');
 
 function findProjectName() {
-  const cwd = process.cwd();
+  const cwd = (process.env.PWD && fs.existsSync(process.env.PWD)) ? process.env.PWD : process.cwd();
   let current = cwd;
   for (let i = 0; i <= 3; i++) {
     try {

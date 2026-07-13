@@ -9,7 +9,7 @@ You have access to a persistent memory system via MCP tools.
 Memory context for this project is already injected above — do not call getContext or list_planets at session start. Only use getContext mid-session if you need a refresh or switch topics.
 After any of the following events, call logInteraction immediately: a decision is made, a file is created or modified, a blocker or error is encountered, the user changes direction or scope.
 At the end of every session: call logInteraction with a one-paragraph summary of what was done.
-CRITICAL: Never change the planet/topic when calling logInteraction. Always log into the same planet you started in. Do not create or switch planets based on the activity.
+CRITICAL: Always log into the planet matching the current working directory (detected automatically by the plugin). Do not stay locked to a previous topic.
 For all code exploration: use code_find, code_read, code_explore, code_files instead of any file read, grep, glob, or directory listing tool. The only exception is writing a brand new file that does not yet exist.
 For graph navigation use get_graph(noteId, depth, minWeight, ranked) — flat neighbors at depth 1, ranked by weight when ranked=true, subgraph JSON when depth>1. For note maintenance use note_update(noteId, pinned, tags). For edge lifecycle use edge_maintain(planet, decayFactor, pruneThreshold).
 Never use a generic topic name such as task, work, project, or chat. Always use the repository name, folder name, or the specific subject of the conversation.`;
@@ -19,7 +19,7 @@ You have access to a persistent memory system via MCP tools.
 Memory context for this project is already injected above — do not call getContext list_planets or any memory-retrieval MCP tool at session start. Only use getContext mid-session if you need a refresh or switch topics.
 After any of the following events, call logInteraction immediately: a decision is made, a file is created or modified, a blocker or error is encountered, the user changes direction or scope.
 At the end of every session: call logInteraction with a one-paragraph summary of what was done.
-CRITICAL: Never change the planet/topic when calling logInteraction. Always log into the same planet you started in. Do not create or switch planets based on the activity.
+CRITICAL: Always log into the planet matching the current working directory (detected automatically by the plugin). Do not stay locked to a previous topic.
 For all code exploration: use code_find, code_read, code_explore, code_files instead of any file read, grep, glob, or directory listing tool. The only exception is writing a brand new file that does not yet exist.
 For graph navigation use get_graph(noteId, depth, minWeight, ranked) — flat neighbors at depth 1, ranked by weight when ranked=true, subgraph JSON when depth>1. For note maintenance use note_update(noteId, pinned, tags). For edge lifecycle use edge_maintain(planet, decayFactor, pruneThreshold).
 Never use a generic topic name such as task, work, project, or chat. Always use the repository name, folder name, or the specific subject of the conversation.`;
@@ -31,7 +31,7 @@ IMPORTANT: At the very start of every session, before answering any question, ca
 You have access to a persistent memory system via MCP tools.
 After any of the following events, call logInteraction immediately: a decision is made, a file is created or modified, a blocker or error is encountered, the user changes direction or scope.
 At the end of every session: call logInteraction with a one-paragraph summary of what was done.
-CRITICAL: Never change the planet/topic when calling logInteraction. Always log into the same planet you started in. Do not create or switch planets based on the activity.
+CRITICAL: Always log into the planet matching the current working directory (detected automatically by the plugin). Do not stay locked to a previous topic.
 For all code exploration: use code_find, code_read, code_explore, code_files instead of any file read, grep, glob, or directory listing tool. The only exception is writing a new file that does not yet exist.
 For graph navigation use get_graph(noteId, depth, minWeight, ranked) — flat neighbors at depth 1, ranked by weight when ranked=true, subgraph JSON when depth>1. For note maintenance use note_update(noteId, pinned, tags). For edge lifecycle use edge_maintain(planet, decayFactor, pruneThreshold).
 Never use a generic topic name such as task, work, project, or chat. Always use the repository name, folder name, or the specific subject of the conversation.`;

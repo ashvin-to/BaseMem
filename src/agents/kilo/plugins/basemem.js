@@ -21,7 +21,7 @@ try {
 const flagFile = path.join(os.homedir(), '.config', 'kilo', '.basemem-active');
 
 function findProjectName() {
-  const cwd = process.cwd();
+  const cwd = (process.env.PWD && fs.existsSync(process.env.PWD)) ? process.env.PWD : process.cwd();
   let current = cwd;
   for (let i = 0; i <= 3; i++) {
     try {

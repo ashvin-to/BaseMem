@@ -417,18 +417,6 @@ class NoteMixin:
                 ],
             ])
 
-        activity = metadata.get("recent_activity", [])
-        non_retrieval = [a for a in activity if "context retrieved" not in (a.get("message", "") or "").lower()]
-        if non_retrieval:
-            lines.extend([
-                "",
-                "## Recent Activity",
-                *[
-                    f"- {item.get('agent_id', 'unknown')} ({item.get('sender', 'ai')}): {self._trim_text(item.get('message', ''), 300)}"
-                    for item in non_retrieval[-3:]
-                ],
-            ])
-
         if query:
             related_ids = self.storage.search_nodes_fts(
                 f"{topic_slug} {query}", limit=result_limit * 3
