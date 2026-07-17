@@ -208,10 +208,9 @@ function getMCPConfigPath(name) {
     : path.join(home, '.config');
 
   if (name === 'agy') {
-    const unified = path.join(home, '.gemini', 'config', 'mcp_config.json');
-    const migratedMarker = path.join(home, '.gemini', 'config', '.migrated');
-    const legacy = path.join(home, '.gemini', 'antigravity', 'mcp_config.json');
-    return fs.existsSync(migratedMarker) || fs.existsSync(unified) ? unified : legacy;
+    // Antigravity's shared MCP config lives at ~/.gemini/config/mcp_config.json
+    // (read by both the CLI and the IDE). Always use this canonical path.
+    return path.join(home, '.gemini', 'config', 'mcp_config.json');
   }
   const map = {
     claude:   path.join(home, '.claude.json'),
@@ -326,9 +325,14 @@ function writeMCPEntry(name, serverName) {
   let data = readJSONSafe(configPath);
   if (data === undefined) data = {};
 
-  if (name === 'opencode') {
+  if (name === 'opencode' || name === 'kilo') {
     data.mcp = data.mcp || {};
     data.mcp[serverName] = { type: 'local', command: [opts.command, ...opts.args], enabled: true, environment: opts.env };
+    // Clean up any stale Claude-style `mcpServers` entry left by older installs.
+    if (data.mcpServers) {
+      delete data.mcpServers[serverName];
+      if (!Object.keys(data.mcpServers).length) delete data.mcpServers;
+    }
   } else if (name === 'vscode') {
     data.servers = data.servers || {};
     data.servers[serverName] = { type: 'stdio', ...entry };
@@ -380,11 +384,16 @@ function removeMCPEntry(name, serverName) {
   if (data === undefined) return { removed: false };
   let changed = false;
 
-  if (name === 'opencode') {
+  if (name === 'opencode' || name === 'kilo') {
     if (data.mcp && data.mcp[serverName]) {
       delete data.mcp[serverName];
       changed = true;
       if (!Object.keys(data.mcp).length) delete data.mcp;
+    }
+    if (data.mcpServers && data.mcpServers[serverName]) {
+      delete data.mcpServers[serverName];
+      changed = true;
+      if (!Object.keys(data.mcpServers).length) delete data.mcpServers;
     }
   } else if (name === 'vscode') {
     if (data.servers && data.servers[serverName]) {
@@ -655,9 +664,14 @@ function deployHooks(name) {
     const cliRoot = path.resolve(dest, '..');
     deployAgyPluginTo(cliRoot);
 
-    const ideRoot = path.join(os.homedir(), '.gemini', 'config', 'plugins', 'basemem');
-    if (ideRoot !== cliRoot) {
-      deployAgyPluginTo(ideRoot);
+    const sharedRoot = path.join(os.homedir(), '.gemini', 'config', 'plugins', 'basemem');
+    if (sharedRoot !== cliRoot) {
+      deployAgyPluginTo(sharedRoot);
+    }
+
+    const agyIdeRoot = path.join(os.homedir(), '.gemini', 'antigravity', 'plugins', 'basemem');
+    if (agyIdeRoot !== cliRoot && agyIdeRoot !== sharedRoot) {
+      deployAgyPluginTo(agyIdeRoot);
     }
 
     return { deployed: true, dest };
@@ -917,15 +931,21 @@ function install(name) {
     if (name === 'agy') {
       // Always overwrite agy MCP — stale template may have wrong paths
       mcpResult = writeMCPEntry(name, 'mem');
-      // Also write to IDE plugin path
-      const ideMcpPath = path.join(os.homedir(), '.gemini', 'config', 'plugins', 'basemem', 'mcp_config.json');
-      const opts = mcpOpts();
-      fs.mkdirSync(path.dirname(ideMcpPath), { recursive: true });
-      let ideData = readJSONSafe(ideMcpPath);
-      if (ideData === undefined) ideData = {};
-      ideData.mcpServers = ideData.mcpServers || {};
-      ideData.mcpServers.mem = opts;
-      fs.writeFileSync(ideMcpPath, JSON.stringify(ideData, null, 2) + '\n', 'utf-8');
+      // Also write to shared + IDE plugin paths
+      const agyPluginBases = [
+        path.join(os.homedir(), '.gemini', 'config', 'plugins', 'basemem'),
+        path.join(os.homedir(), '.gemini', 'antigravity', 'plugins', 'basemem'),
+      ];
+      for (const base of agyPluginBases) {
+        const p = path.join(base, 'mcp_config.json');
+        const opts = mcpOpts();
+        fs.mkdirSync(path.dirname(p), { recursive: true });
+        let d = readJSONSafe(p);
+        if (d === undefined) d = {};
+        d.mcpServers = d.mcpServers || {};
+        d.mcpServers.mem = opts;
+        fs.writeFileSync(p, JSON.stringify(d, null, 2) + '\n', 'utf-8');
+      }
     } else if (!already) {
       mcpResult = writeMCPEntry(name, 'mem');
     }
@@ -1007,8 +1027,9 @@ function uninstall(name) {
   if (hasHookOrPlugin) {
     if (name === 'agy') {
       const cliRoot = path.join(os.homedir(), '.gemini', 'antigravity-cli', 'plugins', 'basemem');
-      const ideRoot = path.join(os.homedir(), '.gemini', 'config', 'plugins', 'basemem');
-      for (const p of [cliRoot, ideRoot]) {
+      const sharedRoot = path.join(os.homedir(), '.gemini', 'config', 'plugins', 'basemem');
+      const agyIdeRoot = path.join(os.homedir(), '.gemini', 'antigravity', 'plugins', 'basemem');
+      for (const p of [cliRoot, sharedRoot, agyIdeRoot]) {
         if (fs.existsSync(p)) {
           fs.rmSync(p, { recursive: true, force: true });
           removed.push(p);

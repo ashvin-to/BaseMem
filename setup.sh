@@ -78,11 +78,6 @@ path.write_text(json.dumps(config, indent=2) + "\n")
 PY
 }
 
-echo "Installing Gemini extension..."
-BASEMEM_EXT_DIR="$HOME/.gemini/extensions/00-basemem"
-rm -rf "$BASEMEM_EXT_DIR"
-cp -r "$BASE_DIR/extensions/gemini/." "$BASEMEM_EXT_DIR"
-
 echo "Installing agent guidance files…"
 BASEMEM_MCP_PYTHON="$MCP_PYTHON" \
 BASEMEM_MCP_SCRIPT="$MCP_SCRIPT" \
@@ -91,23 +86,16 @@ node "$BASE_DIR/bin/lib/install.js" install-all
 
 echo "(skipped: generate_antigravity_schemas.py not present)"
 
-ENABLEMENT_FILE="$HOME/.gemini/extensions/extension-enablement.json"
-mkdir -p "$(dirname "$ENABLEMENT_FILE")"
-python3 - "$ENABLEMENT_FILE" <<'PY'
-import os, json, sys
-from pathlib import Path
-path = Path(sys.argv[1])
-data = json.loads(path.read_text()) if path.exists() else {}
-data["00-basemem"] = {"overrides": [os.environ.get("HOME", "~") + "/*"]}
-path.write_text(json.dumps(data, indent=2) + "\n")
-PY
-
-echo "Configuring MCP for Gemini CLI..."
-gemini mcp add mem "$MCP_PYTHON" "$MCP_SCRIPT" --scope user --trust -e "BASEMEM_DB_PATH=$BASEMEM_DB_PATH" 2>/dev/null || true
-write_json "$HOME/.gemini/settings.json" \
-  "mcpServers.mem.command" "$MCP_PYTHON" \
-  "mcpServers.mem.args" "[\"$MCP_SCRIPT\"]" \
-  "mcpServers.mem.env.BASEMEM_DB_PATH" "$BASEMEM_DB_PATH"
+echo "Configuring MCP for Gemini CLI (enterprise fallback)..."
+if command -v gemini &>/dev/null; then
+  gemini mcp add mem "$MCP_PYTHON" "$MCP_SCRIPT" --scope user --trust -e "BASEMEM_DB_PATH=$BASEMEM_DB_PATH" 2>/dev/null || true
+  write_json "$HOME/.gemini/settings.json" \
+    "mcpServers.mem.command" "$MCP_PYTHON" \
+    "mcpServers.mem.args" "[\"$MCP_SCRIPT\"]" \
+    "mcpServers.mem.env.BASEMEM_DB_PATH" "$BASEMEM_DB_PATH"
+else
+  echo "(gemini binary not found — skipped; Antigravity CLI is the consumer path)"
+fi
 
 
 echo "Configuring MCP for Codex CLI..."
@@ -197,22 +185,22 @@ echo "  MCP server            mem (via venv)"
 echo "  mem                   CLI ($MEM_BIN_DIR/mem)"
 echo ""
 echo "MCP configured for:"
-echo "  Gemini CLI      ~/.gemini/settings.json"
+echo "  Gemini CLI      ~/.gemini/settings.json (enterprise fallback)"
 echo "  Claude Code     ~/.claude/settings.json"
 echo "  opencode        ~/.config/opencode/opencode.jsonc"
 echo "  Cursor          ~/.cursor/mcp.json"
 echo "  Devin           ~/.config/devin/mcp_config.json"
 echo "  Codex CLI       ~/.codex/config.toml"
-echo "  Antigravity     ~/.gemini/antigravity-cli/plugins/basemem/mcp_config.json"
+echo "  Antigravity     ~/.gemini/config/mcp_config.json"
 echo ""
 echo "Extensions, skills & guidance:"
-echo "  Gemini          ~/.gemini/extensions/00-basemem/"
-echo "  Antigravity     ~/.gemini/antigravity-cli/plugins/basemem/"
+echo "  Antigravity CLI  ~/.gemini/antigravity-cli/plugins/basemem/"
+echo "  Antigravity IDE   ~/.gemini/antigravity/plugins/basemem/"
 echo "  Codex CLI       ~/.codex/skills/basemem/"
 echo "  Claude Code     ~/.claude/CLAUDE.md"
 echo "  Codex CLI       ~/.codex/AGENTS.md"
 echo "  opencode        ~/.config/opencode/AGENTS.md"
-echo "  Gemini CLI      ~/.gemini/GEMINI.md"
+echo "  Gemini CLI      ~/.gemini/GEMINI.md (enterprise fallback)"
 echo ""
 echo "Usage:"
 echo "  mem planet create my-project --goal 'Build X'"

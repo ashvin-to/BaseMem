@@ -151,7 +151,7 @@ def _fmt_loc(file_path: str) -> str:
     return "/".join(parts[-3:]) if len(parts) > 3 else path
 
 
-@server.tool(description="Find code symbols. grep=True = raw text search. references=True = find all usages. REPLACES grep.")
+@server.tool(description="Find code symbols. grep=True = raw text search. references=True = find all usages. REPLACES grep. Use filePath (or 'path') to filter to a single file.")
 def code_find(
     query: str = "",
     projectRoot: str = "",
@@ -162,6 +162,7 @@ def code_find(
     source: bool = False,
     references: bool = False,
     grep: bool = False,
+    path: str = "",
 ) -> str:
     """Search for code symbols. Single match = detail + callers/callees + source.
        Empty query = file overview.
@@ -169,9 +170,13 @@ def code_find(
        dead=True = find files never imported by other files.
        source=True = include source code lines (for edit workflow: code_find → edit).
        references=True = find all references/occurrences across indexed files.
-       grep=True = raw ripgrep search across ALL files (non-code too), replaces native grep.
+        grep=True = raw ripgrep search across ALL files (non-code too), replaces native grep.
+        'path' is accepted as an alias for filePath.
     """
     import os
+
+    if not filePath and path:
+        filePath = path
 
     # Grep mode — raw text search across all files via ripgrep (no indexer needed)
     if grep and query:
@@ -634,19 +639,26 @@ def read_planet(topic: str, raw: bool = False, limit: int = 50) -> str:
     return "\n".join(lines)
 
 
-@server.tool(description="Persist session: decisions, facts, state, activity — all in one call.")
+@server.tool(description="Persist session: decisions, facts, state, activity — all in one call. REQUIRED: topic (the planet/topic name). 'planet' is accepted as an alias for topic.")
 def logInteraction(
-    topic: str,
+    topic: str = "",
     decision: str = "",
     fact: str = "",
     summary: str = "",
     currentState: str = "",
     nextStep: str = "",
     activity: str = "",
+    planet: str = "",
 ) -> str:
-    """Log an interaction: add notes + update planet + log turn in one call. Call during session for decisions/facts and at session end for summary."""
+    """Log an interaction: add notes + update planet + log turn in one call. Call during session for decisions/facts and at session end for summary.
+       topic (REQUIRED): the planet/topic name. 'planet' is accepted as an alias if topic is not provided."""
     from storage.db import StorageManager
     from storage.sessions import SessionManager
+
+    if not topic and planet:
+        topic = planet
+    if not topic:
+        return "Error: 'topic' (or 'planet') argument is required — the planet/topic name to log into."
 
     db_path = get_db_path()
     if not os.path.isfile(db_path):
@@ -1226,13 +1238,19 @@ def session_list(topic: str = "", status: str = "") -> str:
 
 # ── Code Graph MCP Tools ─────────────────────────────────
 
-@server.tool(description="Read file contents with line numbers. offset=start line, limit=max lines.")
-def code_read(filePath: str, projectRoot: str = "", offset: int = 0, limit: int = 200) -> str:
+@server.tool(description="Read file contents with line numbers. offset=start line, limit=max lines. REQUIRED: filePath (the file path to read). 'path' is accepted as an alias for filePath.")
+def code_read(filePath: str = "", projectRoot: str = "", offset: int = 0, limit: int = 200, path: str = "") -> str:
     """Read a file from the indexed project. Replaces native Read tool.
+       filePath (REQUIRED): path to the file, relative to the project root.
+       'path' is accepted as an alias if filePath is not provided.
        offset (1-indexed): start line. limit: max lines. 0 = all lines.
        Path traversal is prevented — must be within the project."""
     import os
 
+    if not filePath and path:
+        filePath = path
+    if not filePath:
+        return "Error: 'filePath' (or 'path') argument is required — the path of the file to read."
     from indexer import CODE_DB_FILENAME
     if not projectRoot:
         projectRoot = _detect_project_root()

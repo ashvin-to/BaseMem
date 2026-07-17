@@ -3,3 +3,4 @@
 Memory: `getContext`, `logInteraction`, `update_planet`, `read_planet`, `list_planets`, `search_nodes`, `search_notes`, `get_node`, `link_notes`, `get_graph`, `note_update`, `link_planets`, `get_planet_links`, `set_memory_state`, `compute_similarity`, `rerank`, `summarize_planet`, `compact_planet`, `edge_maintain`
 
 Code: `code_init`, `code_find`, `code_read`, `code_explore`, `code_files`, `code_trace`, `code_impact`, `code_list_projects`
+Note: `code_read` requires `filePath` (the file path), NOT `path`. `logInteraction` requires `topic` (the planet name), NOT `planet`.

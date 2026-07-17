@@ -6,9 +6,9 @@ import { execSync } from 'child_process';
 const INTEGRITY_WARNING = 'WARNING: BaseMem rules file appears to have been modified or overwritten. Ask the user to run node bin/lib/install.js repair to restore full memory rules.';
 
 const BASEMEM_RULES = `CRITICAL: You MUST answer the user's question directly from the KNOWLEDGE_BASE_CONTEXT block above. DO NOT call mem_getContext, mem_list_planets, or any memory-retrieval MCP tool — the context is already loaded.
-Call mem_logInteraction after any decision, file change, blocker, or scope change. At session end, call mem_logInteraction with a one-paragraph summary.
-CRITICAL: Always log into the planet matching the current working directory (detected automatically by the plugin). Do not stay locked to a previous topic.
-For code: use mem_code_find, mem_code_read, mem_code_explore, mem_code_files (NOT file read/grep/glob).
+Call mem_logInteraction after any tracked file edit, commit, blocker, or scope change — always pass 'topic' explicitly (the repo/folder name), do not rely on auto-detection. At session end, call mem_logInteraction with a one-paragraph summary.
+CRITICAL: Always log into the planet matching the current working directory. Pass 'topic' explicitly to memory tools (do not rely on auto-detection). Do not stay locked to a previous topic.
+For code: use mem_code_find, mem_code_read, mem_code_explore, mem_code_files (NOT file read/grep/glob). mem_code_read REQUIRES 'filePath' (the file path), NOT 'path'. Example: mem_code_read(filePath='src/main.py'). If mem_code_find/mem_code_read return nothing for a known-existing symbol, run mem_code_init first; if still empty, read/grep/glob are permitted.
 For graph: mem_get_graph. For notes: mem_note_update. For edges: mem_edge_maintain.
 Never use generic topic names — always use the repo/folder name.`;
 

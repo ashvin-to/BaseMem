@@ -19,7 +19,7 @@ Call `logInteraction` at least once per session. Log decisions as they happen.
 |------|------|
 | Find symbol | `code_find('sym')` |
 | Text search | `code_find('pattern', grep=True)` |
-| Read file | `code_read('path/file.py', offset=10, limit=50)` |
+| Read file | `code_read(filePath='path/file.py', offset=10, limit=50)` — arg is `filePath` (NOT `path`) |
 | Explore | `code_explore('sym')` |
 | Files | `code_files(pattern='**/*.json')` |
 | Trace | `code_trace('func')` |
