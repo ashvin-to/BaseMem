@@ -731,6 +731,65 @@ function settingsHasBasemem(settingsPath) {
   } catch { return false; }
 }
 
+function getSkillDestDir(name) {
+  const home = os.homedir();
+  const map = {
+    claude: path.join(home, '.claude', 'skills'),
+    codex:  path.join(home, '.codex', 'skills'),
+    agy:    path.join(home, '.gemini', 'antigravity-cli', 'plugins', 'basemem', 'skills'),
+    kiro:   path.join(home, '.kiro', 'skills'),
+  };
+  return map[name];
+}
+
+function installSkills(agentName, customDestDir) {
+  const destDir = customDestDir || getSkillDestDir(agentName);
+  if (!destDir) return { copied: false };
+
+  const skillsSrc = path.join(BASEMEM_ROOT, 'skills');
+  if (!fs.existsSync(skillsSrc)) return { copied: false, reason: 'skills directory missing' };
+
+  fs.mkdirSync(destDir, { recursive: true });
+  for (const entry of fs.readdirSync(skillsSrc)) {
+    const full = path.join(skillsSrc, entry);
+    if (fs.statSync(full).isDirectory()) {
+      const subDest = path.join(destDir, entry);
+      fs.mkdirSync(subDest, { recursive: true });
+      for (const sf of fs.readdirSync(full)) {
+        const sFull = path.join(full, sf);
+        if (fs.statSync(sFull).isFile()) {
+          fs.copyFileSync(sFull, path.join(subDest, sf));
+        }
+      }
+    }
+  }
+
+  if (agentName === 'agy') {
+    const agyExtraDestDirs = [
+      path.join(os.homedir(), '.gemini', 'config', 'plugins', 'basemem', 'skills'),
+      path.join(os.homedir(), '.gemini', 'antigravity', 'plugins', 'basemem', 'skills'),
+    ];
+    for (const extra of agyExtraDestDirs) {
+      fs.mkdirSync(extra, { recursive: true });
+      for (const entry of fs.readdirSync(skillsSrc)) {
+        const full = path.join(skillsSrc, entry);
+        if (fs.statSync(full).isDirectory()) {
+          const subDest = path.join(extra, entry);
+          fs.mkdirSync(subDest, { recursive: true });
+          for (const sf of fs.readdirSync(full)) {
+            const sFull = path.join(full, sf);
+            if (fs.statSync(sFull).isFile()) {
+              fs.copyFileSync(sFull, path.join(subDest, sf));
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return { copied: true, dest: destDir };
+}
+
 function install(name) {
   const home = os.homedir();
   const agent = getAgent(name);
@@ -830,6 +889,9 @@ function install(name) {
           ],
           stop: [
             { command: `node "${hookDir}/stop.js"`, timeout_ms: 5000 },
+          ],
+          postToolUse: [
+            { command: `node "${hookDir}/capture.js"`, timeout_ms: 5000 },
           ],
         },
       };
@@ -951,7 +1013,12 @@ function install(name) {
     }
   }
 
-  return { agent: name, rule, hooks: hooksResult, settings: settingsResult, mcp: mcpResult, effectiveTier };
+  let skillsResult = { copied: false };
+  if (['claude', 'codex', 'agy', 'kiro'].includes(name)) {
+    skillsResult = installSkills(name);
+  }
+
+  return { agent: name, rule, hooks: hooksResult, settings: settingsResult, mcp: mcpResult, skills: skillsResult, effectiveTier };
 }
 
 function ensureEditableInstall() {
@@ -1150,6 +1217,7 @@ module.exports = {
   scanUnknownAgents,
   install,
   installAll,
+  installSkills,
   uninstall,
   uninstallAll,
   writeMCPEntry,
@@ -1195,6 +1263,7 @@ if (require.main === module || process.argv[2]) {
       if (res.hooks && res.hooks.deployed) parts.push('hooks');
       if (res.settings && res.settings.merged) parts.push('settings');
       if (res.mcp && res.mcp.written) parts.push('mcp');
+      if (res.skills && res.skills.copied) parts.push('skills');
       console.log(`${name}: ${parts.length ? parts.join(', ') : 'no action'}`);
     }
     if (results._pkg && results._pkg.reinstalled) {
@@ -1230,6 +1299,7 @@ if (require.main === module || process.argv[2]) {
     if (res.hooks && res.hooks.deployed) parts.push('hooks');
     if (res.settings && res.settings.merged) parts.push('settings');
     if (res.mcp && res.mcp.written) parts.push('mcp');
+    if (res.skills && res.skills.copied) parts.push('skills');
     console.log(`${agentName}: ${parts.length ? parts.join(', ') : 'no action'}`);
     process.exit(0);
   }
