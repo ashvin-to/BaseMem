@@ -532,6 +532,192 @@ def code_impact(symbolName: str, projectRoot: str = "", depth: int = 2, limit: i
         indexer.close()
 
 
+@server.tool(description="Compact review context: blast radius, entry points, test gaps, and key risks for changed files. One call replaces code_find + code_impact + code_trace.")
+def get_review_context(
+    files: list[str],
+    query: str = "",
+    projectRoot: str = "",
+    maxTokens: int = 300,
+) -> str:
+    """Compact review context for changed files: blast radius, entry points, test gaps, key risks."""
+    import os
+
+    from indexer import CODE_DB_FILENAME, CodeIndexer
+
+    if not projectRoot:
+        projectRoot = _detect_project_root()
+    if not os.path.isdir(projectRoot):
+        return f"Directory not found: {projectRoot}"
+    db_path = os.path.join(projectRoot, CODE_DB_FILENAME)
+    if not os.path.exists(db_path):
+        return "Code graph not initialized. Run code_init(projectRoot) first."
+
+    indexer = CodeIndexer(projectRoot)
+    try:
+        norm_files = []
+        for f in files:
+            nf = f.replace("\\", "/")
+            if os.path.isabs(nf):
+                try:
+                    nf = os.path.relpath(nf, projectRoot).replace("\\", "/")
+                except ValueError:
+                    pass
+            elif nf.startswith("./"):
+                nf = nf[2:]
+            norm_files.append(nf)
+
+        # 1. CHANGED
+        changed_line = f"CHANGED: {', '.join(norm_files)}"
+
+        # Find symbols in changed files
+        changed_symbols = []
+        for nf in norm_files:
+            changed_symbols.extend(indexer.list_symbols_by_file(nf, limit=0))
+
+        # 2. BLAST RADIUS
+        blast_files_dict = {}
+        for sym in changed_symbols:
+            impacts = indexer.get_impact(sym["symbol_name"], depth=2, limit=10)
+            for imp in impacts:
+                fp = imp.get("file_path")
+                if fp and fp not in norm_files and fp not in blast_files_dict:
+                    blast_files_dict[fp] = imp.get("via")
+
+        blast_files = list(blast_files_dict.keys())[:10]
+        blast_line = f"BLAST RADIUS ({len(blast_files)} files): {', '.join(blast_files)}" if blast_files else ""
+
+        # 3. ENTRY POINTS
+        entry_points = []
+        for sym in changed_symbols:
+            name = sym["symbol_name"]
+            callers = indexer.get_callers(name)
+            callees = indexer.get_callees(name, sym["file_path"])
+            inbound_from_outside = [c for c in callers if c["file_path"] not in norm_files]
+            outbound_to_changed = [
+                c for c in callees
+                if c.get("file_path") in norm_files
+                or (c.get("to_name") and any(s["symbol_name"] == c["to_name"] for s in changed_symbols))
+            ]
+            if inbound_from_outside and not outbound_to_changed:
+                entry_points.append(sym)
+
+        if not entry_points:
+            for sym in changed_symbols:
+                name = sym["symbol_name"]
+                callers = indexer.get_callers(name)
+                if any(c["file_path"] not in norm_files for c in callers):
+                    entry_points.append(sym)
+
+        seen_ep = set()
+        dedup_ep = []
+        for ep in entry_points:
+            if ep["symbol_name"] not in seen_ep:
+                seen_ep.add(ep["symbol_name"])
+                dedup_ep.append(ep)
+
+        ep_strs = []
+        for ep in dedup_ep:
+            sname = ep["symbol_name"]
+            stype = ep.get("symbol_type", "")
+            if stype in ("function", "method") or "(" not in sname:
+                ep_strs.append(f"{sname}()")
+            else:
+                ep_strs.append(sname)
+
+        entry_line = f"ENTRY POINTS: {', '.join(ep_strs)}" if ep_strs else ""
+
+        # 4. KEY RISK
+        key_risk_items = []
+        for br_file in blast_files:
+            c = indexer.conn.cursor()
+            rows = c.execute(
+                """SELECT DISTINCT cs.file_path
+                   FROM code_edges ce
+                   JOIN code_symbols cs ON cs.symbol_name = ce.to_name
+                   WHERE ce.file_path = ? AND ce.project_id = ?""",
+                (br_file, indexer.project_id),
+            ).fetchall()
+            target_changed_files = {r["file_path"] for r in rows if r["file_path"] in norm_files}
+            if len(target_changed_files) > 1:
+                key_risk_items.append(
+                    f"{br_file} imports from both changed files"
+                    if len(norm_files) == 2
+                    else f"{br_file} imports from multiple changed files"
+                )
+
+        key_risk_line = f"KEY RISK: {'; '.join(key_risk_items)}" if key_risk_items else ""
+
+        # 5. CALLERS
+        caller_items = []
+        for ep in dedup_ep:
+            name = ep["symbol_name"]
+            callers = indexer.get_callers(name)
+            outside_callers = [c for c in callers if c["file_path"] not in norm_files]
+            if outside_callers:
+                locs = [f"{c['file_path']}:L{c['line_number']}" for c in outside_callers[:5]]
+                caller_items.append(f"{name}() ← {', '.join(locs)}")
+
+        caller_line = f"CALLERS: {'; '.join(caller_items)}" if caller_items else ""
+
+        # 6. TEST GAPS
+        all_indexed_files = {f["file_path"] for f in indexer.list_files(limit=0)}
+        test_gap_items = []
+        for br_file in blast_files:
+            base = os.path.basename(br_file)
+            name_no_ext, ext = os.path.splitext(base)
+            dir_name = os.path.dirname(br_file)
+
+            candidates = [
+                os.path.join(dir_name, f"test_{base}"),
+                os.path.join(dir_name, f"{name_no_ext}_test{ext}"),
+                os.path.join("tests", f"test_{base}"),
+                os.path.join("tests", f"{name_no_ext}_test{ext}"),
+                os.path.join("test", f"test_{base}"),
+                os.path.join(dir_name, f"{name_no_ext}.test{ext}"),
+                os.path.join(dir_name, f"{name_no_ext}.spec{ext}"),
+            ]
+            has_test = False
+            for cand in candidates:
+                cand_norm = cand.replace("\\", "/")
+                if cand_norm in all_indexed_files or os.path.exists(os.path.join(projectRoot, cand_norm)):
+                    has_test = True
+                    break
+            if not has_test:
+                test_gap_items.append(f"{br_file} has no test coverage")
+
+        test_gap_line = f"TEST GAPS: {'; '.join(test_gap_items)}" if test_gap_items else ""
+
+        # Budget truncation order: Drop TEST GAPS first, then CALLERS, then KEY RISK
+        sections = [
+            changed_line,
+            blast_line,
+            entry_line,
+            key_risk_line,
+            caller_line,
+            test_gap_line,
+        ]
+
+        active = [s for s in sections if s]
+        max_chars = maxTokens * 4
+        result = "\n".join(active)
+
+        if len(result) > max_chars and test_gap_line in active:
+            active.remove(test_gap_line)
+            result = "\n".join(active)
+
+        if len(result) > max_chars and caller_line in active:
+            active.remove(caller_line)
+            result = "\n".join(active)
+
+        if len(result) > max_chars and key_risk_line in active:
+            active.remove(key_risk_line)
+            result = "\n".join(active)
+
+        return result
+    finally:
+        indexer.close()
+
+
 # ── End Code Graph Tools ──────────────────────────────────────────
 
 
