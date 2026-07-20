@@ -126,7 +126,11 @@ class SessionManager(PlanetMixin, NoteMixin, TaskMixin, SessionManagerBase):
 
     # ── Session CRUD ──
 
-    def create_session(self, topic: str, title: str, agent_id: str) -> int:
+    def create_session(self, topic: str, title: str, agent_id: str, resume_id: int | None = None) -> int:
+        if resume_id is not None and resume_id > 0:
+            ok = self.resume_session(resume_id, agent_id)
+            if ok:
+                return resume_id
         topic_slug = self.normalize_topic(topic)
         now = self._now()
         cursor = self.storage.connection.cursor()

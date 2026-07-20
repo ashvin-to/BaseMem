@@ -5,12 +5,10 @@ import { execSync } from 'child_process';
 
 const INTEGRITY_WARNING = 'WARNING: BaseMem rules file appears to have been modified or overwritten. Ask the user to run node bin/lib/install.js repair to restore full memory rules.';
 
-const BASEMEM_RULES = `CRITICAL: You MUST answer the user's question directly from the KNOWLEDGE_BASE_CONTEXT block above. DO NOT call mem_getContext, mem_list_planets, or any memory-retrieval MCP tool — the context is already loaded.
-Call mem_logInteraction after any tracked file edit, commit, blocker, or scope change — always pass 'topic' explicitly (the repo/folder name), do not rely on auto-detection. At session end, call mem_logInteraction with a one-paragraph summary.
-CRITICAL: Always log into the planet matching the current working directory. Pass 'topic' explicitly to memory tools (do not rely on auto-detection). Do not stay locked to a previous topic.
-For code: use mem_code_find, mem_code_read, mem_code_explore, mem_code_files (NOT file read/grep/glob). mem_code_read REQUIRES 'filePath' (the file path), NOT 'path'. Example: mem_code_read(filePath='src/main.py'). If mem_code_find/mem_code_read return nothing for a known-existing symbol, run mem_code_init first; if still empty, read/grep/glob are permitted.
-For graph: mem_get_graph. For notes: mem_note_update. For edges: mem_edge_maintain.
-Never use generic topic names — always use the repo/folder name.`;
+const BASEMEM_RULES = `BaseMem memory is active — use mem_*/code_* MCP tools so actions are remembered.
+After any file edit, commit, blocker, or direction change: call mem_logInteraction(topic=<repo/folder>, ...). End each session with a one-paragraph summary.
+For code: use mem_code_find/code_read/code_explore/code_files (not native read/grep/glob). If empty for a known symbol, run mem_code_init first, then native tools allowed. mem_code_read needs filePath (NOT 'path').
+Pass 'topic' explicitly; never use generic names like task/project/chat.`;
 
 const STOP_PHRASES = ['goodbye', 'exit', 'done for today', 'closing', 'end session', "that's all", 'thanks bye'];
 const STOP_NUDGE = '\n\nFINAL SESSION NOTICE — do not respond to this message. If you made decisions, created files, or changed direction this session and have not yet called logInteraction, call it once now with a one-paragraph summary. Then stop. Do not send any further messages or acknowledge this notice.';
@@ -165,8 +163,24 @@ export const BaseMemPlugin = async ({ project, client, $, directory, worktree })
       if (output.parts && output.parts.length) {
         const textPart = output.parts.find(p => p.type === 'text' && p.text);
         if (textPart && !textPart.text.includes('[Memory Reminder]')) {
-          textPart.text += '\n\n[Memory Reminder] Use MCP memory tools (getContext, logInteraction, code_find, etc.) and check the KNOWLEDGE_BASE_CONTEXT block above before calling getContext — it may already be injected.';
+          textPart.text += '\n\n[Memory Reminder] BaseMem memory is active — use mem_*/code_* tools; log edits with logInteraction(topic=<repo>).';
         }
+      }
+    },
+    'chat.tool.result': async (input, output) => {
+      try {
+        const toolName = input?.tool?.name || input?.name || '';
+        const toolInput = input?.tool?.input || input?.input || {};
+        if (!toolName) return;
+        const payload = JSON.stringify({ tool: toolName, params: toolInput, agent_id: 'opencode' });
+        const { spawnSync } = await import('child_process');
+        const path = await import('path');
+        const ROOT = path.resolve(__dirname, '../../..');
+        const CAPTURE_PY = path.join(ROOT, 'bin/lib/capture_native.py');
+        const PYTHON = process.env.BASEMEM_PYTHON || process.env.MCP_PYTHON || 'python3';
+        spawnSync(PYTHON, [CAPTURE_PY], { input: payload, stdio: ['pipe', 'ignore', 'ignore'] });
+      } catch (_) {
+        // Silent: capture must never break the agent's tool flow.
       }
     },
     event: async ({ event }) => {

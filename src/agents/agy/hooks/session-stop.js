@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 const fs = require('fs');
-const { emitStopOutput } = require('../../../hooks/lib/tracker.js');
+const { emitStopOutput, writeMissedLog } = require('../../../hooks/lib/tracker.js');
 
 let input = '';
 process.stdin.on('data', chunk => { input += chunk; });
@@ -34,6 +34,7 @@ process.stdin.on('end', () => {
 
   if (!hasLogged) {
     emitStopOutput('agy');
+    writeMissedLog();
   } else {
     // Return empty JSON to allow termination
     process.stdout.write('{}\n');

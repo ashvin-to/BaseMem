@@ -222,12 +222,20 @@ def read(ctx, node_id, topic):
 @click.argument('topic')
 @click.argument('title')
 @click.option('--agent-id', default='default', help='Agent identifier')
+@click.option('--resume-id', type=int, default=None, help='Resume an existing session ID')
 @click.pass_context
-def start(ctx, topic, title, agent_id):
+def start(ctx, topic, title, agent_id, resume_id):
     """Start a new session on a planet."""
     from storage.sessions import SessionManager
     manager = SessionManager(ctx.obj['storage'])
-    sid = manager.create_session(topic, title, agent_id)
+    if resume_id is not None and resume_id > 0:
+        ok = manager.resume_session(resume_id, agent_id)
+        if not ok:
+            click.echo(f"Session {resume_id} not found.")
+            return
+        click.echo(f"Session {resume_id} resumed. Agent: {agent_id}.")
+        return
+    sid = manager.create_session(topic, title, agent_id, resume_id=resume_id)
     click.echo(f"Session created: id={sid}, topic='{topic}', title='{title}', agent='{agent_id}'.")
 
 

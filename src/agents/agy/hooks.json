@@ -14,5 +14,13 @@
         "command": "node \"${extensionPath}/hooks/session-stop.js\""
       }
     ]
+  },
+  "basemem-capture": {
+    "PostToolUse": [
+      {
+        "type": "command",
+        "command": "node \"${extensionPath}/hooks/capture.js\""
+      }
+    ]
   }
 }

@@ -34,6 +34,17 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${DEVIN_PLUGIN_ROOT}/hooks/capture.js\"",
+            "timeout": 5
+          }
+        ]
+      }
     ]
   }
 }

@@ -121,7 +121,7 @@ const BaseMemPlugin = async ({ client, directory }) => {
         if (lastUser && lastUser.parts?.length) {
           const textPart = lastUser.parts.find(p => p.type === 'text');
           if (textPart) {
-            textPart.text += '\n\n[Memory Reminder] Use MCP memory tools (getContext, logInteraction, code_find, etc.) and check the KNOWLEDGE_BASE_CONTEXT block above before calling getContext — it may already be injected.';
+            textPart.text += '\n\n[Memory Reminder] BaseMem memory is active — use mem_*/code_* tools; log edits with logInteraction(topic=<repo>).';
           }
         }
       }

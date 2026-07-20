@@ -13,6 +13,7 @@ let originalExistsSync = fs.existsSync;
 let existsSyncCalls = [];
 
 function setup() {
+  delete process.env.PWD;
   spawnCallArgs = null;
   existsSyncCalls = [];
   child_process.spawnSync = function(cmd, args, opts) {
