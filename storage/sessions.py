@@ -369,3 +369,53 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         with contextlib.suppress(Exception):
             conn.execute(f"ALTER TABLE tasks ADD COLUMN {col} {dtype}")
     conn.commit()
+
+
+def _get_default_manager() -> SessionManager:
+    import os
+    db_path = os.environ.get("BASEMEM_DB_PATH")
+    if not db_path:
+        db_path = os.path.join(os.path.expanduser("~"), ".basemem", "basemem.db")
+    storage = StorageManager(db_path)
+    return SessionManager(storage)
+
+
+def create_session(topic: str, title: str, agent_id: str) -> int:
+    manager = _get_default_manager()
+    try:
+        return manager.create_session(topic, title, agent_id)
+    finally:
+        manager.storage.close()
+
+
+def get_active_session(topic: str, agent_id: str) -> dict | None:
+    manager = _get_default_manager()
+    try:
+        return manager.get_active_session(topic, agent_id)
+    finally:
+        manager.storage.close()
+
+
+def stamp_note(session_id: int, note_id: int) -> bool:
+    manager = _get_default_manager()
+    try:
+        return manager.stamp_note(session_id, note_id)
+    finally:
+        manager.storage.close()
+
+
+def stamp_task(session_id: int, task_id: int) -> bool:
+    manager = _get_default_manager()
+    try:
+        return manager.stamp_task(session_id, task_id)
+    finally:
+        manager.storage.close()
+
+
+def auto_recover_sessions(topic: str) -> list[int]:
+    manager = _get_default_manager()
+    try:
+        return manager.auto_recover_sessions(topic)
+    finally:
+        manager.storage.close()
+

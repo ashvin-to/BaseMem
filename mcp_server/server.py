@@ -341,7 +341,7 @@ def code_find(
         indexer.close()
 
 
-@server.tool(description="Trace call chain: who calls this symbol and what does it call?")
+@_optional_tool(description="Trace call chain: who calls this symbol and what does it call?")
 def code_trace(
     symbolName: str,
     projectRoot: str = "",
@@ -506,7 +506,7 @@ def code_explore(query: str, projectRoot: str = "", limit: int = 10) -> str:
         indexer.close()
 
 
-@server.tool(description="Analyze impact of changing a symbol (transitive reverse deps).")
+@_optional_tool(description="Analyze impact of changing a symbol (transitive reverse deps).")
 def code_impact(symbolName: str, projectRoot: str = "", depth: int = 2, limit: int = 30) -> str:
     """Trace transitive reverse dependencies for a symbol."""
     import os
@@ -1345,22 +1345,7 @@ def session_end(session_id: int, pause: bool = False, summary: str = "") -> str:
     status = session.get("status", "?")
     s = session.get("summary", "")
     return f"Session {session_id} closed. Status: {status}. Summary: {s[:200]}" if s else f"Session {session_id} closed."
-
-
-@server.tool(description="Resume a paused session: set back to active with a new agent_id.")
-def session_resume(session_id: int, agent_id: str) -> str:
-    """Resume a paused session with a new agent."""
-    from storage.db import StorageManager
-    from storage.sessions import SessionManager
-    storage = StorageManager(get_db_path())
-    manager = SessionManager(storage)
-    ok = manager.resume_session(session_id, agent_id)
-    if not ok:
-        return f"Session {session_id} not found."
-    return f"Session {session_id} resumed. Agent: {agent_id}."
-
-
-@server.tool(description="Read a full session: metadata, stamped notes, and stamped tasks.")
+@_optional_tool(description="Read a full session: metadata, stamped notes, and stamped tasks.")
 def session_read(session_id: int) -> str:
     """Return session metadata with expanded notes and tasks."""
     from storage.db import StorageManager
@@ -1407,7 +1392,7 @@ def session_read(session_id: int) -> str:
     return "\n".join(lines)
 
 
-@server.tool(description="List sessions for a topic, optionally filtered by status.")
+@_optional_tool(description="List sessions for a topic, optionally filtered by status.")
 def session_list(topic: str = "", status: str = "") -> str:
     """List sessions for a planet."""
     from storage.db import StorageManager
