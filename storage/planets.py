@@ -223,11 +223,22 @@ class PlanetMixin:
             updates.append("current_state = ?")
             params.append(current_state)
         if next_step is not None:
+            updates.append("next_step = ?")
+            params.append(next_step)
+            
             raw = row.get("next_steps")
-            steps = set(json.loads(raw) if raw and raw.strip() else [])
-            steps.add(next_step)
+            try:
+                steps = json.loads(raw) if raw and raw.strip() else []
+                if not isinstance(steps, list):
+                    steps = []
+            except Exception:
+                steps = []
+            if next_step in steps:
+                steps.remove(next_step)
+            steps.append(next_step)
+            steps = steps[-5:]
             updates.append("next_steps = ?")
-            params.append(json.dumps(sorted(steps)))
+            params.append(json.dumps(steps))
         if file_path is not None:
             raw = row.get("files")
             files = set(json.loads(raw) if raw and raw.strip() else [])

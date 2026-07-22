@@ -409,7 +409,12 @@ class NoteMixin:
                         "## Current State",
                         self._trim_text(metadata.get("current_state") or "No current state recorded.", 500),
                     ])
-                    next_steps = metadata.get("next_steps", [])
+                    next_steps = list(metadata.get("next_steps", []))[::-1]
+                    single_step = metadata.get("next_step", "")
+                    if single_step:
+                        if single_step in next_steps:
+                            next_steps.remove(single_step)
+                        next_steps.insert(0, single_step)
                     if next_steps:
                         lines.extend([
                             "",
@@ -451,7 +456,12 @@ class NoteMixin:
             self._trim_text(metadata.get("current_state") or "No current state recorded.", 500),
         ]
 
-        next_steps = metadata.get("next_steps", [])
+        next_steps = list(metadata.get("next_steps", []))[::-1]
+        single_step = metadata.get("next_step", "")
+        if single_step:
+            if single_step in next_steps:
+                next_steps.remove(single_step)
+            next_steps.insert(0, single_step)
         if next_steps:
             lines.extend([
                 "",
