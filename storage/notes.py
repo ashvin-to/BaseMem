@@ -294,6 +294,80 @@ class NoteMixin:
 
         return "\n".join(lines)
 
+    def _get_key_notes(self, topic_slug: str, query: str | None) -> list[dict]:
+        cursor = self.storage.connection.cursor()
+        key_notes = []
+        if query and query.strip():
+            # Construct a robust FTS5 query with stop words removed, joined with OR
+            import re
+            terms = re.findall(r"[\w]+", query)
+            stop_words = {
+                "a", "about", "above", "after", "again", "against", "all", "am", "an", "and", "any", "are", "aren't",
+                "as", "at", "be", "because", "been", "before", "being", "below", "between", "both", "but", "by", "can't",
+                "cannot", "could", "couldn't", "did", "didn't", "do", "does", "doesn't", "doing", "don't", "down", "during",
+                "each", "few", "for", "from", "further", "had", "hadn't", "has", "hasn't", "have", "haven't", "having",
+                "he", "he'd", "he'll", "he's", "her", "here", "here's", "hers", "herself", "him", "himself", "his", "how",
+                "how's", "i", "i'd", "i'll", "i'm", "i've", "if", "in", "into", "is", "isn't", "it", "it's", "its", "itself",
+                "let's", "me", "more", "most", "mustn't", "my", "myself", "no", "nor", "not", "of", "off", "on", "once", "only",
+                "or", "other", "ought", "our", "ours", "ourselves", "out", "over", "own", "same", "shan't", "she", "she'd",
+                "she'll", "she's", "should", "shouldn't", "so", "some", "such", "than", "that", "that's", "the", "their",
+                "theirs", "them", "themselves", "then", "there", "there's", "these", "they", "they'd", "they'll", "they're",
+                "they've", "this", "those", "through", "to", "too", "under", "until", "up", "very", "was", "wasn't", "we",
+                "we'd", "we'll", "we're", "we've", "were", "weren't", "what", "what's", "when", "when's", "where", "where's",
+                "which", "while", "who", "who's", "whom", "why", "why's", "with", "won't", "would", "wouldn't", "you", "you'd",
+                "you'll", "you're", "you've", "your", "yours", "yourself", "yourselves"
+            }
+            keywords = [t for t in terms if t.lower() not in stop_words]
+            if not keywords:
+                keywords = terms
+            
+            fts_query = " OR ".join(f'"{kw}"*' for kw in keywords) if keywords else ""
+            
+            if fts_query:
+                # First attempt FTS5 search
+                try:
+                    fts_rows = cursor.execute("""
+                        SELECT n.* FROM notes n
+                        JOIN notes_fts f ON n.id = f.rowid
+                        WHERE f.topic = ? AND n.status NOT IN ('closed', 'resolved') AND notes_fts MATCH ?
+                        ORDER BY rank
+                        LIMIT 4
+                    """, (topic_slug, fts_query)).fetchall()
+                    key_notes = [dict(r) for r in fts_rows]
+                except Exception:
+                    key_notes = []
+            
+            if len(key_notes) < 4:
+                exclude_ids = [n["id"] for n in key_notes]
+                needed = 4 - len(key_notes)
+                placeholders = ",".join("?" for _ in exclude_ids)
+                exclude_clause = f"AND id NOT IN ({placeholders})" if exclude_ids else ""
+                pad_query = f"""
+                    SELECT * FROM notes
+                    WHERE topic = ? AND status NOT IN ('closed', 'resolved') {exclude_clause}
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                """
+                params = [topic_slug] + exclude_ids + [needed]
+                try:
+                    pad_rows = cursor.execute(pad_query, params).fetchall()
+                    key_notes.extend([dict(r) for r in pad_rows])
+                except Exception:
+                    pass
+        else:
+            # Fallback to existing behavior: select most recent 4, reverse to get older-first order
+            try:
+                rows = cursor.execute("""
+                    SELECT * FROM notes
+                    WHERE topic = ? AND status NOT IN ('closed', 'resolved')
+                    ORDER BY created_at DESC
+                    LIMIT 4
+                """, (topic_slug,)).fetchall()
+                key_notes = [dict(r) for r in reversed(rows)]
+            except Exception:
+                pass
+        return key_notes
+
     def build_agent_context(
         self, topic: str, query: str | None = None, result_limit: int = 5
     ) -> str:
@@ -342,15 +416,14 @@ class NoteMixin:
                             "## Next Steps",
                             *[f"- {self._trim_text(step, 180)}" for step in next_steps[:3]],
                         ])
-                    all_notes = metadata.get("notes", [])
-                    key_notes = [n for n in all_notes if n.get('status') not in ('closed', 'resolved')]
+                    key_notes = self._get_key_notes(match_slug, query)
                     if key_notes:
                         lines.extend([
                             "",
                             "## Key Notes",
                             *[
                                 f"- [{n.get('kind', 'note')}] {self._trim_text(n.get('content') or n.get('title') or '', 300)}"
-                                for n in key_notes[-4:]
+                                for n in key_notes
                             ],
                         ])
                     lines.append("")
@@ -406,14 +479,14 @@ class NoteMixin:
                 *session_lines,
             ])
 
-        key_notes = [n for n in all_notes if n.get('status') not in ('closed', 'resolved')]
+        key_notes = self._get_key_notes(topic_slug, query)
         if key_notes:
             lines.extend([
                 "",
                 "## Key Notes",
                 *[
                     f"- [{n.get('kind', 'note')}] {self._trim_text(n.get('content') or n.get('title') or '', 300)}"
-                    for n in key_notes[-4:]
+                    for n in key_notes
                 ],
             ])
 

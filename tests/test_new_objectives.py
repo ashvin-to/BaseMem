@@ -63,7 +63,16 @@ def test_skills_installation_node():
     readme_path = os.path.join(home, ".claude", "skills", "using-basemem", "README.md")
     assert os.path.isfile(readme_path)
 
-    for skill in ["using-basemem", "code-review", "session-start", "explore-codebase", "debug-issue", "task-workflow"]:
+    # Verify using-basemem/SKILL.md is copied directly
+    using_basemem_skill = os.path.join(home, ".claude", "skills", "using-basemem", "SKILL.md")
+    assert os.path.isfile(using_basemem_skill)
+    content = open(using_basemem_skill).read()
+    assert "name: using-basemem" in content
+    assert "## Workflow" in content
+    assert "## Example" in content
+    assert "## Notes" in content
+
+    for skill in ["code-review", "session-start", "explore-codebase", "debug-issue", "task-workflow"]:
         skill_path = os.path.join(home, ".claude", "skills", "using-basemem", skill, "SKILL.md")
         assert os.path.isfile(skill_path)
         content = open(skill_path).read()

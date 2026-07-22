@@ -368,6 +368,37 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE notes ADD COLUMN {col} {dtype}")
         with contextlib.suppress(Exception):
             conn.execute(f"ALTER TABLE tasks ADD COLUMN {col} {dtype}")
+    
+    # Ensure notes_fts virtual table and sync triggers exist
+    conn.executescript("""
+        CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(
+            id UNINDEXED,
+            topic,
+            kind,
+            content,
+            title,
+            status
+        );
+        CREATE TRIGGER IF NOT EXISTS notes_ai AFTER INSERT ON notes BEGIN
+            INSERT OR REPLACE INTO notes_fts(rowid, id, topic, kind, content, title, status)
+            VALUES (new.id, new.id, new.topic, new.kind, new.content, new.title, new.status);
+        END;
+        CREATE TRIGGER IF NOT EXISTS notes_ad AFTER DELETE ON notes BEGIN
+            DELETE FROM notes_fts WHERE rowid = old.id;
+        END;
+        CREATE TRIGGER IF NOT EXISTS notes_au AFTER UPDATE ON notes BEGIN
+            INSERT OR REPLACE INTO notes_fts(rowid, id, topic, kind, content, title, status)
+            VALUES (new.id, new.id, new.topic, new.kind, new.content, new.title, new.status);
+        END;
+    """)
+    try:
+        conn.execute("""
+            INSERT OR IGNORE INTO notes_fts(rowid, id, topic, kind, content, title, status)
+            SELECT id, id, topic, kind, content, title, status FROM notes
+        """)
+    except Exception:
+        pass
+    
     conn.commit()
 
 

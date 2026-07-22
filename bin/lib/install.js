@@ -787,6 +787,12 @@ function installSkills(agentName, customDestDir) {
         } catch (_) {}
       }
     }
+    const nested = path.join(dir, 'using-basemem');
+    if (fs.existsSync(nested)) {
+      try {
+        fs.rmSync(nested, { recursive: true, force: true });
+      } catch (_) {}
+    }
   }
   cleanLegacyFiles(usingBasememDir);
 
@@ -799,6 +805,13 @@ function installSkills(agentName, customDestDir) {
   for (const entry of fs.readdirSync(skillsSrc)) {
     const full = path.join(skillsSrc, entry);
     if (fs.statSync(full).isDirectory()) {
+      if (entry === 'using-basemem') {
+        const skillMdSrc = path.join(full, 'SKILL.md');
+        if (fs.existsSync(skillMdSrc)) {
+          fs.copyFileSync(skillMdSrc, path.join(usingBasememDir, 'SKILL.md'));
+        }
+        continue;
+      }
       const subDest = path.join(usingBasememDir, entry);
       fs.mkdirSync(subDest, { recursive: true });
       for (const sf of fs.readdirSync(full)) {
@@ -828,6 +841,13 @@ function installSkills(agentName, customDestDir) {
       for (const entry of fs.readdirSync(skillsSrc)) {
         const full = path.join(skillsSrc, entry);
         if (fs.statSync(full).isDirectory()) {
+          if (entry === 'using-basemem') {
+            const skillMdSrc = path.join(full, 'SKILL.md');
+            if (fs.existsSync(skillMdSrc)) {
+              fs.copyFileSync(skillMdSrc, path.join(extraUsingBasememDir, 'SKILL.md'));
+            }
+            continue;
+          }
           const subDest = path.join(extraUsingBasememDir, entry);
           fs.mkdirSync(subDest, { recursive: true });
           for (const sf of fs.readdirSync(full)) {
