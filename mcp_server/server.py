@@ -1311,12 +1311,17 @@ def edge_maintain(planet: str | None = None, decayFactor: float | None = None, p
 
 
 @server.tool(description="Start a new session: track activity within a planet. Returns the session id.")
-def session_start(topic: str, title: str, agent_id: str) -> str:
-    """Create a new active session on the given planet."""
+def session_start(topic: str, title: str, agent_id: str, session_id: int | None = None) -> str:
+    """Create a new active session on the given planet, or resume an existing one if session_id is provided."""
     from storage.db import StorageManager
     from storage.sessions import SessionManager
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
+    if session_id is not None:
+        ok = manager.resume_session(session_id, agent_id)
+        if not ok:
+            return f"Session {session_id} not found."
+        return f"Session {session_id} resumed. Agent: {agent_id}."
     sid = manager.create_session(topic, title, agent_id)
     return f"Session created: id={sid}, topic='{topic}', title='{title}', agent='{agent_id}'."
 

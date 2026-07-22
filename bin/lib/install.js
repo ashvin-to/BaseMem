@@ -734,10 +734,16 @@ function settingsHasBasemem(settingsPath) {
 function getSkillDestDir(name) {
   const home = os.homedir();
   const map = {
-    claude: path.join(home, '.claude', 'skills'),
-    codex:  path.join(home, '.codex', 'skills'),
-    agy:    path.join(home, '.gemini', 'antigravity-cli', 'plugins', 'basemem', 'skills'),
-    kiro:   path.join(home, '.kiro', 'skills'),
+    claude:   path.join(getClaudeDir(), 'skills'),
+    codex:    path.join(home, '.codex', 'skills'),
+    cursor:   path.join(home, '.cursor', 'skills'),
+    devin:    path.join(home, '.config', 'devin', 'skills'),
+    kiro:     path.join(home, '.kiro', 'skills'),
+    agy:      path.join(home, '.gemini', 'antigravity-cli', 'plugins', 'basemem', 'skills'),
+    opencode: path.join(home, '.config', 'opencode', 'skills'),
+    cline:    path.join(home, '.cline', 'skills'),
+    gemini:   path.join(home, '.gemini', 'skills'),
+    kilo:     path.join(home, '.config', 'kilo', 'skills'),
   };
   return map[name];
 }
@@ -749,17 +755,35 @@ function installSkills(agentName, customDestDir) {
   const skillsSrc = path.join(BASEMEM_ROOT, 'skills');
   if (!fs.existsSync(skillsSrc)) return { copied: false, reason: 'skills directory missing' };
 
-  fs.mkdirSync(destDir, { recursive: true });
+  function cleanLegacy(dir) {
+    const legacyDirs = ['code-review', 'session-start', 'explore-codebase', 'debug-issue', 'task-workflow'];
+    for (const d of legacyDirs) {
+      const legacyPath = path.join(dir, d);
+      if (fs.existsSync(legacyPath)) {
+        try {
+          fs.rmSync(legacyPath, { recursive: true, force: true });
+        } catch (_) {}
+      }
+    }
+  }
+
+  cleanLegacy(destDir);
+
+  const usingBasememDir = path.join(destDir, 'using-basemem');
+  fs.mkdirSync(usingBasememDir, { recursive: true });
+
+  const readmeSrc = path.join(skillsSrc, 'README.md');
+  if (fs.existsSync(readmeSrc)) {
+    fs.copyFileSync(readmeSrc, path.join(usingBasememDir, 'README.md'));
+  }
+
   for (const entry of fs.readdirSync(skillsSrc)) {
     const full = path.join(skillsSrc, entry);
     if (fs.statSync(full).isDirectory()) {
-      const subDest = path.join(destDir, entry);
-      fs.mkdirSync(subDest, { recursive: true });
-      for (const sf of fs.readdirSync(full)) {
-        const sFull = path.join(full, sf);
-        if (fs.statSync(sFull).isFile()) {
-          fs.copyFileSync(sFull, path.join(subDest, sf));
-        }
+      const sf = 'SKILL.md';
+      const sFull = path.join(full, sf);
+      if (fs.existsSync(sFull) && fs.statSync(sFull).isFile()) {
+        fs.copyFileSync(sFull, path.join(usingBasememDir, `${entry}.md`));
       }
     }
   }
@@ -770,17 +794,21 @@ function installSkills(agentName, customDestDir) {
       path.join(os.homedir(), '.gemini', 'antigravity', 'plugins', 'basemem', 'skills'),
     ];
     for (const extra of agyExtraDestDirs) {
-      fs.mkdirSync(extra, { recursive: true });
+      cleanLegacy(extra);
+      const extraUsingBasememDir = path.join(extra, 'using-basemem');
+      fs.mkdirSync(extraUsingBasememDir, { recursive: true });
+
+      if (fs.existsSync(readmeSrc)) {
+        fs.copyFileSync(readmeSrc, path.join(extraUsingBasememDir, 'README.md'));
+      }
+
       for (const entry of fs.readdirSync(skillsSrc)) {
         const full = path.join(skillsSrc, entry);
         if (fs.statSync(full).isDirectory()) {
-          const subDest = path.join(extra, entry);
-          fs.mkdirSync(subDest, { recursive: true });
-          for (const sf of fs.readdirSync(full)) {
-            const sFull = path.join(full, sf);
-            if (fs.statSync(sFull).isFile()) {
-              fs.copyFileSync(sFull, path.join(subDest, sf));
-            }
+          const sf = 'SKILL.md';
+          const sFull = path.join(full, sf);
+          if (fs.existsSync(sFull) && fs.statSync(sFull).isFile()) {
+            fs.copyFileSync(sFull, path.join(extraUsingBasememDir, `${entry}.md`));
           }
         }
       }
@@ -1014,7 +1042,7 @@ function install(name) {
   }
 
   let skillsResult = { copied: false };
-  if (['claude', 'codex', 'agy', 'kiro'].includes(name)) {
+  if (['claude', 'codex', 'cursor', 'devin', 'kiro', 'agy', 'opencode', 'cline', 'gemini', 'kilo'].includes(name)) {
     skillsResult = installSkills(name);
   }
 

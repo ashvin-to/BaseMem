@@ -58,8 +58,13 @@ def test_skills_installation_node():
     )
     assert "skills" in res.stdout
     home = os.path.expanduser("~")
+    
+    # Verify README.md is copied
+    readme_path = os.path.join(home, ".claude", "skills", "using-basemem", "README.md")
+    assert os.path.isfile(readme_path)
+
     for skill in ["using-basemem", "code-review", "session-start", "explore-codebase", "debug-issue", "task-workflow"]:
-        skill_path = os.path.join(home, ".claude", "skills", skill, "SKILL.md")
+        skill_path = os.path.join(home, ".claude", "skills", "using-basemem", f"{skill}.md")
         assert os.path.isfile(skill_path)
         content = open(skill_path).read()
         assert f"name: {skill}" in content
