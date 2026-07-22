@@ -64,7 +64,7 @@ def test_skills_installation_node():
     assert os.path.isfile(readme_path)
 
     for skill in ["using-basemem", "code-review", "session-start", "explore-codebase", "debug-issue", "task-workflow"]:
-        skill_path = os.path.join(home, ".claude", "skills", "using-basemem", f"{skill}.md")
+        skill_path = os.path.join(home, ".claude", "skills", "using-basemem", skill, "SKILL.md")
         assert os.path.isfile(skill_path)
         content = open(skill_path).read()
         assert f"name: {skill}" in content

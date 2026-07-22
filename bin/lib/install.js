@@ -767,23 +767,45 @@ function installSkills(agentName, customDestDir) {
     }
   }
 
+  // Clean legacy top-level skill folders
   cleanLegacy(destDir);
 
   const usingBasememDir = path.join(destDir, 'using-basemem');
   fs.mkdirSync(usingBasememDir, { recursive: true });
+
+  // Clean legacy files directly under using-basemem
+  function cleanLegacyFiles(dir) {
+    const legacyFiles = [
+      'code-review.md', 'debug-issue.md', 'explore-codebase.md',
+      'session-start.md', 'task-workflow.md', 'using-basemem.md', 'SKILL.md'
+    ];
+    for (const f of legacyFiles) {
+      const p = path.join(dir, f);
+      if (fs.existsSync(p)) {
+        try {
+          fs.unlinkSync(p);
+        } catch (_) {}
+      }
+    }
+  }
+  cleanLegacyFiles(usingBasememDir);
 
   const readmeSrc = path.join(skillsSrc, 'README.md');
   if (fs.existsSync(readmeSrc)) {
     fs.copyFileSync(readmeSrc, path.join(usingBasememDir, 'README.md'));
   }
 
+  // Copy each skill folder under using-basemem
   for (const entry of fs.readdirSync(skillsSrc)) {
     const full = path.join(skillsSrc, entry);
     if (fs.statSync(full).isDirectory()) {
-      const sf = 'SKILL.md';
-      const sFull = path.join(full, sf);
-      if (fs.existsSync(sFull) && fs.statSync(sFull).isFile()) {
-        fs.copyFileSync(sFull, path.join(usingBasememDir, `${entry}.md`));
+      const subDest = path.join(usingBasememDir, entry);
+      fs.mkdirSync(subDest, { recursive: true });
+      for (const sf of fs.readdirSync(full)) {
+        const sFull = path.join(full, sf);
+        if (fs.statSync(sFull).isFile()) {
+          fs.copyFileSync(sFull, path.join(subDest, sf));
+        }
       }
     }
   }
@@ -797,6 +819,7 @@ function installSkills(agentName, customDestDir) {
       cleanLegacy(extra);
       const extraUsingBasememDir = path.join(extra, 'using-basemem');
       fs.mkdirSync(extraUsingBasememDir, { recursive: true });
+      cleanLegacyFiles(extraUsingBasememDir);
 
       if (fs.existsSync(readmeSrc)) {
         fs.copyFileSync(readmeSrc, path.join(extraUsingBasememDir, 'README.md'));
@@ -805,10 +828,13 @@ function installSkills(agentName, customDestDir) {
       for (const entry of fs.readdirSync(skillsSrc)) {
         const full = path.join(skillsSrc, entry);
         if (fs.statSync(full).isDirectory()) {
-          const sf = 'SKILL.md';
-          const sFull = path.join(full, sf);
-          if (fs.existsSync(sFull) && fs.statSync(sFull).isFile()) {
-            fs.copyFileSync(sFull, path.join(extraUsingBasememDir, `${entry}.md`));
+          const subDest = path.join(extraUsingBasememDir, entry);
+          fs.mkdirSync(subDest, { recursive: true });
+          for (const sf of fs.readdirSync(full)) {
+            const sFull = path.join(full, sf);
+            if (fs.statSync(sFull).isFile()) {
+              fs.copyFileSync(sFull, path.join(subDest, sf));
+            }
           }
         }
       }
