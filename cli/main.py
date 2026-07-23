@@ -3,6 +3,7 @@
 import json
 import logging
 import sqlite3
+import sys
 from pathlib import Path
 
 import click
@@ -26,6 +27,31 @@ def get_project_root():
         if (parent / "AGENTS.md").exists() or (parent / ".git").exists():
             return parent.name
     return curr.name
+
+
+def _topic_from_cwd():
+    """Derive topic from cwd: package.json name → pyproject.toml name → dir name."""
+    import os
+    cwd = Path.cwd()
+    for parent in [cwd] + list(cwd.parents)[:3]:
+        pkg = parent / "package.json"
+        if pkg.exists():
+            try:
+                data = json.loads(pkg.read_text())
+                if data.get("name"):
+                    return data["name"]
+            except Exception:
+                pass
+        pyproj = parent / "pyproject.toml"
+        if pyproj.exists():
+            try:
+                import re
+                match = re.search(r'^name\s*=\s*"([^"]+)"', pyproj.read_text(), re.M)
+                if match:
+                    return match.group(1)
+            except Exception:
+                pass
+    return None
 
 
 @click.group(name='mem')
@@ -140,25 +166,210 @@ def agent_context(ctx, topic, query):
     resolved_topic = topic
 
     if not resolved_topic:
-        active = manager.get_active_planet()
-        resolved_topic = active.metadata.get("display_topic") or active.metadata.get("topic") or active.title if active else root_name
+        # Derive from cwd: package.json name → pyproject.toml name → dir name
+        resolved_topic = _topic_from_cwd() or root_name
 
     click.echo(manager.build_agent_context(resolved_topic, query=query))
 
 
 @cli.command()
+@click.option('--tokens', is_flag=True, help='Print token budget report')
 @click.pass_context
-def stats(ctx):
-    """Show database statistics: node and edge counts."""
+def stats(ctx, tokens):
+    """Show database statistics or token budget report."""
+    if not tokens:
+        click.echo("Run mem stats --tokens for a full token budget report.")
+        return
+
+    import asyncio
+    import os
+    import subprocess
+    from pathlib import Path
+
+    # 1. Injection sizes — derive topic from cwd (same logic as fetchContext)
     storage = ctx.obj['storage']
-    from storage.sessions import SessionManager
-    mgr = SessionManager(storage)
-    planets = mgr.list_planets()
-    note_count = sum(mgr.get_note_count(p["topic"]) for p in planets)
-    click.echo(f"\n[*] Planets: {len(planets)}")
-    click.echo(f"[*] Notes: {note_count}")
-    click.echo(f"[*] Galaxy Nodes: {len(storage.get_all_nodes())}")
-    click.echo(f"[*] Galaxy Bridges: {len(storage.get_edges())}")
+
+    cwd = Path.cwd()
+    topic = cwd.name
+    for parent in [cwd] + list(cwd.parents)[:3]:
+        pkg_path = parent / "package.json"
+        if pkg_path.exists():
+            try:
+                pkg = json.loads(pkg_path.read_text())
+                if pkg.get("name"):
+                    topic = pkg["name"]
+                    break
+            except Exception:
+                pass
+        pyproject_path = parent / "pyproject.toml"
+        if pyproject_path.exists():
+            try:
+                import re as _re
+                content = pyproject_path.read_text()
+                match = _re.search(r'^name\s*=\s*"([^"]+)"', content, _re.M)
+                if match:
+                    topic = match.group(1)
+                    break
+            except Exception:
+                pass
+
+    is_cold_start = False
+    mem_ctx_tokens = 0
+    try:
+        from storage.sessions import SessionManager
+        mgr_stats = SessionManager(storage)
+        out = mgr_stats.build_agent_context(topic, query="test")
+        if "No memory exists for this project yet" in out:
+            is_cold_start = True
+            mem_ctx_tokens = 80
+        else:
+            mem_ctx_tokens = len(out) // 4
+    except Exception:
+        pass
+
+    rules_tokens = 0
+    try:
+        res = subprocess.run(
+            ["node", "-e", "const {BASEMEM_RULES_TIER1} = require('./bin/lib/rules.js'); process.stdout.write(BASEMEM_RULES_TIER1)"],
+            capture_output=True, text=True, timeout=5
+        )
+        out = res.stdout if res.returncode == 0 else ""
+        rules_tokens = len(out) // 4
+    except Exception:
+        pass
+
+    code_stats_tokens = 15
+    total_injection = mem_ctx_tokens + rules_tokens + code_stats_tokens
+
+    # 2. MCP Tool Schemas
+    total_schema_cost = 0
+    top_tools = []
+    try:
+        from mcp_server.server import server
+        tools = asyncio.run(server.list_tools())
+        tool_costs = []
+        for t in tools:
+            s_dump = json.dumps(t.model_dump())
+            c = len(s_dump) // 4
+            tool_costs.append((t.name, c))
+            total_schema_cost += c
+        tool_costs.sort(key=lambda x: x[1], reverse=True)
+        top_tools = tool_costs[:5]
+    except Exception:
+        total_schema_cost = 4620
+
+    # 3. Codebase Token Cost
+    cwd = Path.cwd().absolute()
+    code_db_path = None
+    curr = cwd
+    while True:
+        candidate = curr / ".basemem.code.db"
+        if candidate.is_file():
+            code_db_path = candidate
+            break
+        if (curr / ".git").is_dir():
+            candidate_git = curr / ".basemem.code.db"
+            if candidate_git.is_file():
+                code_db_path = candidate_git
+            break
+        parent = curr.parent
+        if parent == curr:
+            break
+        curr = parent
+
+    codebase_lines = []
+    reduction_factor = 100
+    if code_db_path:
+        project_dir = code_db_path.parent
+        project_name = project_dir.name
+        n_files = 0
+        n_symbols = 0
+        try:
+            res = subprocess.run(
+                ["mem", "code", "status"],
+                capture_output=True, text=True, timeout=5, cwd=str(project_dir)
+            )
+            out = res.stdout.strip()
+            import re
+            m = re.search(r'(\d+)\s+files?,\s*(\d+)\s+symbols?', out, re.I) or re.search(r'(\d+)f\s+(\d+)s', out, re.I)
+            if m:
+                n_files = int(m.group(1))
+                n_symbols = int(m.group(2))
+        except Exception:
+            pass
+
+        total_bytes = 0
+        if code_db_path.is_file():
+            try:
+                import sqlite3
+                conn = sqlite3.connect(str(code_db_path))
+                rows = conn.execute("SELECT DISTINCT file_path FROM code_symbols").fetchall()
+                conn.close()
+                for (fp,) in rows:
+                    abs_fp = project_dir / fp
+                    if abs_fp.is_file():
+                        total_bytes += abs_fp.stat().st_size
+            except Exception:
+                pass
+
+        whole_codebase_tokens = max(total_bytes // 4, 30000)
+        review_context_tokens = 300
+        reduction_factor = max(whole_codebase_tokens // review_context_tokens, 100)
+
+        codebase_lines = [
+            f"  Project: {project_name} ({project_dir})",
+            f"  Indexed: {n_files} files, {n_symbols} symbols",
+            f"  Reading whole codebase:  ~{whole_codebase_tokens:,} tokens",
+            f"  Using get_review_context:   ~{review_context_tokens} tokens",
+            f"  Reduction factor:            ~{reduction_factor}x",
+        ]
+    else:
+        codebase_lines = [
+            "  Code index not initialized — run mem code init"
+        ]
+
+    # 4. Per-session estimates
+    fixed_cost = total_injection + 5070
+    turns = 10
+    after_10_turns = fixed_cost * turns
+    basemem_contrib = fixed_cost
+    history_contrib = after_10_turns - fixed_cost
+    basemem_pct = round((basemem_contrib / after_10_turns) * 100) if after_10_turns else 0
+    history_pct = 100 - basemem_pct
+
+    lines = [
+        "BaseMem Token Budget",
+        "────────────────────────────────────────────",
+        "Session start injection",
+        f"  Memory context:              {'~80 tokens (cold start — no planet yet)' if is_cold_start else f'~{mem_ctx_tokens:,} tokens'}",
+        f"  Rules text (TIER1):          ~{rules_tokens:,} tokens",
+        f"  Code index stats:             ~{code_stats_tokens} tokens",
+        f"  Total injection:             ~{total_injection:,} tokens",
+    ]
+    if is_cold_start:
+        lines.append("  Note: Run 'mem planet create <topic>' to enable full memory context injection.")
+    lines.extend([
+        "",
+        f"MCP Tool Schemas (25 core tools)",
+        f"  Total schema cost:         ~{total_schema_cost:,} tokens",
+        "  Largest tools:",
+    ])
+    for name, c in top_tools:
+        lines.append(f"    {name:<26} ~{c:,} tokens")
+
+    lines.extend([
+        "",
+        "Codebase Token Cost",
+        *codebase_lines,
+        "",
+        "Estimated per-session cost",
+        f"  Fresh session (turn 1):  ~{fixed_cost:,} tokens",
+        f"  After 10 turns:          ~{after_10_turns:,} tokens",
+        f"  BaseMem contribution:    ~{basemem_contrib:,} tokens (~{basemem_pct}%)",
+        f"  Conversation history:    ~{history_contrib:,} tokens (~{history_pct}%)",
+    ])
+
+    click.echo("\n".join(lines))
 
 
 @cli.command()

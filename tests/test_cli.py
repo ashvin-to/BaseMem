@@ -81,3 +81,16 @@ class TestCLI:
         conn.close()
         result = runner.invoke(cli, ["--db", temp_db_path, "search", "nonexistent"])
         assert result.exit_code == 0
+
+    def test_stats_no_tokens(self, runner, temp_db_path):
+        result = runner.invoke(cli, ["--db", temp_db_path, "stats"])
+        assert result.exit_code == 0
+        assert "Run mem stats --tokens" in result.output
+
+    def test_stats_tokens(self, runner, temp_db_path):
+        result = runner.invoke(cli, ["--db", temp_db_path, "stats", "--tokens"])
+        assert result.exit_code == 0
+        assert "BaseMem Token Budget" in result.output
+        assert "Session start injection" in result.output
+        assert "MCP Tool Schemas" in result.output
+        assert "Codebase Token Cost" in result.output
