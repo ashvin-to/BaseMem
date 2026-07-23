@@ -5,6 +5,7 @@ from __future__ import annotations
 import difflib
 import json
 import logging
+import os
 import sqlite3
 import uuid
 from typing import TYPE_CHECKING, Any
@@ -329,7 +330,10 @@ class NoteMixin:
                     fts_rows = cursor.execute("""
                         SELECT n.* FROM notes n
                         JOIN notes_fts f ON n.id = f.rowid
-                        WHERE f.topic = ? AND n.status NOT IN ('closed', 'resolved') AND notes_fts MATCH ?
+                        WHERE f.topic = ? AND n.status NOT IN ('closed', 'resolved')
+                          AND (n.kind IS NULL OR LOWER(n.kind) != 'flag')
+                          AND n.content NOT LIKE 'missed_%' AND n.content NOT LIKE 'pending_%'
+                          AND notes_fts MATCH ?
                         ORDER BY rank
                         LIMIT 4
                     """, (topic_slug, fts_query)).fetchall()
@@ -344,7 +348,9 @@ class NoteMixin:
                 exclude_clause = f"AND id NOT IN ({placeholders})" if exclude_ids else ""
                 pad_query = f"""
                     SELECT * FROM notes
-                    WHERE topic = ? AND status NOT IN ('closed', 'resolved') {exclude_clause}
+                    WHERE topic = ? AND status NOT IN ('closed', 'resolved')
+                      AND (kind IS NULL OR LOWER(kind) != 'flag')
+                      AND content NOT LIKE 'missed_%' AND content NOT LIKE 'pending_%' {exclude_clause}
                     ORDER BY created_at DESC
                     LIMIT ?
                 """
@@ -360,6 +366,8 @@ class NoteMixin:
                 rows = cursor.execute("""
                     SELECT * FROM notes
                     WHERE topic = ? AND status NOT IN ('closed', 'resolved')
+                      AND (kind IS NULL OR LOWER(kind) != 'flag')
+                      AND content NOT LIKE 'missed_%' AND content NOT LIKE 'pending_%'
                     ORDER BY created_at DESC
                     LIMIT 4
                 """, (topic_slug,)).fetchall()
@@ -376,71 +384,22 @@ class NoteMixin:
         topic_slug = self.normalize_topic(topic)
         proxy = _get_planet(self.storage.connection, topic_slug)
         if not proxy:
-            cursor = self.storage.connection.cursor()
-            rows = cursor.execute(
-                "SELECT topic, display_topic FROM planets ORDER BY updated_at DESC"
-            ).fetchall()
-            candidates = []
-            planet_map = {}
-            for r in rows:
-                for name in (r["topic"], r["display_topic"]):
-                    if name:
-                        candidates.append(name.lower())
-                        planet_map[name.lower()] = r["topic"]
-            closest = difflib.get_close_matches(topic_slug.lower(), candidates, n=1, cutoff=0.4)
-            if closest:
-                match_slug = planet_map[closest[0]]
-                proxy = _get_planet(self.storage.connection, match_slug)
-                if proxy:
-                    lines = [
-                        "# Knowledge Base Context",
-                        f"Topic: {topic_slug}",
-                        "",
-                        f"No planet directly named '{topic_slug}' — using closest match '{proxy.metadata.get('display_topic') or match_slug}'.",
-                        "",
-                    ]
-                    metadata = proxy.metadata
-                    lines.extend([
-                        f"Status: {metadata.get('status', 'active')}",
-                        "",
-                        "## Goal",
-                        self._trim_text(metadata.get("goal") or "Not set.", 300),
-                        "",
-                        "## Current State",
-                        self._trim_text(metadata.get("current_state") or "No current state recorded.", 500),
-                    ])
-                    next_steps = list(metadata.get("next_steps", []))[::-1]
-                    single_step = metadata.get("next_step", "")
-                    if single_step:
-                        if single_step in next_steps:
-                            next_steps.remove(single_step)
-                        next_steps.insert(0, single_step)
-                    if next_steps:
-                        lines.extend([
-                            "",
-                            "## Next Steps",
-                            *[f"- {self._trim_text(step, 180)}" for step in next_steps[:3]],
-                        ])
-                    key_notes = self._get_key_notes(match_slug, query)
-                    if key_notes:
-                        lines.extend([
-                            "",
-                            "## Key Notes",
-                            *[
-                                f"- [{n.get('kind', 'note')}] {self._trim_text(n.get('content') or n.get('title') or '', 300)}"
-                                for n in key_notes
-                            ],
-                        ])
-                    lines.append("")
-                    lines.append(f"(Closest planet to '{topic_slug}': '{proxy.metadata.get('display_topic') or match_slug}'. Use update_planet(topic='{topic_slug}', ...) to create a dedicated planet.)")
-                    return "\n".join(lines)
-            return "\n".join([
-                "# Knowledge Base Context",
-                f"Topic: {topic_slug}",
-                "",
-                f"No planet named '{topic_slug}' exists.",
-                "Use list_planets to discover available planets, or create one with update_planet(topic=..., ...).",
-            ])
+            cwd = os.getcwd()
+            return (
+                "# New Project — No Memory Found\n"
+                f"Topic: {topic}\n"
+                "Status: not tracked\n"
+                "\n"
+                "No memory exists for this project yet. BaseMem has noted the project name.\n"
+                "Suggested first actions:\n"
+                f"1. Call update_planet(topic='{topic}', goal='<one sentence goal>', currentState='<what you observe now>')\n"
+                "   to create a planet and start tracking decisions for this project.\n"
+                f"2. Call code_init(projectRoot='{cwd}') to index the codebase so code_find\n"
+                "   and get_review_context work correctly (takes 1-10 seconds depending on size).\n"
+                f"3. After any decision or change, call logInteraction(topic='{topic}', decision='full sentence').\n"
+                "\n"
+                "Once a planet exists, future sessions will inject memory context automatically."
+            )
 
         metadata = proxy.metadata
 
