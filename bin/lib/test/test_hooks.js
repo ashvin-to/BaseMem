@@ -64,15 +64,20 @@ function testGenericFolder() {
   };
   process.cwd = () => mockDesktop;
   
+  let allSpawnCalls = [];
   child_process.spawnSync = function(cmd, args, opts) {
-    spawnCallArgs = { cmd, args, opts };
+    const call = { cmd, args, opts };
+    allSpawnCalls.push(call);
+    spawnCallArgs = call;
     return { status: 0, stdout: "test output" };
   };
   
   const result = fetchContext();
   assert.ok(result !== null);
   assert.strictEqual(result.topic, 'Desktop');
-  assert.ok(spawnCallArgs.args.includes('Desktop'));
+  const agentContextCall = allSpawnCalls.find(c => c.args.includes('agent-context'));
+  assert.ok(agentContextCall, 'should have called agent-context');
+  assert.ok(agentContextCall.args.includes('Desktop'), 'agent-context call should include Desktop topic');
   
   teardown();
 }

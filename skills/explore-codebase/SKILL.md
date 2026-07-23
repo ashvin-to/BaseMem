@@ -4,6 +4,9 @@ description: Code exploration without reading raw files using symbol search, cal
 tools: [code_find, code_explore, code_read, code_files]
 ---
 
+## Trigger
+Load this skill whenever you are about to use grep, glob, view_file, list_dir, find, or cat to explore code. Those tools are FORBIDDEN in BaseMem projects. This skill shows you what to use instead.
+
 ## When to use this skill
 Use this skill when navigating an unfamiliar codebase, locating symbol definitions, or planning edits without loading entire files into memory context.
 

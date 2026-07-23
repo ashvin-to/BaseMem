@@ -188,7 +188,7 @@ assert.ok(first.mcp.written !== undefined, 'mcp.written exists');
 
 // Verify tier 2 rules were written
 const ocContent = fs.readFileSync(paths_oc.install, 'utf-8');
-assert.ok(ocContent.includes('already injected above'),
+assert.ok(ocContent.includes('Memory context injected above'),
   'opencode gets tier 2 rules (context already injected)');
 assert.ok(!ocContent.includes('call getContext once'),
   'opencode rules should not have getContext once instruction');
@@ -200,7 +200,7 @@ const claudeInstall = install('claude');
 assert.ok(claudeInstall.rule.written, 'claude rule written');
 const clBasememMd = path.join(path.dirname(paths_cl.install), 'basemem.md');
 const clContent = fs.readFileSync(clBasememMd, 'utf-8');
-assert.ok(clContent.includes('already injected above'),
+assert.ok(clContent.includes('Memory context injected above'),
   'claude gets tier 1 rules (context already injected)');
 console.log('PASS install(claude): tier 1 rules (context injected)');
 
@@ -213,9 +213,7 @@ assert.ok(aiderInstall.rule.written, 'aider rule written');
 const aiContent = fs.readFileSync(paths_ai.install, 'utf-8');
 assert.ok(!aiContent.includes('already injected above'),
   'aider rules should not mention already injected');
-assert.ok(!aiContent.includes('do not call getContext or list_planets'),
-  'aider rules should not have no-getContext instruction');
-assert.ok(aiContent.includes('call getContext once'),
+assert.ok(aiContent.includes('Call getContext exactly once at session start'),
   'aider gets tier 3 rules (manual getContext at start)');
 console.log('PASS install(aider): tier 3 rules (no hook/plugin)');
 

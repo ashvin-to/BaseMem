@@ -151,7 +151,7 @@ def _fmt_loc(file_path: str) -> str:
     return "/".join(parts[-3:]) if len(parts) > 3 else path
 
 
-@server.tool(description="Find code symbols. grep=True = raw text search. references=True = find all usages. REPLACES grep. Use filePath (or 'path') to filter to a single file.")
+@server.tool(description="Find code symbols. Falls back to partial match if exact name not found. grep=True = raw text search across all files (replaces grep/glob). references=True = find all usages. source=True = include source lines.")
 def code_find(
     query: str = "",
     projectRoot: str = "",
@@ -319,6 +319,31 @@ def code_find(
                 sig = f" {r['signature'][:60]}" if r.get('signature') else ""
                 parts.append(f"  [{r['id']}] {r['symbol_name']} ({loc}){sig}")
             return "\n".join(parts)
+
+        # Partial-match fallback: LIKE '%query%' on symbol_name (case-insensitive)
+        if not grep and query and query.strip() not in (".", "*", "%", ""):
+            try:
+                partial_cur = indexer.conn.execute(
+                    """SELECT id, file_path, symbol_name, symbol_type,
+                              language, signature, start_line, end_line, docstring
+                       FROM code_symbols
+                       WHERE LOWER(symbol_name) LIKE LOWER(?)
+                       ORDER BY symbol_name
+                       LIMIT ?""",
+                    (f"%{query}%", limit),
+                )
+                partial_results = [dict(r) for r in partial_cur.fetchall()]
+                if filePath:
+                    partial_results = [r for r in partial_results if r['file_path'] == filePath]
+                if partial_results:
+                    parts = [f"No exact match for '{query}'. Showing partial matches:"]
+                    for r in partial_results:
+                        loc = _fmt_loc(r['file_path'])
+                        sig = f" {r['signature'][:60]}" if r.get('signature') else ""
+                        parts.append(f"  [{r['id']}] {r['symbol_name']} ({loc}){sig}")
+                    return "\n".join(parts)
+            except Exception:
+                pass
 
         # Browse fallback — show file overview with symbol counts
         _c = indexer.conn
@@ -825,7 +850,7 @@ def read_planet(topic: str, raw: bool = False, limit: int = 50) -> str:
     return "\n".join(lines)
 
 
-@server.tool(description="Persist session: decisions, facts, state, activity — all in one call. REQUIRED: topic (the planet/topic name). 'planet' is accepted as an alias for topic.")
+@server.tool(description="Persist decisions, facts, and state. topic is required. At least one of decision/fact/summary/currentState/nextStep must be non-empty — passing only topic is a no-op and stores nothing.")
 def logInteraction(
     topic: str = "",
     decision: str = "",
@@ -836,8 +861,12 @@ def logInteraction(
     activity: str = "",
     planet: str = "",
 ) -> str:
-    """Log an interaction: add notes + update planet + log turn in one call. Call during session for decisions/facts and at session end for summary.
-       topic (REQUIRED): the planet/topic name. 'planet' is accepted as an alias if topic is not provided."""
+    """Log an interaction: add notes + update planet + log turn in one call.
+       topic (REQUIRED): the planet/topic name. 'planet' is accepted as an alias if topic is not provided.
+       decision: What was decided and why — full sentence required, not a label. Example: 'Chose SQLite over Postgres because deployment is simpler.'
+       fact: A fact that is now known and should be remembered across sessions.
+       summary: One paragraph summary of what happened this session — required at session end.
+    """
     from storage.db import StorageManager
     from storage.sessions import SessionManager
 
@@ -871,7 +900,10 @@ def logInteraction(
         manager.log_chat_to_planet(topic, topic, activity, agent_id="system", _sender="system")
         parts.append("turn_logged")
 
-    return f"{' + '.join(parts) if parts else 'no changes'} for '{topic}'."
+    if not parts:
+        return "no-op: logInteraction called with no content. Pass at least one of: decision='what was decided and why', fact='what is now known', summary='what happened this session', currentState='current progress', nextStep='next action'. Example: logInteraction(topic='myproject', decision='Chose SQLite because it requires no separate server process.')"
+
+    return f"{' + '.join(parts)} for '{topic}'."
 
 
 @server.tool(description="Create or update a planet with goal, state, next step, files.")

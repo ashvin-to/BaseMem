@@ -143,7 +143,7 @@ class TestNoteTools:
     def test_logInteraction_noop(self, temp_db):
         from mcp_server.server import logInteraction
         r = logInteraction(topic="log-test")
-        assert "no changes" in r
+        assert "no-op" in r
 
     def test_search_notes(self, temp_db):
         from mcp_server.server import search_notes
