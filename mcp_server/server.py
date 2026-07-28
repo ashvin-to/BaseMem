@@ -56,36 +56,7 @@ from functools import wraps
 from mcp.server.fastmcp import FastMCP
 
 def _get_initial_instructions() -> "str | None":
-    try:
-        import os
-        from pathlib import Path
-        from storage.db import StorageManager
-        from storage.sessions import SessionManager
-
-        # 1. Resolve topic (project root name)
-        curr = Path.cwd().absolute()
-        root_name = curr.name
-        for parent in [curr] + list(curr.parents):
-            if (parent / "AGENTS.md").exists() or (parent / ".git").exists():
-                root_name = parent.name
-                break
-
-        # 2. Open DB
-        storage = StorageManager(get_db_path())
-        manager = SessionManager(storage)
-
-        # 3. Check active planet
-        active = manager.get_active_planet()
-        resolved_topic = root_name
-        if active:
-            resolved_topic = active.metadata.get("display_topic") or active.metadata.get("topic") or active.title
-
-        # 4. Generate context
-        return manager.build_agent_context(resolved_topic)
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return f"Warning: Failed to automatically fetch context: {e}"
+    return "Call getContext(topic) once at session start to load memory context."
 
 
 server = FastMCP("mem", instructions=_get_initial_instructions())
@@ -106,7 +77,6 @@ def _optional_tool(*args, **kwargs):
 
 @server.tool(description="Index project code (tree-sitter). Auto-runs on first code_find.")
 def code_init(projectRoot: str) -> str:
-    """Index a project's source code into a per-project .basemem.code.db."""
     import os
     if not os.path.isdir(projectRoot):
         return f"Directory not found: {projectRoot}"
@@ -151,7 +121,7 @@ def _fmt_loc(file_path: str) -> str:
     return "/".join(parts[-3:]) if len(parts) > 3 else path
 
 
-@server.tool(description="Find code symbols. Falls back to partial match if exact name not found. grep=True = raw text search across all files (replaces grep/glob). references=True = find all usages. source=True = include source lines.")
+@server.tool(description="Find code symbols or grep text (grep=True). source=True adds lines. references=True finds usages.")
 def code_find(
     query: str = "",
     projectRoot: str = "",
@@ -164,15 +134,6 @@ def code_find(
     grep: bool = False,
     path: str = "",
 ) -> str:
-    """Search for code symbols. Single match = detail + callers/callees + source.
-       Empty query = file overview.
-       filePath='indexer.py' = filter to file.
-       dead=True = find files never imported by other files.
-       source=True = include source code lines (for edit workflow: code_find → edit).
-       references=True = find all references/occurrences across indexed files.
-        grep=True = raw ripgrep search across ALL files (non-code too), replaces native grep.
-        'path' is accepted as an alias for filePath.
-    """
     import os
 
     if not filePath and path:
@@ -374,7 +335,6 @@ def code_trace(
     depth: int = 2,
     limit: int = 10,
 ) -> str:
-    """Trace call chains: who calls this symbol and what does it call?"""
     import os
 
     from indexer import CODE_DB_FILENAME, CodeIndexer
@@ -429,9 +389,8 @@ def code_list_projects(searchRoot: str = "") -> str:
     return "\n".join(parts)
 
 
-@server.tool(description="Show project files. pattern='**/*.json' = glob wildcard search. Use prefix='src/' to filter indexed files.")
+@server.tool(description="List indexed files or glob by pattern. prefix='src/' filters results.")
 def code_files(projectRoot: str = "", prefix: str = "", pattern: str = "", limit: int = 100) -> str:
-    """List indexed files with symbol counts, or glob files by pattern. Replaces native glob."""
     import glob as _glob
     import os
     if pattern:
@@ -469,9 +428,6 @@ def code_files(projectRoot: str = "", prefix: str = "", pattern: str = "", limit
 
 @server.tool(description="Explore: view source + call paths in one shot. Use symbol name from code_find.")
 def code_explore(query: str, projectRoot: str = "", limit: int = 10) -> str:
-    """View source code and callers/callees for a symbol or area.
-    Tries exact symbol name/ID first, then full-text search.
-    """
     import os
 
     from indexer import CODE_DB_FILENAME, CodeIndexer
@@ -533,7 +489,6 @@ def code_explore(query: str, projectRoot: str = "", limit: int = 10) -> str:
 
 @_optional_tool(description="Analyze impact of changing a symbol (transitive reverse deps).")
 def code_impact(symbolName: str, projectRoot: str = "", depth: int = 2, limit: int = 30) -> str:
-    """Trace transitive reverse dependencies for a symbol."""
     import os
 
     from indexer import CODE_DB_FILENAME, CodeIndexer
@@ -557,14 +512,13 @@ def code_impact(symbolName: str, projectRoot: str = "", depth: int = 2, limit: i
         indexer.close()
 
 
-@server.tool(description="Compact review context: blast radius, entry points, test gaps, and key risks for changed files. One call replaces code_find + code_impact + code_trace.")
+@server.tool(description="Compact review context for changed files: blast radius, entry points, test gaps, key risks.")
 def get_review_context(
     files: list[str],
     query: str = "",
     projectRoot: str = "",
     maxTokens: int = 300,
 ) -> str:
-    """Compact review context for changed files: blast radius, entry points, test gaps, key risks."""
     import os
 
     from indexer import CODE_DB_FILENAME, CodeIndexer
@@ -750,7 +704,6 @@ def get_review_context(
 
 @server.tool(description="CALL FIRST — load session memory: state, decisions, facts, code stats.")
 def getContext(topic: str = "", project: str = "", query: str = "") -> str:
-    """Call at session start to load past state, decisions, facts for a topic."""
     from storage.db import StorageManager
     from storage.sessions import SessionManager
 
@@ -804,9 +757,8 @@ def getContext(topic: str = "", project: str = "", query: str = "") -> str:
     return "\n".join(lines)
 
 
-@server.tool(description="Full planet details: state, notes, files, commands. raw=true returns notes for agent summarization.")
+@server.tool(description="Read planet details: state, notes, files. raw=true returns notes for summarization.")
 def read_planet(topic: str, raw: bool = False, limit: int = 50) -> str:
-    """Read all details of a specific planet/topic. With raw=true, return notes for agent summarization."""
     from storage.db import StorageManager
     from storage.sessions import SessionManager
     storage = StorageManager(get_db_path())
@@ -850,7 +802,7 @@ def read_planet(topic: str, raw: bool = False, limit: int = 50) -> str:
     return "\n".join(lines)
 
 
-@server.tool(description="Persist decisions, facts, and state. topic is required. At least one of decision/fact/summary/currentState/nextStep must be non-empty — passing only topic is a no-op and stores nothing.")
+@server.tool(description="Log decision, fact, or summary to a topic. topic required. At least one of decision/fact/summary/currentState/nextStep required.")
 def logInteraction(
     topic: str = "",
     decision: str = "",
@@ -861,12 +813,6 @@ def logInteraction(
     activity: str = "",
     planet: str = "",
 ) -> str:
-    """Log an interaction: add notes + update planet + log turn in one call.
-       topic (REQUIRED): the planet/topic name. 'planet' is accepted as an alias if topic is not provided.
-       decision: What was decided and why — full sentence required, not a label. Example: 'Chose SQLite over Postgres because deployment is simpler.'
-       fact: A fact that is now known and should be remembered across sessions.
-       summary: One paragraph summary of what happened this session — required at session end.
-    """
     from storage.db import StorageManager
     from storage.sessions import SessionManager
 
@@ -917,7 +863,6 @@ def update_planet(
     command: str = "",
     handoff: str = "",
 ) -> str:
-    """Update or create a planet with all supported fields."""
     from storage.db import StorageManager
     from storage.sessions import SessionManager
 
@@ -945,7 +890,6 @@ def update_planet(
 
 @server.tool(description="Trim old notes, keep summaries + 30 recent.")
 def compact_planet(topic: str) -> str:
-    """Compact a planet - keep summaries + 30 recent notes, delete the rest."""
     from storage.db import StorageManager
     from storage.sessions import SessionManager
     storage = StorageManager(get_db_path())
@@ -958,7 +902,6 @@ def compact_planet(topic: str) -> str:
 
 @server.tool(description="List all planets/topics.")
 def list_planets() -> str:
-    """List all topics/planets available in the knowledge base."""
     from storage.db import StorageManager
     from storage.sessions import SessionManager
 
@@ -981,7 +924,6 @@ def list_planets() -> str:
 
 @server.tool(description="Full-text search across planets, notes, nodes.")
 def search_nodes(query: str, limit: int = 10) -> str:
-    """Full-text search across planets, notes, and nodes."""
     from storage.db import StorageManager
     from storage.sessions import SessionManager
 
@@ -1036,7 +978,6 @@ def search_nodes(query: str, limit: int = 10) -> str:
 
 @server.tool(description="Search notes by topic, kind, text.")
 def search_notes(topic: str, kind: str = "", query: str = "", limit: int = 10) -> str:
-    """Search notes by topic, kind, and text."""
     from storage.db import StorageManager
     from storage.sessions import SessionManager
 
@@ -1062,7 +1003,6 @@ def search_notes(topic: str, kind: str = "", query: str = "", limit: int = 10) -
 
 @_optional_tool(description="Read a full node by ID.")
 def get_node(nodeId: str | int) -> str:
-    """Read a full node by its ID."""
     from storage.db import StorageManager
     from storage.sessions import SessionManager
 
@@ -1092,9 +1032,8 @@ def get_node(nodeId: str | int) -> str:
     )
 
 
-@server.tool(description="Link two items (notes or planets) with type and weight. kind='notes' (default) or 'planets'.")
+@server.tool(description="Link two notes or planets. kind='notes' (default) or 'planets'.")
 def link(fromId: str | int, toId: str | int, linkType: str = "related", weight: float = 1.0, kind: str = "notes") -> str:
-    """Link two items: notes (default) or planets. For planets use kind='planets' with planet names as IDs."""
     from storage.db import StorageManager
     from storage.sessions import SessionManager
     storage = StorageManager(get_db_path())
@@ -1106,9 +1045,8 @@ def link(fromId: str | int, toId: str | int, linkType: str = "related", weight: 
     return msg
 
 
-@server.tool(description="Update a note: set pinned status and/or replace tags. At least one of pinned or tags must be provided.")
+@server.tool(description="Update a note's pinned status and/or tags.")
 def note_update(noteId: str | int, pinned: bool | None = None, tags: str | None = None) -> str:
-    """Update a note's pinned status and/or tags. Both parameters are optional, but at least one must be provided."""
     from storage.db import StorageManager
     from storage.sessions import SessionManager
     storage = StorageManager(get_db_path())
@@ -1121,7 +1059,6 @@ def note_update(noteId: str | int, pinned: bool | None = None, tags: str | None 
 
 @server.tool(description="Create a task on a planet. Returns the task id.")
 def task_create(topic: str, title: str, priority: str = "medium", depends_on: list | None = None, files: list | None = None, notes: list | None = None) -> str:
-    """Create a new task on a planet with status=todo."""
     from storage.db import StorageManager
     from storage.sessions import SessionManager
     storage = StorageManager(get_db_path())
@@ -1140,7 +1077,6 @@ def task_create(topic: str, title: str, priority: str = "medium", depends_on: li
 
 @server.tool(description="Update a task's status, priority, files, or notes.")
 def task_update(task_id: int, status: str | None = None, priority: str | None = None, files: list | None = None, notes: list | None = None) -> str:
-    """Update task fields: status, priority, files, notes."""
     from storage.db import StorageManager
     from storage.sessions import SessionManager
     storage = StorageManager(get_db_path())
@@ -1153,7 +1089,6 @@ def task_update(task_id: int, status: str | None = None, priority: str | None = 
 
 @server.tool(description="List tasks, optionally filtered by topic, status, priority.")
 def task_list(topic: str | None = None, status: str | None = None, priority: str | None = None) -> str:
-    """List tasks with optional filters."""
     from storage.db import StorageManager
     from storage.sessions import SessionManager
     storage = StorageManager(get_db_path())
@@ -1171,7 +1106,6 @@ def task_list(topic: str | None = None, status: str | None = None, priority: str
 
 @server.tool(description="Block a task. Optionally provide a reason (stored as an issue note).")
 def task_block(task_id: int, reason: str | None = None) -> str:
-    """Mark a task as blocked. If reason is given, creates a linked issue note."""
     from storage.db import StorageManager
     from storage.sessions import SessionManager
     storage = StorageManager(get_db_path())
@@ -1199,7 +1133,6 @@ def task_block(task_id: int, reason: str | None = None) -> str:
 
 @server.tool(description="Get planets linked to a planet.")
 def get_planet_links(planet: str) -> str:
-    """Get planets linked to the given planet."""
     from storage.db import StorageManager
     from storage.sessions import SessionManager
     storage = StorageManager(get_db_path())
@@ -1218,7 +1151,6 @@ def get_planet_links(planet: str) -> str:
 
 @_optional_tool(description="Set memory tier: hot, warm, compacted.")
 def set_memory_state(topic: str, state: str) -> str:
-    """Set memory tier for a planet."""
     from storage.db import StorageManager
     from storage.sessions import SessionManager
     storage = StorageManager(get_db_path())
@@ -1230,13 +1162,8 @@ def set_memory_state(topic: str, state: str) -> str:
 # ── Collapsed graph tool ──────────────────────────────────────
 
 
-@server.tool(description="Get graph data: flat neighbors (depth=1, default), ranked list (ranked=true), or subgraph JSON (depth>1).")
+@server.tool(description="Get graph neighbors (depth=1), ranked list, or subgraph JSON (depth>1).")
 def get_graph(noteId: str | int, depth: int = 1, minWeight: float = 0.0, ranked: bool = False) -> str:
-    """Get graph data around a note.
-    - depth=1 (default): flat list of direct neighbors filtered by minWeight.
-    - ranked=true: sorts by weight desc then confidence desc.
-    - depth>1: returns full subgraph structure as JSON (like old get_subgraph).
-    """
     from storage.db import StorageManager
     from storage.sessions import SessionManager
     storage = StorageManager(get_db_path())
@@ -1273,7 +1200,6 @@ def get_graph(noteId: str | int, depth: int = 1, minWeight: float = 0.0, ranked:
 
 @_optional_tool(description="Two notes for agent similarity comparison.")
 def compute_similarity(noteIdA: str, noteIdB: str) -> str:
-    """Return both notes for agent-driven semantic similarity comparison."""
     from storage.db import StorageManager
     from storage.sessions import SessionManager
     storage = StorageManager(get_db_path())

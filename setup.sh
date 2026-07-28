@@ -20,8 +20,14 @@ if [ ! -d "$BASE_DIR/venv" ]; then
 fi
 
 echo "Installing core engine..."
-"$BASE_DIR/venv/bin/pip" install -q -r "$BASE_DIR/requirements.txt"
-"$BASE_DIR/venv/bin/pip" install -q -e "$BASE_DIR"
+if command -v uv &>/dev/null; then
+  uv pip install --python "$BASE_DIR/venv/bin/python" -q -r "$BASE_DIR/requirements.txt"
+  uv pip install --python "$BASE_DIR/venv/bin/python" -q -e "$BASE_DIR"
+else
+  "$BASE_DIR/venv/bin/python" -m ensurepip --upgrade 2>/dev/null || true
+  "$BASE_DIR/venv/bin/pip" install -q -r "$BASE_DIR/requirements.txt"
+  "$BASE_DIR/venv/bin/pip" install -q -e "$BASE_DIR"
+fi
 
 mkdir -p "$MEM_BIN_DIR"
 

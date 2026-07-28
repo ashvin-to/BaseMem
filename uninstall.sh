@@ -60,7 +60,7 @@ remove_mcp_entries() {
 import json, sys, re
 from pathlib import Path
 path = Path(sys.argv[1])
-BAD = re.compile(r'(basemem|graphrag|memgraph)', re.IGNORECASE)
+BAD = re.compile(r'(basemem|graphrag|memgraph|mcp__mem__)', re.IGNORECASE)
 try:
     data = json.loads(path.read_text() or "{}")
 except (json.JSONDecodeError, ValueError):
@@ -95,7 +95,7 @@ remove_bad_permissions() {
 import json, sys, re
 from pathlib import Path
 path = Path(sys.argv[1])
-BAD = re.compile(r'(basemem|graphrag|memgraph)', re.IGNORECASE)
+BAD = re.compile(r'(basemem|graphrag|memgraph|mcp__mem__)', re.IGNORECASE)
 try:
     data = json.loads(path.read_text() or "{}")
 except (json.JSONDecodeError, ValueError):
@@ -199,7 +199,7 @@ if [ -f "$ENABLEMENT_FILE" ]; then
 from pathlib import Path
 import json, sys, re
 path = Path(sys.argv[1])
-BAD = re.compile(r'(basemem|graphrag|memgraph)', re.IGNORECASE)
+BAD = re.compile(r'(basemem|graphrag|memgraph|mcp__mem__)', re.IGNORECASE)
 try:
     data = json.loads(path.read_text() or "{}")
 except json.JSONDecodeError:

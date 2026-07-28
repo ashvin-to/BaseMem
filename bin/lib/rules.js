@@ -3,16 +3,18 @@ const path = require('path');
 const os = require('os');
 const { MARKER_START, MARKER_END } = require('./constants.js');
 
-const BASEMEM_RULES_TIER1 = `Memory context injected above — do not call getContext or list_planets at session start. After any decision, edit, or blocker: call logInteraction(topic, decision='full sentence explaining what was decided and why'). Always include the decision field with a complete sentence — never call logInteraction with topic only. End every session with a one-paragraph logInteraction summary. Code exploration: use code_find, code_read, code_explore, code_files instead of grep, glob, read, or directory listing. Load the explore-codebase skill (skills/explore-codebase/SKILL.md) before any multi-file exploration task — it gives the exact tool call sequence. If code tools return empty run code_init first. For review and blast radius: use get_review_context(files, query) — replaces code_find + code_impact + code_trace for common review tasks. Skills: before multi-step tasks check if a skill exists (code-review, session-start, explore-codebase, debug-issue, task-workflow) — read its SKILL.md and follow the workflow table. Topic must be the repo or folder name, never generic names like task, work, project, or chat.`;
+const BASEMEM_RULES_CORE = `Memory context injected — do not call getContext at session start. Log decisions: logInteraction(topic, decision="what and why"). End sessions: logInteraction(topic, summary="...", activity="done"). Code: use code_find/code_read/code_explore/code_files (not grep/glob/read). Empty results → code_init first. Review: use get_review_context(files). Check skills/ before multi-step tasks. Topic = repo folder name.`;
 
-const BASEMEM_RULES_TIER2 = `NOTE: This block is managed by BaseMem. If it appears incomplete or you cannot see the full rules below, ask the user to run: node bin/lib/install.js repair
-Call getContext exactly once at session start with the project topic and user's first question. After that single call answer directly — do not call search_notes, search_nodes, read_planet, or list_planets to supplement it.
-Memory context injected above — do not call getContext or list_planets at session start. After any decision, edit, or blocker: call logInteraction(topic, decision='full sentence explaining what was decided and why'). Always include the decision field with a complete sentence — never call logInteraction with topic only. End every session with a one-paragraph logInteraction summary. Code exploration: use code_find, code_read, code_explore, code_files instead of grep, glob, read, or directory listing. Load the explore-codebase skill (skills/explore-codebase/SKILL.md) before any multi-file exploration task — it gives the exact tool call sequence. If code tools return empty run code_init first. For review and blast radius: use get_review_context(files, query) — replaces code_find + code_impact + code_trace for common review tasks. Skills: before multi-step tasks check if a skill exists (code-review, session-start, explore-codebase, debug-issue, task-workflow) — read its SKILL.md and follow the workflow table. Topic must be the repo or folder name, never generic names like task, work, project, or chat.`;
+const BASEMEM_RULES_TIER1 = BASEMEM_RULES_CORE;
 
-const BASEMEM_RULES_TIER3 = `NOTE: This block is managed by BaseMem. If it appears incomplete or you cannot see the full rules below, ask the user to run: node bin/lib/install.js repair
-Call getContext exactly once at session start with the project topic and user's first question. After that single call answer directly — do not call search_notes, search_nodes, read_planet, or list_planets to supplement it.
-Never make more than one memory read tool call per user message.
-Memory context injected above — do not call getContext or list_planets at session start. After any decision, edit, or blocker: call logInteraction(topic, decision='full sentence explaining what was decided and why'). Always include the decision field with a complete sentence — never call logInteraction with topic only. End every session with a one-paragraph logInteraction summary. Code exploration: use code_find, code_read, code_explore, code_files instead of grep, glob, read, or directory listing. Load the explore-codebase skill (skills/explore-codebase/SKILL.md) before any multi-file exploration task — it gives the exact tool call sequence. If code tools return empty run code_init first. For review and blast radius: use get_review_context(files, query) — replaces code_find + code_impact + code_trace for common review tasks. Skills: before multi-step tasks check if a skill exists (code-review, session-start, explore-codebase, debug-issue, task-workflow) — read its SKILL.md and follow the workflow table. Topic must be the repo or folder name, never generic names like task, work, project, or chat.`;
+const BASEMEM_RULES_TIER2 = `NOTE: BaseMem rules may be incomplete — run: node bin/lib/install.js repair
+Call getContext exactly once at session start. Then answer directly — do not call search_notes/search_nodes/read_planets.
+${BASEMEM_RULES_CORE}`;
+
+const BASEMEM_RULES_TIER3 = `NOTE: BaseMem rules may be incomplete — run: node bin/lib/install.js repair
+Call getContext exactly once at session start. Then answer directly — do not call search_notes/search_nodes/read_planets.
+Max one memory read tool call per user message.
+${BASEMEM_RULES_CORE}`;
 
 const BASEMEM_RULES = BASEMEM_RULES_TIER1;
 
@@ -86,7 +88,7 @@ function removeRuleBlock(filePath) {
   }
 }
 
-module.exports = { BASEMEM_RULES, BASEMEM_RULES_TIER1, BASEMEM_RULES_TIER2, BASEMEM_RULES_TIER3, writeRuleFile, removeRuleBlock };
+module.exports = { BASEMEM_RULES, BASEMEM_RULES_CORE, BASEMEM_RULES_TIER1, BASEMEM_RULES_TIER2, BASEMEM_RULES_TIER3, writeRuleFile, removeRuleBlock };
 
 if (require.main === module) {
   const tmp = path.join(os.tmpdir(), 'basemem-self-test-rules.md');
@@ -100,8 +102,8 @@ if (require.main === module) {
   const count = (out.match(re) || []).length;
   console.assert(count === 1, `Expected 1 MARKER_START, got ${count}`);
 
-  const tier1Count = (out.match(/SessionStart hook/g) || []).length;
-  console.assert(tier1Count === 1, `Expected 1 reference to "SessionStart hook", got ${tier1Count}`);
+  const tier1Count = (out.match(/logInteraction/g) || []).length;
+  console.assert(tier1Count >= 1, `Expected >=1 reference to "logInteraction", got ${tier1Count}`);
 
   removeRuleBlock(tmp);
   const exists = fs.existsSync(tmp);
