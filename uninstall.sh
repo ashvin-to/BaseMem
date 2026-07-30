@@ -179,6 +179,15 @@ rm -rf "$HOME/.config/opencode/plugins"
 rm -rf "$HOME/.gemini/antigravity-cli/plugins/basemem"
 rm -rf "$HOME/.gemini/config/plugins/basemem"
 
+# --- Step 5b: Remove slash commands and global skills ---
+echo "  Removing slash commands and global skills..."
+for cmd in ctx.md log.md review.md mem.md compact.md tasks.md; do
+  rm -f "$HOME/.config/opencode/commands/$cmd"
+done
+for cmd in ctx.md log.md review.md mem.md compact.md tasks.md; do
+  rm -f "$HOME/.gemini/antigravity-cli/skills/$cmd"
+done
+
 # --- Step 6: Remove basemem permissions from allow-lists ---
 echo "  Removing bad permissions..."
 remove_bad_permissions "$HOME/.claude/settings.local.json"

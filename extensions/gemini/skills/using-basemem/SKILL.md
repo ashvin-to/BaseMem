@@ -23,4 +23,4 @@ If context was injected at session start, do not call getContext. Otherwise call
 | Explore | `code_explore('sym')` |
 | Files | `code_files(pattern='**/*.json')` |
 
-Forbidden: `view_file`, `grep_search`, `list_dir`. Empty results → `code_init(root)` first.
+Forbidden: `view_file`, `grep_search`, `list_dir`. Tools auto-index when needed.

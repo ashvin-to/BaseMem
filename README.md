@@ -1,6 +1,6 @@
 # BaseMem: AI Knowledge Base System
 
-Lightweight, persistent memory for AI agents. Planets hold task context, notes persist decisions, linked edges form a learnable graph. **34 MCP tools** let any agent read and write the same data, and **session-start hooks/plugins** auto-inject memory context into every chat session — no manual `getContext` call needed.
+Lightweight, persistent memory for AI agents. Planets hold task context, notes persist decisions, linked edges form a learnable graph. **25 MCP tools** (34 with advanced) let any agent read and write the same data, and **session-start hooks/plugins** auto-inject memory context into every chat session — no manual `getContext` call needed.
 
 ## Quick Start
 
@@ -15,7 +15,7 @@ curl -fsSL https://raw.githubusercontent.com/ashvin-to/basemem/main/install.sh |
 ```bash
 git clone https://github.com/ashvin-to/BaseMem.git
 cd BaseMem
-chmod +x setup.sh && ./setup.sh
+chmod +x setup.sh && ./setup.sh  # uses uv if available, falls back to pip
 ```
 
 ### Install for your agent
@@ -37,6 +37,31 @@ mem list-planets
 mem planet create "my-project" --goal "Build feature X"
 mem note add "my-project" --type decision -m "Use SQLite for persistence"
 ```
+
+## Token Optimization
+
+BaseMem is designed to minimize LLM context consumption:
+
+- **Rules**: Compact shared core (~65 tokens/session) — behavioral directives only, no verbose headers
+- **Skills**: Stripped to essential workflow tables — ~60% smaller than typical skill files
+- **MCP server**: Shorter tool descriptions, lazy instructions (no DB query on connect)
+
+## Slash Commands
+
+Opencode and Antigravity get 6 slash commands installed automatically:
+
+| Command | Purpose |
+|---------|---------|
+| `/ctx` | Fetch memory context for a project |
+| `/log` | Log a decision or fact |
+| `/review` | Review changed files with blast radius |
+| `/mem` | Show project memory status |
+| `/compact` | Compact old notes (keep summaries + 30 recent) |
+| `/tasks` | List project tasks |
+
+Deployed to:
+- **Opencode**: `~/.config/opencode/commands/`
+- **Antigravity**: `~/.gemini/antigravity-cli/skills/`
 
 ## How It Works
 
@@ -103,6 +128,14 @@ bash install.sh --version v0.1.0
 bash install.sh --no-gemini
 ```
 
+### Uninstall
+
+```bash
+./uninstall.sh              # removes configs, hooks, MCP entries (keeps data)
+./uninstall.sh --purge-data # also removes ~/.basemem/ (db + sessions)
+./uninstall.sh --purge-env  # also removes venv
+```
+
 ## Running Tests
 
 ```bash
@@ -112,7 +145,7 @@ bash bin/lib/test/run.sh      # JS installer tests
 
 ## Docs
 
-- **[doc/memory.md](./doc/memory.md)** — planets, notes, graphs, CLI, data models, auto-linking, memory tiers, all 34 MCP tools
+- **[doc/memory.md](./doc/memory.md)** — planets, notes, graphs, CLI, data models, auto-linking, memory tiers, all 25 MCP tools
 - **[doc/code-intelligence.md](./doc/code-intelligence.md)** — tree-sitter code indexing, code tools, zero-read edit workflow
 - **[doc/tasks.md](./doc/tasks.md)** — task system, CLI, MCP tools, dependency cycle prevention
 
@@ -125,7 +158,7 @@ All interfaces (CLI, MCP, Flask) read and write the same SQLite tables — no sy
 ### Core Components
 
 1. **Storage Layer** (`storage/`) — SQLite + FTS5, `SessionManager`, schema: planets, notes, note_links, planet_links, sessions, tasks; config via env vars
-2. **MCP Server** (`mcp_server/server.py`) — 29 core MCP tools (34 with `BASEMEM_ENABLE_ADVANCED_TOOLS=1`)
+2. **MCP Server** (`mcp_server/server.py`) — 25 core MCP tools (34 with `BASEMEM_ENABLE_ADVANCED_TOOLS=1`)
 3. **Hook System** (`src/hooks/`) — session-start hook scripts shared across agents, context fetching via `mem agent-context`, conditional preamble injection
 4. **Agent Plugins** (`src/agents/`) — per-agent plugin/hook definitions (opencode, cline, gemini, kilo, kiro, etc.)
 5. **Web Hub** (`server.py`) — Flask REST API, D3.js graph visualization
@@ -139,7 +172,7 @@ BaseMem/
 ├── cli/              # CLI subcommands (planet, note, task, session, code, edge)
 ├── graph/            # Graph engine (auto-linking, traversal)
 ├── indexer/          # Code intelligence (tree-sitter indexing, search, trace)
-├── mcp_server/       # MCP server — 29 core tools (34 with advanced)
+├── mcp_server/       # MCP server — 25 core tools (34 with advanced)
 ├── storage/          # SQLite storage layer
 │   ├── sessions.py   # Session manager (auto-recovery, stamping, context)
 │   ├── planets.py    # Planet CRUD
@@ -181,6 +214,8 @@ BaseMem/
 
 ```bash
 python -m venv venv && source venv/bin/activate && pip install -e .
+# or with uv:
+uv pip install --python venv/bin/python -e .
 pytest tests/ -v
 ```
 

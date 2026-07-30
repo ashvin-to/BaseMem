@@ -561,6 +561,12 @@ class TestCodeTools:
         r = code_find(query="test", grep=True, projectRoot="/tmp")
         assert isinstance(r, str)
 
+    def test_code_find_grep_context(self):
+        """grep mode with context parameter shows surrounding lines."""
+        from mcp_server.server import code_find
+        r = code_find(query="test", grep=True, projectRoot="/tmp", context=2)
+        assert isinstance(r, str)
+
     @pytestmark_code
     def test_code_trace_no_index(self):
         from mcp_server.server import code_trace
@@ -571,7 +577,7 @@ class TestCodeTools:
     def test_code_files_no_index(self):
         from mcp_server.server import code_files
         r = code_files(projectRoot="/tmp/__nonexistent__")
-        assert "No code index" in r
+        assert "not found" in r.lower() or "no code index" in r.lower() or "directory" in r.lower()
 
     def test_code_files_glob(self, tmp_path):
         """glob mode returns before indexer import, so it works without tree_sitter."""
@@ -592,7 +598,7 @@ class TestCodeTools:
     def test_code_explore_no_index(self):
         from mcp_server.server import code_explore
         r = code_explore("main", projectRoot="/tmp/__nonexistent__")
-        assert "No code index" in r
+        assert "not found" in r.lower() or "No code index" in r or "No matches" in r
 
     @pytestmark_code
     def test_code_impact_no_index(self):
@@ -621,10 +627,29 @@ class TestCodeTools:
         r = code_read("../etc/passwd", projectRoot=str(d))
         assert "outside" in r.lower()
 
+    def test_list_mcp_resources(self):
+        """list_mcp_resources returns a non-empty string with resource info."""
+        from mcp_server.server import list_mcp_resources
+        r = list_mcp_resources()
+        assert isinstance(r, str)
+        assert "MCP Resources" in r
 
-# ═══════════════════════════════════════════════════════════
-# Note update tools
-# ═══════════════════════════════════════════════════════════
+    def test_read_mcp_resource_schema(self):
+        """read_mcp_resource with code/schema returns schema text."""
+        from mcp_server.server import read_mcp_resource
+        r = read_mcp_resource("code/schema")
+        assert isinstance(r, str)
+        assert "code_symbols" in r or "Schema" in r
+
+    def test_read_mcp_resource_unknown(self):
+        """read_mcp_resource with unknown URI returns error."""
+        from mcp_server.server import read_mcp_resource
+        r = read_mcp_resource("unknown://uri")
+        assert "Unknown" in r
+
+    # ═══════════════════════════════════════════════════════════
+    # Note update tools
+    # ═══════════════════════════════════════════════════════════
 
 class TestNoteUpdate:
     def _nid(self, manager, raw_id):

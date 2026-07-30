@@ -12,4 +12,4 @@ tools: [code_find, code_explore, code_read, code_files]
 | 2 | `code_explore` | `query="symbol"` — callers, callees, source |
 | 3 | `code_read` | `filePath`, `offset`, `limit` for exact ranges |
 
-Forbidden: `view_file`, `grep_search`, `list_dir`. Empty results → run `code_init` first.
+Forbidden: `view_file`, `grep_search`, `list_dir`. Tools auto-index when needed.

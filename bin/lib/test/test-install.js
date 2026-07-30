@@ -188,7 +188,7 @@ assert.ok(first.mcp.written !== undefined, 'mcp.written exists');
 
 // Verify tier 2 rules were written
 const ocContent = fs.readFileSync(paths_oc.install, 'utf-8');
-assert.ok(ocContent.includes('Memory context injected above'),
+assert.ok(ocContent.includes('Memory context injected'),
   'opencode gets tier 2 rules (context already injected)');
 assert.ok(!ocContent.includes('call getContext once'),
   'opencode rules should not have getContext once instruction');
@@ -200,7 +200,7 @@ const claudeInstall = install('claude');
 assert.ok(claudeInstall.rule.written, 'claude rule written');
 const clBasememMd = path.join(path.dirname(paths_cl.install), 'basemem.md');
 const clContent = fs.readFileSync(clBasememMd, 'utf-8');
-assert.ok(clContent.includes('Memory context injected above'),
+assert.ok(clContent.includes('Memory context injected'),
   'claude gets tier 1 rules (context already injected)');
 console.log('PASS install(claude): tier 1 rules (context injected)');
 

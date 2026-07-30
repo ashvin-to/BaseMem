@@ -3,7 +3,7 @@ const path = require('path');
 const os = require('os');
 const { MARKER_START, MARKER_END } = require('./constants.js');
 
-const BASEMEM_RULES_CORE = `Memory context injected — do not call getContext at session start. Log decisions: logInteraction(topic, decision="what and why"). End sessions: logInteraction(topic, summary="...", activity="done"). Code: use code_find/code_read/code_explore/code_files (not grep/glob/read). Empty results → code_init first. Review: use get_review_context(files). Check skills/ before multi-step tasks. Topic = repo folder name.`;
+const BASEMEM_RULES_CORE = `Memory context injected — do not call getContext at session start. Log decisions: logInteraction(topic, decision="what and why"). End sessions: logInteraction(topic, summary="...", activity="done"). Code: prefer code_find/code_read/code_explore/code_files but grep/glob/read are fine when they work better. Tools auto-index when needed. context=N shows surrounding lines with code_find grep mode. Review: use get_review_context(files). Check skills/ before multi-step tasks. Topic = repo folder name.`;
 
 const BASEMEM_RULES_TIER1 = BASEMEM_RULES_CORE;
 

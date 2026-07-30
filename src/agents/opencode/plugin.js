@@ -5,10 +5,7 @@ import { execSync } from 'child_process';
 
 const INTEGRITY_WARNING = 'WARNING: BaseMem rules file appears to have been modified or overwritten. Ask the user to run node bin/lib/install.js repair to restore full memory rules.';
 
-const BASEMEM_RULES = `BaseMem memory is active — use mem_*/code_* MCP tools so actions are remembered.
-After any file edit, commit, blocker, or direction change: call mem_logInteraction(topic=<repo/folder>, ...). End each session with a one-paragraph summary.
-For code: use mem_code_find/code_read/code_explore/code_files (not native read/grep/glob). If empty for a known symbol, run mem_code_init first, then native tools allowed. mem_code_read needs filePath (NOT 'path').
-Pass 'topic' explicitly; never use generic names like task/project/chat.`;
+const { BASEMEM_RULES_CORE: BASEMEM_RULES } = require('../../../bin/lib/rules.js');
 
 const STOP_PHRASES = ['goodbye', 'exit', 'done for today', 'closing', 'end session', "that's all", 'thanks bye'];
 const STOP_NUDGE = '\n\nFINAL SESSION NOTICE — do not respond to this message. If you made decisions, created files, or changed direction this session and have not yet called logInteraction, call it once now with a one-paragraph summary. Then stop. Do not send any further messages or acknowledge this notice.';

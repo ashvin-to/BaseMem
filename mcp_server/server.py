@@ -121,7 +121,7 @@ def _fmt_loc(file_path: str) -> str:
     return "/".join(parts[-3:]) if len(parts) > 3 else path
 
 
-@server.tool(description="Find code symbols or grep text (grep=True). source=True adds lines. references=True finds usages.")
+@server.tool(description="Find code symbols or grep text (grep=True). source=True adds lines. references=True finds usages. context=N shows N lines of surrounding text when grep=True.")
 def code_find(
     query: str = "",
     projectRoot: str = "",
@@ -133,16 +133,19 @@ def code_find(
     references: bool = False,
     grep: bool = False,
     path: str = "",
+    context: int = 0,
 ) -> str:
     import os
+    import subprocess
 
     if not filePath and path:
         filePath = path
 
     # Grep mode — raw text search across all files via ripgrep (no indexer needed)
     if grep and query:
-        import subprocess
         cmd = ["rg", "-n", "--no-heading"]
+        if context > 0:
+            cmd.extend(["-C", str(context)])
         if useRegex:
             cmd.append("--regexp")
         else:
@@ -201,6 +204,24 @@ def code_find(
         if references and query:
             refs = indexer.find_references(query, limit=limit)
             if not refs:
+                # Fall back to ripgrep text search for cross-package references
+                # that the indexer's cross-file resolution may have missed
+                try:
+                    import subprocess as _rg
+                    cmd = ["rg", "-n", "--no-heading", "--fixed-strings", query, projectRoot]
+                    rg_result = _rg.run(cmd, capture_output=True, text=True, timeout=30)
+                    if rg_result.returncode in (0, 1) and rg_result.stdout.strip():
+                        rg_lines = rg_result.stdout.strip().splitlines()[:limit]
+                        parts = [f"{len(rg_lines)} text match(es) to '{query}' (indexer fallback):"]
+                        for line in rg_lines:
+                            parts.append(f"  {line}")
+                        if len(rg_lines) >= limit:
+                            parts.append(f"  ... and more")
+                        return "\n".join(parts)
+                except FileNotFoundError:
+                    pass
+                except _rg.TimeoutExpired:
+                    pass
                 return f"No references to '{query}' found."
             parts = [f"{len(refs)} reference(s) to '{query}':"]
             for r in refs:
@@ -306,6 +327,31 @@ def code_find(
             except Exception:
                 pass
 
+        # Automatic text search fallback — when symbol search fails, try ripgrep
+        # to find the query in file contents (like grep -n). This handles
+        # natural language queries, config files, and cross-package refs.
+        if not grep and query and query.strip() not in (".", "*", "%", ""):
+            try:
+                cmd = ["rg", "-n", "--no-heading"]
+                if context > 0:
+                    cmd.extend(["-C", str(context)])
+                if filePath:
+                    cmd.extend(["--glob", filePath])
+                cmd.extend([query, projectRoot])
+                rg_result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                if rg_result.returncode in (0, 1) and rg_result.stdout.strip():
+                    rg_lines = rg_result.stdout.strip().splitlines()[:limit]
+                    parts = [f"Text matches for '{query}':"]
+                    for line in rg_lines:
+                        parts.append(f"  {line}")
+                    if len(rg_lines) >= limit:
+                        parts.append(f"  ... and more")
+                    return "\n".join(parts)
+            except FileNotFoundError:
+                pass
+            except subprocess.TimeoutExpired:
+                pass
+
         # Browse fallback — show file overview with symbol counts
         _c = indexer.conn
         total = _c.execute("SELECT COUNT(*) FROM code_symbols").fetchone()[0]
@@ -389,7 +435,7 @@ def code_list_projects(searchRoot: str = "") -> str:
     return "\n".join(parts)
 
 
-@server.tool(description="List indexed files or glob by pattern. prefix='src/' filters results.")
+@server.tool(description="List indexed files or glob by pattern. prefix='src/' filters results. Auto-indexes if needed.")
 def code_files(projectRoot: str = "", prefix: str = "", pattern: str = "", limit: int = 100) -> str:
     import glob as _glob
     import os
@@ -412,7 +458,14 @@ def code_files(projectRoot: str = "", prefix: str = "", pattern: str = "", limit
         projectRoot = _detect_project_root()
     db_path = os.path.join(projectRoot, CODE_DB_FILENAME)
     if not os.path.exists(db_path):
-        return f"No code index at {projectRoot}."
+        try:
+            _ci = CodeIndexer(projectRoot)
+        except ValueError as e:
+            return str(e)
+        try:
+            _ci.index_project(_max_workers=4)
+        finally:
+            _ci.close()
     indexer = CodeIndexer(projectRoot)
     try:
         files = indexer.list_files(prefix=prefix, limit=limit)
@@ -426,16 +479,24 @@ def code_files(projectRoot: str = "", prefix: str = "", pattern: str = "", limit
         indexer.close()
 
 
-@server.tool(description="Explore: view source + call paths in one shot. Use symbol name from code_find.")
+@server.tool(description="Explore: view source + call paths in one shot. Auto-indexes if needed. Falls back to text search for natural language queries.")
 def code_explore(query: str, projectRoot: str = "", limit: int = 10) -> str:
     import os
+    import subprocess as _subprocess
 
     from indexer import CODE_DB_FILENAME, CodeIndexer
     if not projectRoot:
         projectRoot = _detect_project_root()
     db_path = os.path.join(projectRoot, CODE_DB_FILENAME)
     if not os.path.exists(db_path):
-        return f"No code index at {db_path}."
+        try:
+            _ci = CodeIndexer(projectRoot)
+        except ValueError as e:
+            return str(e)
+        try:
+            _ci.index_project(_max_workers=4)
+        finally:
+            _ci.close()
     indexer = CodeIndexer(projectRoot)
     try:
         # Try exact symbol name or ID first (from code_find)
@@ -450,11 +511,30 @@ def code_explore(query: str, projectRoot: str = "", limit: int = 10) -> str:
             if len(exact) == 1:
                 symbols = exact
             elif len(exact) > 1:
-                # Multiple exact matches — prefer the one with most context
+                # Multiple exact matches — prefer the ones with most context
                 symbols = exact[:limit]
 
         if not symbols:
             symbols = indexer.search_symbols(query, limit=limit)
+
+        # Natural language fallback: use ripgrep to find matching lines in source files
+        if not symbols:
+            try:
+                cmd = ["rg", "-n", "--no-heading", query, projectRoot]
+                result = _subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                if result.returncode in (0, 1) and result.stdout.strip():
+                    lines = result.stdout.strip().splitlines()[:limit]
+                    parts = [f"Text matches for '{query}':"]
+                    for line in lines:
+                        parts.append(f"  {line}")
+                    if len(lines) >= limit:
+                        parts.append(f"  ... and more")
+                    return "\n".join(parts)
+            except FileNotFoundError:
+                pass
+            except _subprocess.TimeoutExpired:
+                pass
+
         if not symbols:
             return f"No matches for '{query}'."
         parts = []
@@ -512,7 +592,7 @@ def code_impact(symbolName: str, projectRoot: str = "", depth: int = 2, limit: i
         indexer.close()
 
 
-@server.tool(description="Compact review context for changed files: blast radius, entry points, test gaps, key risks.")
+@server.tool(description="Compact review context for changed files: blast radius, entry points, test gaps, key risks. Supports query filtering to narrow results to specific terms.")
 def get_review_context(
     files: list[str],
     query: str = "",
@@ -520,6 +600,7 @@ def get_review_context(
     maxTokens: int = 300,
 ) -> str:
     import os
+    import re as _re
 
     from indexer import CODE_DB_FILENAME, CodeIndexer
 
@@ -552,6 +633,19 @@ def get_review_context(
         changed_symbols = []
         for nf in norm_files:
             changed_symbols.extend(indexer.list_symbols_by_file(nf, limit=0))
+
+        # Filter by query if provided
+        if query and query.strip():
+            q_terms = _re.findall(r'[A-Za-z_][A-Za-z0-9_]*', query)
+            if q_terms:
+                q_lower = [t.lower() for t in q_terms]
+                filtered = []
+                for sym in changed_symbols:
+                    name_lower = sym.get("symbol_name", "").lower()
+                    sig_lower = (sym.get("signature") or "").lower()
+                    if any(qt in name_lower for qt in q_lower) or any(qt in sig_lower for qt in q_lower):
+                        filtered.append(sym)
+                changed_symbols = filtered
 
         # 2. BLAST RADIUS
         blast_files_dict = {}
@@ -666,6 +760,9 @@ def get_review_context(
 
         test_gap_line = f"TEST GAPS: {'; '.join(test_gap_items)}" if test_gap_items else ""
 
+        # Add query info if provided
+        query_line = f"FILTERED BY: {query}" if query else ""
+
         # Budget truncation order: Drop TEST GAPS first, then CALLERS, then KEY RISK
         sections = [
             changed_line,
@@ -674,6 +771,7 @@ def get_review_context(
             key_risk_line,
             caller_line,
             test_gap_line,
+            query_line,
         ]
 
         active = [s for s in sections if s]
@@ -1422,6 +1520,91 @@ def code_read(filePath: str = "", projectRoot: str = "", offset: int = 0, limit:
     if end < total:
         parts.append(f"  ... {total - end} more lines")
     return "\n".join(parts)
+
+
+@server.tool(description="List available MCP resources (code schemas, project info, basemem config).")
+def list_mcp_resources() -> str:
+    parts = ["MCP Resources:"]
+
+    # Code projects - lazy import to avoid tree_sitter dependency at call time
+    try:
+        from indexer import find_code_projects
+        projects = find_code_projects()
+        if projects:
+            parts.append(f"\nCode Projects ({len(projects)}):")
+            for p in sorted(projects, key=lambda x: x["name"]):
+                parts.append(f"  resource://code/project/{p['name']} — {p['symbols']}s {p['files']}f at {p['root']}")
+        else:
+            parts.append("\nCode Projects: none found")
+    except Exception:
+        parts.append("\nCode Projects: (indexer unavailable)")
+
+    # Code index schema
+    parts.append("\nCode Index Schema:")
+    parts.append("  resource://code/schema — table schema for code_symbols/code_edges/code_projects")
+
+    # Active topic info
+    parts.append("\nMemory:")
+    parts.append("  resource://memory/stats — current session memory statistics")
+
+    return "\n".join(parts)
+
+
+@server.tool(description="Read an MCP resource by URI. Supported URIs: code/schema, code/project/<name>.")
+def read_mcp_resource(uri: str) -> str:
+    import os
+
+    if uri == "code/schema":
+        return """Code Index Schema (.basemem.code.db):
+
+Tables:
+
+  code_symbols:
+    id (INTEGER PK), project_id (TEXT), file_path (TEXT),
+    symbol_name (TEXT), symbol_type (TEXT), language (TEXT),
+    kind (TEXT), start_line (INTEGER), end_line (INTEGER),
+    start_col (INTEGER), end_col (INTEGER), signature (TEXT),
+    docstring (TEXT), content_hash (TEXT)
+
+  code_edges:
+    id (INTEGER PK), project_id (TEXT), from_symbol_id (INTEGER),
+    to_symbol_id (INTEGER), from_name (TEXT), to_name (TEXT),
+    edge_type (TEXT: calls/imports), file_path (TEXT), line_number (INTEGER)
+
+  code_projects:
+    id (TEXT PK), root_path (TEXT), name (TEXT), file_count (INTEGER),
+    symbol_count (INTEGER), last_indexed (TEXT)
+
+Indexes: code_symbols(file_path), code_symbols(symbol_name),
+          code_edges(to_name), code_edges(from_symbol_id),
+          code_symbols_fts(code_symbols_fts) [FTS5 virtual table]"""
+
+    if uri.startswith("code/project/"):
+        project_name = uri[len("code/project/"):]
+        projects = find_code_projects()
+        for p in projects:
+            if p["name"] == project_name:
+                from indexer import CodeIndexer
+                db_path = os.path.join(p["root"], ".basemem.code.db")
+                if os.path.exists(db_path):
+                    indexer = CodeIndexer(p["root"])
+                    try:
+                        stats = indexer.get_project_stats()
+                        files = indexer.list_files(limit=0)
+                        result = [f"Project: {p['name']}"]
+                        result.append(f"  Root: {p['root']}")
+                        result.append(f"  Files: {stats.get('file_count', 0)}")
+                        result.append(f"  Symbols: {stats.get('symbol_count', 0)}")
+                        result.append(f"  Edges: {stats.get('edges', 0)}")
+                        result.append(f"  Last indexed: {stats.get('last_indexed', 'unknown')}")
+                        result.append(f"  Files indexed: {len(files)}")
+                        return "\n".join(result)
+                    finally:
+                        indexer.close()
+                return f"Project '{project_name}' at {p['root']} (no accessible index)"
+        return f"Project '{project_name}' not found. Use list_mcp_resources to see available projects."
+
+    return f"Unknown resource URI: {uri}. Use list_mcp_resources to see available URIs."
 
 
 def main():

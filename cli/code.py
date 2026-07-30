@@ -285,8 +285,17 @@ def code_find_cli(query, root, dead, verbose, file_path, limit, regex):
     root_path = os.path.abspath(root)
     db_path = os.path.join(root_path, CODE_DB_FILENAME)
     if not os.path.exists(db_path):
-        click.echo(f"[!] No code index at {db_path}. Run `mem code init` first.")
-        return
+        click.echo(f"[!] No code index at {db_path}. Auto-indexing...")
+        try:
+            indexer = CodeIndexer(root_path)
+            try:
+                result = indexer.index_project(_max_workers=4)
+                click.echo(f"[ok] Indexed {result['files']} files, {result['symbols']} symbols in {result['elapsed']:.1f}s")
+            finally:
+                indexer.close()
+        except Exception as e:
+            click.echo(f"[!] Auto-index failed: {e}")
+            return
     indexer = CodeIndexer(root_path)
     try:
         if dead:
@@ -412,17 +421,40 @@ def code_query(search, root, limit, kind, regex, as_json):
 @click.option('--root', default='.', help='Project root directory')
 @click.option('--max-files', default=3, type=int, help='Max files to show source from')
 def code_explore(query, root, max_files):
-    """Explore an area: relevant symbols' source + call paths in one shot."""
+    """Explore an area: relevant symbols' source + call paths in one shot. Auto-indexes if needed. Falls back to text search for natural language queries."""
     from indexer import CODE_DB_FILENAME, CodeIndexer
     root_path = os.path.abspath(root)
     db_path = os.path.join(root_path, CODE_DB_FILENAME)
     if not os.path.exists(db_path):
-        click.echo(f"[!] No code index at {db_path}. Run `mem code init` first.")
-        return
+        click.echo(f"[!] No code index at {db_path}. Auto-indexing...")
+        try:
+            indexer = CodeIndexer(root_path)
+            try:
+                result = indexer.index_project(_max_workers=4)
+                click.echo(f"[ok] Indexed {result['files']} files, {result['symbols']} symbols in {result['elapsed']:.1f}s")
+            finally:
+                indexer.close()
+        except Exception as e:
+            click.echo(f"[!] Auto-index failed: {e}")
+            return
     indexer = CodeIndexer(root_path)
     try:
         symbols = indexer.search_symbols(query, limit=10)
         if not symbols:
+            import subprocess as _sp
+            try:
+                cmd = ["rg", "-n", "--no-heading", query, root_path]
+                result = _sp.run(cmd, capture_output=True, text=True, timeout=30)
+                if result.returncode in (0, 1) and result.stdout.strip():
+                    lines = result.stdout.strip().splitlines()[:max_files]
+                    click.echo(f"Text matches for '{query}':")
+                    for line in lines:
+                        click.echo(f"  {line}")
+                    return
+            except FileNotFoundError:
+                pass
+            except _sp.TimeoutExpired:
+                pass
             click.echo(f"No matches for '{query}'.")
             return
         shown_files = set()

@@ -602,6 +602,7 @@ function copyWithRewrite(srcFile, destFile) {
     // Replace relative paths to shared hook libs with absolute paths to BASEMEM_ROOT
     content = content.replace(/require\(['"]\.\.\/\.\.\/\.\.\/hooks\/lib\/([^'"]+)['"]\)/g, `require('${BASEMEM_ROOT}/src/hooks/lib/$1')`);
     content = content.replace(/require\(['"]\.\.\/\.\.\/\.\.\/\.\.\/bin\/lib\/rules\.js['"]\)/g, `require('${BASEMEM_ROOT}/bin/lib/rules.js')`);
+    content = content.replace(/require\(['"]\.\.\/\.\.\/\.\.\/bin\/lib\/rules\.js['"]\)/g, `require('${BASEMEM_ROOT}/bin/lib/rules.js')`);
     fs.writeFileSync(destFile, content, 'utf-8');
   } else {
     fs.copyFileSync(srcFile, destFile);
@@ -729,6 +730,63 @@ function settingsHasBasemem(settingsPath) {
     const raw = fs.readFileSync(settingsPath, 'utf-8');
     return raw.toLowerCase().includes('basemem');
   } catch { return false; }
+}
+
+function deployOpencodeCommands() {
+  const home = os.homedir();
+  const srcDir = path.join(BASEMEM_ROOT, 'src', 'agents', 'opencode', 'commands');
+  const destDir = path.join(home, '.config', 'opencode', 'commands');
+  if (!fs.existsSync(srcDir)) return { deployed: false, reason: 'source missing' };
+  fs.mkdirSync(destDir, { recursive: true });
+  const files = fs.readdirSync(srcDir).filter(f => f.endsWith('.md'));
+  for (const f of files) {
+    fs.copyFileSync(path.join(srcDir, f), path.join(destDir, f));
+  }
+  return { deployed: true, dest: destDir, count: files.length };
+}
+
+function removeOpencodeCommands() {
+  const home = os.homedir();
+  const destDir = path.join(home, '.config', 'opencode', 'commands');
+  if (!fs.existsSync(destDir)) return { removed: false };
+  const cmdNames = ['ctx.md', 'log.md', 'review.md', 'mem.md', 'compact.md', 'tasks.md'];
+  let removed = 0;
+  for (const f of cmdNames) {
+    const p = path.join(destDir, f);
+    if (fs.existsSync(p)) { fs.unlinkSync(p); removed++; }
+  }
+  return { removed: removed > 0, count: removed };
+}
+
+function deployAgyGlobalSkills() {
+  const home = os.homedir();
+  const srcDir = path.join(BASEMEM_ROOT, 'src', 'agents', 'agy', 'skills');
+  const destDir = path.join(home, '.gemini', 'antigravity-cli', 'skills');
+  if (!fs.existsSync(srcDir)) return { deployed: false, reason: 'source missing' };
+  fs.mkdirSync(destDir, { recursive: true });
+  const cmdNames = ['ctx.md', 'log.md', 'review.md', 'mem.md', 'compact.md', 'tasks.md'];
+  let count = 0;
+  for (const f of cmdNames) {
+    const src = path.join(srcDir, f);
+    if (fs.existsSync(src)) {
+      fs.copyFileSync(src, path.join(destDir, f));
+      count++;
+    }
+  }
+  return { deployed: true, dest: destDir, count };
+}
+
+function removeAgyGlobalSkills() {
+  const home = os.homedir();
+  const destDir = path.join(home, '.gemini', 'antigravity-cli', 'skills');
+  if (!fs.existsSync(destDir)) return { removed: false };
+  const cmdNames = ['ctx.md', 'log.md', 'review.md', 'mem.md', 'compact.md', 'tasks.md'];
+  let removed = 0;
+  for (const f of cmdNames) {
+    const p = path.join(destDir, f);
+    if (fs.existsSync(p)) { fs.unlinkSync(p); removed++; }
+  }
+  return { removed: removed > 0, count: removed };
 }
 
 function getSkillDestDir(name) {
@@ -981,7 +1039,7 @@ function install(name) {
       if (fs.existsSync(pluginSrc)) {
         const pluginDest = path.join(hookInstallDir(name), 'basemem.js');
         fs.mkdirSync(path.dirname(pluginDest), { recursive: true });
-        fs.copyFileSync(pluginSrc, pluginDest);
+        copyWithRewrite(pluginSrc, pluginDest);
         settingsResult = { merged: true, path: pluginDest };
       }
     }
@@ -1044,6 +1102,10 @@ function install(name) {
         }
       }
     }
+    deployOpencodeCommands();
+  }
+  if (name === 'agy') {
+    deployAgyGlobalSkills();
   }
 
   if (effectiveCaps.includes('mcp')) {
@@ -1262,6 +1324,10 @@ function uninstall(name) {
           }
         }
       }
+      removeOpencodeCommands();
+    }
+    if (name === 'agy') {
+      removeAgyGlobalSkills();
     }
   }
 
@@ -1301,6 +1367,10 @@ module.exports = {
   writeCursorHooksJSON,
   removeCursorHooks,
   writeCLIWrapper,
+  deployOpencodeCommands,
+  removeOpencodeCommands,
+  deployAgyGlobalSkills,
+  removeAgyGlobalSkills,
 };
 
 if (require.main === module || process.argv[2]) {
