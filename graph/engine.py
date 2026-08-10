@@ -26,7 +26,7 @@ Complexity: O(n) for new node auto-linking where n = existing nodes
 import logging
 from collections import deque
 
-from models import Edge, EdgeType, Node
+from models import Edge, EdgeType, Node, NodeType
 from storage.db import StorageManager
 
 logger = logging.getLogger(__name__)
@@ -50,8 +50,8 @@ class GraphEngine:
         self.storage.add_edge(edge)
         return edge
 
-    def get_neighbors(self, node_id: str, depth: int = 1) -> dict[str, Node]:
-        """Get all neighboring nodes up to a certain depth"""
+    def get_neighbors(self, node_id: str, depth: int = 1, include_code: bool = False, project_root: str = "") -> dict[str, Node]:
+        """Get all neighboring nodes up to a certain depth, optionally including virtual AST code nodes."""
         visited = {node_id}
         queue = deque([(node_id, 0)])
         neighbors = {}
@@ -71,7 +71,61 @@ class GraphEngine:
                         neighbors[nid] = node
                         queue.append((nid, current_depth + 1))
 
+        if include_code:
+            node = self.storage.get_node(node_id)
+            symbol_query = node.title if node else ""
+            overlay = self.get_virtual_code_overlay(project_root=project_root, symbol_name=symbol_query, limit=20)
+            for vnode_id, vnode_dict in overlay["nodes"].items():
+                if vnode_id not in visited:
+                    vnode = Node(
+                        id=vnode_id,
+                        title=vnode_dict.get("title", vnode_id),
+                        content=vnode_dict.get("content", ""),
+                        node_type=NodeType.CONCEPT,
+                        keywords=[vnode_dict.get("symbol_type", "symbol"), vnode_dict.get("language", "")],
+                        metadata=vnode_dict,
+                    )
+                    neighbors[vnode_id] = vnode
+
         return neighbors
+
+    def get_virtual_code_overlay(self, project_root: str = "", symbol_name: str = "", limit: int = 50) -> dict:
+        """Fetch virtual AST code nodes and cross-link bridge edges with memory nodes."""
+        from indexer.indexer import CodeIndexer, CODE_DB_FILENAME
+        import os
+
+        if not project_root:
+            project_root = getattr(self.storage, "project_root", os.getcwd())
+
+        db_file = os.path.join(project_root, CODE_DB_FILENAME)
+        if not os.path.exists(db_file):
+            return {"nodes": {}, "edges": []}
+
+        try:
+            indexer = CodeIndexer(project_root)
+            vgraph = indexer.get_virtual_graph_nodes(symbol_name=symbol_name, limit=limit)
+            indexer.close()
+        except Exception as e:
+            logger.warning(f"Failed to load virtual code overlay: {e}")
+            return {"nodes": {}, "edges": []}
+
+        all_nodes = self.storage.get_all_nodes()
+        bridge_edges = []
+        for memory_node in all_nodes:
+            text = (memory_node.title + " " + memory_node.content).lower()
+            for vnode_id, vnode in vgraph["nodes"].items():
+                sym_name = vnode.get("title", "").lower()
+                if sym_name and len(sym_name) > 3 and sym_name in text:
+                    bridge_edges.append({
+                        "from_id": memory_node.id,
+                        "to_id": vnode_id,
+                        "edge_type": "REFERENCES_CODE",
+                        "weight": 0.8,
+                        "virtual": True,
+                    })
+
+        vgraph["edges"].extend(bridge_edges)
+        return vgraph
 
     def find_path(self, start_id: str, end_id: str) -> list[str]:
         """Find the shortest path between two nodes (BFS)"""

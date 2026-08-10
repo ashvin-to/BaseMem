@@ -434,6 +434,111 @@ class CodeIndexer:
             )
         return [dict(r) for r in cur.fetchall()]
 
+    def get_virtual_graph_nodes(self, symbol_name: str = "", depth: int = 1, limit: int = 50) -> dict:
+        """Extract virtual AST graph nodes and call/import edges normalized for GraphEngine.
+
+        Returns:
+            {"nodes": {node_id: node_dict}, "edges": [edge_dict]}
+        """
+        nodes: dict = {}
+        edges: list = []
+        seen_edges = set()
+
+        if symbol_name:
+            cur = self.conn.execute(
+                "SELECT * FROM code_symbols WHERE symbol_name = ? AND project_id = ? LIMIT ?",
+                (symbol_name, self.project_id, limit),
+            )
+            sym_rows = [dict(r) for r in cur.fetchall()]
+            if not sym_rows:
+                tokens = [t.strip() for t in symbol_name.split() if len(t.strip()) > 2]
+                if tokens:
+                    placeholders = " OR ".join(["symbol_name LIKE ?"] * len(tokens))
+                    params = [f"%{t}%" for t in tokens]
+                    cur = self.conn.execute(
+                        f"SELECT * FROM code_symbols WHERE ({placeholders}) AND project_id = ? LIMIT ?",
+                        params + [self.project_id, limit],
+                    )
+                    sym_rows = [dict(r) for r in cur.fetchall()]
+        else:
+            cur = self.conn.execute(
+                "SELECT * FROM code_symbols WHERE project_id = ? ORDER BY is_generated(file_path) ASC, id LIMIT ?",
+                (self.project_id, limit),
+            )
+            sym_rows = [dict(r) for r in cur.fetchall()]
+
+        for r in sym_rows:
+            node_id = f"code:{r['id']}"
+            nodes[node_id] = {
+                "id": node_id,
+                "title": r["symbol_name"],
+                "content": f"{r['symbol_type']} defined in {r['file_path']}:L{r['start_line']}-{r['end_line']}\nSignature: {r['signature'] or 'N/A'}\n{r['docstring'] or ''}".strip(),
+                "kind": "symbol",
+                "symbol_type": r["symbol_type"],
+                "file_path": r["file_path"],
+                "start_line": r["start_line"],
+                "end_line": r["end_line"],
+                "signature": r["signature"],
+                "docstring": r["docstring"],
+                "language": r["language"],
+                "virtual": True,
+            }
+
+        if nodes:
+            sym_names = [n["title"] for n in nodes.values() if n["title"]]
+            if sym_names:
+                placeholders = ",".join(["?"] * len(sym_names))
+                cur = self.conn.execute(
+                    f"""SELECT ce.*, cs1.id as from_id, cs2.id as to_id
+                       FROM code_edges ce
+                       LEFT JOIN code_symbols cs1 ON cs1.symbol_name = ce.from_name AND cs1.project_id = ce.project_id
+                       LEFT JOIN code_symbols cs2 ON cs2.symbol_name = ce.to_name AND cs2.project_id = ce.project_id
+                       WHERE (ce.from_name IN ({placeholders}) OR ce.to_name IN ({placeholders}))
+                         AND ce.project_id = ?
+                       LIMIT ?""",
+                    sym_names + sym_names + [self.project_id, limit * 2],
+                )
+                for erow in cur.fetchall():
+                    e = dict(erow)
+                    from_nid = f"code:{e['from_id']}" if e.get('from_id') else f"code:{e['from_name']}"
+                    to_nid = f"code:{e['to_id']}" if e.get('to_id') else f"code:{e['to_name']}"
+
+                    if from_nid not in nodes and e.get("from_name"):
+                        nodes[from_nid] = {
+                            "id": from_nid,
+                            "title": e["from_name"],
+                            "content": f"Caller symbol from {e['file_path']}:L{e['line_number']}",
+                            "kind": "symbol",
+                            "symbol_type": "caller",
+                            "file_path": e["file_path"],
+                            "virtual": True,
+                        }
+                    if to_nid not in nodes and e.get("to_name"):
+                        nodes[to_nid] = {
+                            "id": to_nid,
+                            "title": e["to_name"],
+                            "content": f"Target symbol {e['to_name']}",
+                            "kind": "symbol",
+                            "symbol_type": "callee",
+                            "file_path": e["file_path"],
+                            "virtual": True,
+                        }
+
+                    edge_key = (from_nid, to_nid, e["edge_type"])
+                    if edge_key not in seen_edges and from_nid in nodes and to_nid in nodes:
+                        seen_edges.add(edge_key)
+                        edges.append({
+                            "from_id": from_nid,
+                            "to_id": to_nid,
+                            "edge_type": e["edge_type"],
+                            "weight": 1.0,
+                            "virtual": True,
+                            "file_path": e["file_path"],
+                            "line_number": e["line_number"],
+                        })
+
+        return {"nodes": nodes, "edges": edges}
+
     def get_project_stats(self) -> dict:
         cur = self.conn.execute(
             """SELECT file_count, symbol_count, last_indexed, name, root_path

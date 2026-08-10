@@ -1268,23 +1268,31 @@ def set_memory_state(topic: str, state: str) -> str:
 # ── Collapsed graph tool ──────────────────────────────────────
 
 
-@server.tool(description="Get graph neighbors (depth=1), ranked list, or subgraph JSON (depth>1).")
-def get_graph(noteId: str | int, depth: int = 1, minWeight: float = 0.0, ranked: bool = False) -> str:
+@server.tool(description="Get graph neighbors (depth=1), ranked list, or subgraph JSON (depth>1), optionally including virtual AST code nodes.")
+def get_graph(noteId: str | int, depth: int = 1, minWeight: float = 0.0, ranked: bool = False, includeCode: bool = False) -> str:
     from storage.db import StorageManager
     from storage.sessions import SessionManager
+    from graph.engine import GraphEngine
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
     nid = manager._parse_note_id(noteId)
-    if nid is None:
+    if nid is None and not str(noteId).startswith("code:"):
         return f"Invalid note ID: {noteId}"
 
     if depth > 1:
         import json
-        result = manager.get_subgraph(nid, depth=depth, min_weight=minWeight)
+        result = manager.get_subgraph(nid, depth=depth, min_weight=minWeight) if nid else {"nodes": [], "edges": []}
+        if includeCode:
+            ge = GraphEngine(storage)
+            vgraph = ge.get_virtual_code_overlay(project_root=_detect_project_root())
+            for vnode_id, vnode in vgraph["nodes"].items():
+                result.setdefault("nodes", []).append(vnode)
+            for vedge in vgraph["edges"]:
+                result.setdefault("edges", []).append(vedge)
         return json.dumps(result, indent=2)
 
     if ranked:
-        ranked_list = manager.rank_neighbors(nid)
+        ranked_list = manager.rank_neighbors(nid) if nid else []
         if not ranked_list:
             return "No neighbors found."
         filtered = [r for r in ranked_list if r['weight'] >= minWeight]
@@ -1295,12 +1303,25 @@ def get_graph(noteId: str | int, depth: int = 1, minWeight: float = 0.0, ranked:
             lines.append(f"  {i}. note-{r['id']} (w={r['weight']}, c={r.get('confidence','?')}) {r['title'] or r['content'][:60]}")
         return "\n".join(lines)
 
-    neighbors = manager.get_neighbors_weighted(nid, depth=1, min_weight=minWeight)
-    if not neighbors:
-        return "No neighbors found."
+    neighbors = manager.get_neighbors_weighted(nid, depth=1, min_weight=minWeight) if nid else []
     lines = [f"Neighbors (min_weight={minWeight}):\n"]
     for r in neighbors:
         lines.append(f"  note-{r['id']} [{r['link_type']}] (w={r['weight']}) {r['title'] or r['content'][:60]}")
+
+    if includeCode:
+        ge = GraphEngine(storage)
+        note_row = storage.connection.execute("SELECT title, content FROM notes WHERE id=?", (nid,)).fetchone() if nid else None
+        q = note_row["title"] if note_row else ""
+        vgraph = ge.get_virtual_code_overlay(project_root=_detect_project_root(), symbol_name=q)
+        if vgraph["nodes"]:
+            lines.append("\nVirtual AST Code Nodes & Edges:")
+            for vnode_id, vnode in list(vgraph["nodes"].items())[:20]:
+                lines.append(f"  {vnode_id} [{vnode.get('symbol_type', 'symbol')}] {vnode.get('title') or ''}")
+            for vedge in list(vgraph["edges"])[:20]:
+                lines.append(f"    edge: {vedge['from_id']} --[{vedge['edge_type']}]--> {vedge['to_id']}")
+
+    if len(lines) == 1:
+        return "No neighbors found."
     return "\n".join(lines)
 
 
