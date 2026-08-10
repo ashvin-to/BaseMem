@@ -5,14 +5,26 @@ Supported languages:
   - All others: uses tree-sitter-language-pack's process() for basic symbols
 """
 
+from __future__ import annotations
+
 import ctypes
 import hashlib
 import warnings
 from pathlib import Path
 from typing import Optional
 
-from tree_sitter import Language, Node, Parser, Query, QueryCursor
-from tree_sitter_language_pack import ProcessConfig, detect_language_from_extension, process
+try:
+    from tree_sitter import Language, Node, Parser, Query, QueryCursor
+    from tree_sitter_language_pack import ProcessConfig, detect_language_from_extension, process
+except ImportError:  # tree-sitter not installed: indexing is unavailable, but DB reads still work
+    Language = Node = Parser = Query = QueryCursor = None  # type: ignore[assignment]
+    ProcessConfig = None  # type: ignore[assignment]
+
+    def detect_language_from_extension(*_args: object, **_kwargs: object) -> str | None:  # type: ignore[no-redef]
+        return None
+
+    def process(*_args: object, **_kwargs: object):  # type: ignore[no-redef]
+        raise RuntimeError("tree-sitter is not installed; code indexing is unavailable")
 
 # ── Language grammars ────────────────────────────────────────────────
 
@@ -31,26 +43,15 @@ _LANGUAGE_SO = {
 def _get_grammar(lang: str) -> Language | None:
     if lang in _GRAMMAR_CACHE:
         return _GRAMMAR_CACHE[lang]
-    entry = _LANGUAGE_SO.get(lang)
-    if entry is None:
-        return None
-    so_name, c_fn_name = entry
     try:
-        from tree_sitter_language_pack import cache_dir
-        so_path = Path(cache_dir()) / so_name
-        if not so_path.exists():
-            return None
-        lib = ctypes.CDLL(str(so_path))
-        fn = getattr(lib, c_fn_name)
-        fn.restype = ctypes.c_void_p
-        ptr = fn()
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-            lang_obj = Language(ptr)
-        _GRAMMAR_CACHE[lang] = lang_obj
-        return lang_obj
+        from tree_sitter_language_pack import get_language
+        lang_obj = get_language(lang)
+        if lang_obj is not None:
+            _GRAMMAR_CACHE[lang] = lang_obj
+            return lang_obj
     except Exception:
-        return None
+        pass
+    return None
 
 
 def ensure_grammars():

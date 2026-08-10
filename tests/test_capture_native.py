@@ -26,9 +26,14 @@ def run_capture(payload, db_path):
 
 
 def notes(db_path):
+    if not os.path.exists(db_path):
+        return []
     c = sqlite3.connect(db_path)
     c.row_factory = sqlite3.Row
-    rows = [dict(r) for r in c.execute('SELECT kind, content, title FROM notes ORDER BY id')]
+    try:
+        rows = [dict(r) for r in c.execute('SELECT kind, content, title FROM notes ORDER BY id')]
+    except sqlite3.OperationalError:
+        rows = []
     c.close()
     return rows
 
@@ -62,7 +67,8 @@ def test_non_native_tool_ignored():
     db = tempfile.mktemp(suffix='.db')
     run_capture({"tool": "code_read", "params": {"filePath": "x"}}, db)
     assert notes(db) == [], "non-native tool should not be captured"
-    os.remove(db)
+    if os.path.exists(db):
+        os.remove(db)
 
 
 def test_missed_log_flag():

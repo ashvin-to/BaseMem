@@ -24,7 +24,7 @@ export default function DetailsPanel() {
   const { type, data } = selection;
 
   const renderNoteDetails = () => {
-    const getIcon = (kind: string) => {
+    const getIcon = (kind?: string | null) => {
       switch (kind) {
         case 'decision': return <CheckCircle className="w-4 h-4 text-amber-400" />;
         case 'issue': return <AlertCircle className="w-4 h-4 text-red-400" />;

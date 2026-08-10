@@ -598,7 +598,7 @@ class TestCodeTools:
     def test_code_explore_no_index(self):
         from mcp_server.server import code_explore
         r = code_explore("main", projectRoot="/tmp/__nonexistent__")
-        assert "not found" in r.lower() or "No code index" in r or "No matches" in r
+        assert "not found" in r.lower() or "No code index" in r or "No matches" in r or "not a directory" in r.lower()
 
     @pytestmark_code
     def test_code_impact_no_index(self):

@@ -56,7 +56,15 @@ from functools import wraps
 from mcp.server.fastmcp import FastMCP
 
 def _get_initial_instructions() -> "str | None":
-    return "Call getContext(topic) once at session start to load memory context."
+    return (
+        "BaseMem memory + code intelligence. Context is auto-injected at session start — "
+        "do NOT call getContext then; call it only to refresh or switch topics. "
+        "For code: use code_find / code_read / code_explore / code_files instead of grep/glob/read "
+        "(they auto-index on first use; for plain text search use code_find(query, grep=True); "
+        "if results are empty run code_init first). For review blast-radius use get_review_context(files). "
+        "Log decisions with logInteraction(topic, decision=...) and end sessions with "
+        'logInteraction(topic, summary=..., activity="done"). Topic = repo folder name.'
+    )
 
 
 server = FastMCP("mem", instructions=_get_initial_instructions())

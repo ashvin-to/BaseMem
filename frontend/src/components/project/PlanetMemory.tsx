@@ -125,11 +125,11 @@ export default function PlanetMemory({ projectId }: { projectId?: string }) {
           </div>
         </div>
 
-        {(planet as Planet).next_steps && (planet as Planet).next_steps.length > 0 && (
+        {(((planet as Planet).next_steps || []).length > 0) && (
           <div className="bg-accent/30 border border-border p-4">
             <h3 className="text-sm font-medium text-muted-foreground mb-2 uppercase tracking-wider">Next Steps</h3>
             <ul className="list-disc list-inside space-y-1">
-              {(planet as Planet).next_steps.map((step: string, i: number) => (
+              {((planet as Planet).next_steps || []).map((step: string, i: number) => (
                 <li key={i} className="text-sm text-foreground">{step}</li>
               ))}
             </ul>
@@ -160,7 +160,7 @@ export default function PlanetMemory({ projectId }: { projectId?: string }) {
               <p className="text-sm text-muted-foreground line-clamp-2">{note.content}</p>
             </div>
           ))}
-          {(!(planet as Planet).notes || (planet as Planet).notes.length === 0) && (
+          {(!((planet as Planet).notes || []).length) && (
             <div className="col-span-full p-8 text-center text-muted-foreground border border-dashed border-border">
               No notes found for this planet.
             </div>

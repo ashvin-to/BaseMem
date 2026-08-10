@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Search, FileCode2, GitFork, Box, FolderTree, Loader2, Save, Database as DatabaseIcon, ChevronRight, ChevronDown, Folder as FolderIcon, FileText, X } from 'lucide-react';
-import { ReactFlow, MiniMap, Controls, Background } from '@xyflow/react';
+import { ReactFlow, MiniMap, Controls, Background, type Node } from '@xyflow/react';
 import { useSelection } from '../../context/SelectionContext';
 import { cn } from '../../lib/utils';
 import { api } from '../../lib/api';
@@ -99,41 +99,54 @@ export default function CodeIntelligence({ projectId }: { projectId?: string }) 
     enabled: !!projectId,
   });
 
+  // Auto-resolve the local repo root for this planet topic (cached on manual set).
   const { data: projectPath, isLoading: isPathLoading } = useQuery({
     queryKey: ['projectPath', projectId],
-    queryFn: () => api.paths.get(projectId || '').then(d => d.path),
+    queryFn: () => api.paths.get(projectId || ''),
     enabled: !!projectId,
+    staleTime: 60_000,
+    retry: false,
   });
+  const root = projectPath?.path;
+  const pathResolved = !!projectPath?.resolved && !!root;
 
   const { data: codeStats, isLoading: isStatsLoading } = useQuery({
     queryKey: ['codeStats', projectId],
     queryFn: () => api.code.stats(projectId || ''),
-    enabled: !!projectId && !!projectPath,
+    enabled: !!projectId && pathResolved,
   });
 
-  const { data: codeFiles } = useQuery({
+  const { data: codeFiles, isLoading: isFilesLoading } = useQuery({
     queryKey: ['codeFiles', projectId],
     queryFn: () => api.code.files(projectId || ''),
-    enabled: !!projectId && !!projectPath,
+    enabled: !!projectId && pathResolved,
   });
 
   const { data: searchResults, isLoading: isSearchLoading } = useQuery({
     queryKey: ['codeSearch', projectId, searchQuery],
     queryFn: () => api.code.search(projectId || '', searchQuery),
-    enabled: !!projectId && !!projectPath && searchQuery.length > 0,
+    enabled: !!projectId && pathResolved && searchQuery.length > 0,
   });
 
   const { data: fileContent, isLoading: isFileLoading } = useQuery({
     queryKey: ['fileContent', projectId, selectedFile],
     queryFn: () => api.code.fileContent(projectId || '', selectedFile!),
-    enabled: !!projectId && !!selectedFile,
+    enabled: !!projectId && pathResolved && !!selectedFile,
   });
 
   const { data: graphData } = useQuery({
     queryKey: ['codeGraph', projectId],
     queryFn: () => api.code.graph(projectId || ''),
-    enabled: !!projectId && !!projectPath && subTab === 'callgraph',
+    enabled: !!projectId && pathResolved && subTab === 'callgraph',
+    staleTime: 120_000,
   });
+
+  // Auto-select the first indexed file once the file list is available.
+  useEffect(() => {
+    if (codeFiles?.files?.length && !selectedFile) {
+      setSelectedFile(codeFiles.files[0]);
+    }
+  }, [codeFiles, selectedFile]);
 
   const pathMutation = useMutation({
     mutationFn: (path: string) => api.paths.set(projectId || '', path),
@@ -144,11 +157,24 @@ export default function CodeIntelligence({ projectId }: { projectId?: string }) 
     },
   });
 
-  if (!planet && !isPathLoading) {
+  if (!planet && (isPathLoading || !pathResolved)) {
     return <div className="flex h-full items-center justify-center text-muted-foreground"><Loader2 className="w-6 h-6 animate-spin mr-2" /> Loading code intelligence...</div>;
   }
 
   const displayFiles = (codeFiles?.files || (planet as Planet)?.files || []);
+
+  const callNodes: Node[] = (graphData?.nodes || []).map((n, i): Node => {
+    const total = graphData?.nodes?.length || 1;
+    const a = (2 * Math.PI * i) / total;
+    const r = 280;
+    return {
+      id: n.id,
+      type: n.type,
+      position: { x: Math.round(r * Math.cos(a)), y: Math.round(r * Math.sin(a)) },
+      data: n.data,
+      style: n.style,
+    };
+  });
 
   return (
     <div className="flex flex-col h-full bg-background">
@@ -160,14 +186,14 @@ export default function CodeIntelligence({ projectId }: { projectId?: string }) 
       </div>
 
       <div className="flex-1 overflow-auto p-4">
-        {!projectPath && (
+        {!pathResolved && (
           <div className="max-w-3xl mx-auto mb-8 bg-card border border-border p-6 rounded-xl shadow-sm">
             <h3 className="text-lg font-semibold mb-2 flex items-center gap-2">
               <DatabaseIcon className="w-5 h-5 text-amber-400" />
               Connect Local Code Database
             </h3>
             <p className="text-sm text-muted-foreground mb-4">
-              To enable deep code intelligence (symbols, references, and search), please provide the absolute path to this project on your system where <code className="bg-accent px-1 py-0.5 rounded text-xs text-foreground">.basemem.code.db</code> is located.
+              BaseMem couldn't auto-detect this project's source tree. Provide the absolute path to the project root containing <code className="bg-accent px-1 py-0.5 rounded text-xs text-foreground">.basemem.code.db</code> to enable deep code intelligence.
             </p>
             <div className="flex gap-2">
               <input
@@ -192,30 +218,30 @@ export default function CodeIntelligence({ projectId }: { projectId?: string }) 
         {subTab === 'overview' && (
           <div className="max-w-3xl mx-auto space-y-6">
             <h2 className="text-xl font-semibold">Code Index Overview: {(planet as Planet)?.display_topic || (planet as Planet)?.topic}</h2>
-            {projectPath && (
+            {root && (
               <div className="text-xs text-muted-foreground bg-accent/30 inline-block px-2 py-1 rounded font-mono">
-                Connected: {projectPath}
+                Connected: {root}
               </div>
             )}
             <div className="grid grid-cols-3 gap-4">
               <div className="p-4 border border-border rounded-xl bg-card">
                 <FileCode2 className="w-6 h-6 text-amber-400 mb-2" />
                 <div className="text-2xl font-bold">
-                  {isStatsLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : (codeStats?.files ?? displayFiles.length)}
+                  {isStatsLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : (codeStats?.file_count ?? displayFiles.length)}
                 </div>
                 <div className="text-sm text-muted-foreground">Indexed Files</div>
               </div>
               <div className={cn("p-4 border border-border rounded-xl bg-card", !codeStats && "opacity-50")}>
                 <Box className="w-6 h-6 text-amber-400 mb-2" />
                 <div className="text-2xl font-bold">
-                  {isStatsLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : (codeStats?.symbols ?? '-')}
+                  {isStatsLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : (codeStats?.symbol_count ?? '-')}
                 </div>
                 <div className="text-sm text-muted-foreground">Symbols</div>
               </div>
               <div className={cn("p-4 border border-border rounded-xl bg-card", !codeStats && "opacity-50")}>
                 <GitFork className="w-6 h-6 text-amber-400 mb-2" />
                 <div className="text-2xl font-bold">
-                  {isStatsLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : (codeStats?.references ?? '-')}
+                  {isStatsLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : (codeStats?.edges ?? codeStats?.references ?? '-')}
                 </div>
                 <div className="text-sm text-muted-foreground">References</div>
               </div>
@@ -231,7 +257,9 @@ export default function CodeIntelligence({ projectId }: { projectId?: string }) 
             </div>
             <div className="flex gap-4 flex-1 min-h-0">
               <div className="w-72 shrink-0 p-2 border border-white/10 rounded-xl bg-[#0f0f11]/80 backdrop-blur-xl font-mono text-sm overflow-y-auto custom-scrollbar shadow-[0_0_20px_rgba(0,0,0,0.2)]">
-                {displayFiles.length === 0 ? (
+                {isFilesLoading && !codeFiles ? (
+                  <div className="flex items-center justify-center h-20 text-muted-foreground"><Loader2 className="w-5 h-5 animate-spin" /></div>
+                ) : displayFiles.length === 0 ? (
                   <div className="text-white/40 italic p-4 text-center">No files found.</div>
                 ) : (
                   <FileTreeNode node={buildTree(displayFiles)} projectId={projectId} onSelectFile={setSelectedFile} />
@@ -320,9 +348,11 @@ export default function CodeIntelligence({ projectId }: { projectId?: string }) 
               <div className="flex-1 w-full bg-background rounded-xl border border-border overflow-hidden relative min-h-[60vh]">
                 {!graphData ? (
                   <div className="absolute inset-0 flex items-center justify-center"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
+                ) : !graphData.nodes?.length ? (
+                  <div className="absolute inset-0 flex items-center justify-center text-muted-foreground">No symbols indexed for this project.</div>
                 ) : (
                   <ReactFlow
-                    nodes={graphData.nodes || []}
+                    nodes={callNodes}
                     edges={graphData.edges || []}
                     fitView
                     colorMode="dark"

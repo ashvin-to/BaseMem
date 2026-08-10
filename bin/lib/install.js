@@ -758,35 +758,23 @@ function removeOpencodeCommands() {
   return { removed: removed > 0, count: removed };
 }
 
-function deployAgyGlobalSkills() {
+// AGY loads folder-skills (<name>/SKILL.md) via the basemem plugin's skills dir
+// (see deployAgyPluginTo). The old flat ctx.md/log.md/... files that were copied
+// into ~/.gemini/antigravity-cli/skills/ are never discovered by AGY (that dir is
+// not a customization root, and flat .md are not valid AGY skills). This helper
+// purges any stale leftovers so they don't shadow/confuse future scans.
+function cleanAgyStaleGlobalSkills() {
   const home = os.homedir();
-  const srcDir = path.join(BASEMEM_ROOT, 'src', 'agents', 'agy', 'skills');
-  const destDir = path.join(home, '.gemini', 'antigravity-cli', 'skills');
-  if (!fs.existsSync(srcDir)) return { deployed: false, reason: 'source missing' };
-  fs.mkdirSync(destDir, { recursive: true });
-  const cmdNames = ['ctx.md', 'log.md', 'review.md', 'mem.md', 'compact.md', 'tasks.md'];
-  let count = 0;
-  for (const f of cmdNames) {
-    const src = path.join(srcDir, f);
-    if (fs.existsSync(src)) {
-      fs.copyFileSync(src, path.join(destDir, f));
-      count++;
+  const staleDir = path.join(home, '.gemini', 'antigravity-cli', 'skills');
+  const staleNames = ['ctx.md', 'log.md', 'mem.md', 'review.md', 'compact.md', 'tasks.md'];
+  let removed = 0;
+  if (fs.existsSync(staleDir)) {
+    for (const f of staleNames) {
+      const p = path.join(staleDir, f);
+      if (fs.existsSync(p)) { fs.unlinkSync(p); removed++; }
     }
   }
-  return { deployed: true, dest: destDir, count };
-}
-
-function removeAgyGlobalSkills() {
-  const home = os.homedir();
-  const destDir = path.join(home, '.gemini', 'antigravity-cli', 'skills');
-  if (!fs.existsSync(destDir)) return { removed: false };
-  const cmdNames = ['ctx.md', 'log.md', 'review.md', 'mem.md', 'compact.md', 'tasks.md'];
-  let removed = 0;
-  for (const f of cmdNames) {
-    const p = path.join(destDir, f);
-    if (fs.existsSync(p)) { fs.unlinkSync(p); removed++; }
-  }
-  return { removed: removed > 0, count: removed };
+  return { removed };
 }
 
 function getSkillDestDir(name) {
@@ -1105,7 +1093,7 @@ function install(name) {
     deployOpencodeCommands();
   }
   if (name === 'agy') {
-    deployAgyGlobalSkills();
+    cleanAgyStaleGlobalSkills();
   }
 
   if (effectiveCaps.includes('mcp')) {
@@ -1327,7 +1315,7 @@ function uninstall(name) {
       removeOpencodeCommands();
     }
     if (name === 'agy') {
-      removeAgyGlobalSkills();
+      cleanAgyStaleGlobalSkills();
     }
   }
 
@@ -1369,8 +1357,7 @@ module.exports = {
   writeCLIWrapper,
   deployOpencodeCommands,
   removeOpencodeCommands,
-  deployAgyGlobalSkills,
-  removeAgyGlobalSkills,
+  cleanAgyStaleGlobalSkills,
 };
 
 if (require.main === module || process.argv[2]) {

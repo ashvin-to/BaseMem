@@ -512,7 +512,7 @@ def code_search():
     indexer = CodeIndexer(root)
     try:
         results = indexer.search_symbols(query, limit=limit, use_regex=use_regex)
-        return jsonify(results)
+        return jsonify({"results": results})
     finally:
         indexer.close()
 
@@ -554,6 +554,134 @@ def code_status():
     indexer = CodeIndexer(root)
     try:
         return jsonify(indexer.get_project_stats())
+    finally:
+        indexer.close()
+
+
+# ── Project path auto-discovery + code file/graph endpoints ─────────
+
+
+def _resolve_project_root(project_id: str):
+    """Resolve the local repo root for a planet topic by matching known
+    BaseMem code projects (project name, case-insensitive == topic)."""
+    topic = (project_id or '').strip()
+    if not topic:
+        return None
+    from indexer.indexer import find_code_projects
+    search_root = os.environ.get('BASEMEM_CODE_WORKSPACE', '/mnt/Storage')
+    try:
+        projects = find_code_projects(search_root)
+    except Exception:
+        projects = []
+    for proj in projects:
+        name = proj.get('name', '')
+        root = proj.get('root', '')
+        if name.lower() == topic.lower() or Path(root).name.lower() == topic.lower():
+            return root
+    # Fallback: look for an indexed repo directly under common locations.
+    from indexer.indexer import CODE_DB_FILENAME
+    for cand in [f'/mnt/Storage/{topic}', f'./{topic}',
+                 os.path.join(os.path.expanduser('~'), 'Projects', topic),
+                 os.path.join(os.getcwd(), topic)]:
+        cand = os.path.abspath(cand)
+        if os.path.isdir(cand) and os.path.exists(os.path.join(cand, CODE_DB_FILENAME)):
+            return cand
+    return None
+
+
+@app.route("/api/projects/<project_id>/path", methods=["GET"])
+def project_path(project_id):
+    """Auto-resolve (or 404) the local source root for a planet topic."""
+    root = _resolve_project_root(project_id)
+    if root:
+        return jsonify({"path": root, "resolved": True})
+    return jsonify({"path": "", "resolved": False}), 404
+
+
+@app.route("/api/code/files", methods=["GET"])
+def code_files():
+    """List source files in a project's .basemem.code.db (relative paths)."""
+    root = request.args.get("root", "")
+    prefix = request.args.get("prefix", "")
+    if not root or not os.path.isdir(root):
+        return jsonify({"error": "Missing or invalid root param"}), 400
+    from indexer import CodeIndexer
+    indexer = CodeIndexer(root)
+    try:
+        listed = indexer.list_files(prefix=prefix, limit=0)
+        files = [f["file_path"] for f in listed]
+        return jsonify({"files": files, "count": len(files)})
+    finally:
+        indexer.close()
+
+
+@app.route("/api/code/file", methods=["GET"])
+def code_file_content():
+    """Read a single source file within a project root (path-traversal safe)."""
+    root = request.args.get("root", "")
+    file_path = request.args.get("path", "")
+    if not root or not os.path.isdir(root):
+        return jsonify({"error": "Missing or invalid root param"}), 400
+    if not file_path:
+        return jsonify({"error": "Missing path param"}), 400
+    rroot = os.path.normpath(root)
+    full = os.path.normpath(os.path.join(rroot, file_path))
+    if full != rroot and not full.startswith(rroot + os.sep):
+        return jsonify({"error": "Path outside project root"}), 400
+    if not os.path.isfile(full):
+        return jsonify({"error": "File not found"}), 404
+    try:
+        with open(full, 'r', errors='replace') as fh:
+            content = fh.read()
+        return jsonify({"path": file_path, "content": content})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/code/graph", methods=["GET"])
+def code_graph_data():
+    """Symbol call graph (code_symbols + code_edges) for a project."""
+    root = request.args.get("root", "")
+    if not root or not os.path.isdir(root):
+        return jsonify({"error": "Missing or invalid root param"}), 400
+    from indexer import CodeIndexer
+    indexer = CodeIndexer(root)
+    try:
+        rows = indexer.conn.execute(
+            "SELECT id, symbol_name, symbol_type, file_path, start_line FROM code_symbols "
+            "WHERE project_id = ? ORDER BY id LIMIT 1000",
+            (indexer.project_id,),
+        ).fetchall()
+        node_by_id = {f"sym-{r['id']}": r for r in rows}
+        nodes = [{
+            "id": nid,
+            "type": "default",
+            "data": {"label": r["symbol_name"], "kind": r["symbol_type"] or "symbol",
+                     "file": r["file_path"], "line": r["start_line"]},
+            "position": {"x": 0, "y": 0},
+            "style": {"backgroundColor": "#1e293b", "border": "1px solid #60a5fa",
+                      "color": "#e2e8f0", "fontSize": 11, "padding": 4},
+        } for nid, r in node_by_id.items()]
+        edges = []
+        erows = indexer.conn.execute(
+            "SELECT from_symbol_id, to_symbol_id, edge_type FROM code_edges "
+            "WHERE project_id = ? AND to_symbol_id > 0 ORDER BY id LIMIT 2000",
+            (indexer.project_id,),
+        ).fetchall()
+        eid = 0
+        for e in erows:
+            src = f"sym-{e['from_symbol_id']}"
+            tgt = f"sym-{e['to_symbol_id']}"
+            if src in node_by_id and tgt in node_by_id:
+                eid += 1
+                edges.append({
+                    "id": f"e{eid}", "source": src, "target": tgt,
+                    "type": "smoothstep", "label": e["edge_type"] or "calls",
+                    "labelStyle": {"fill": "#9ca3af", "fontSize": 9},
+                    "animated": False,
+                })
+        return jsonify({"nodes": nodes, "edges": edges,
+                        "stats": {"nodes": len(nodes), "edges": len(edges)}})
     finally:
         indexer.close()
 

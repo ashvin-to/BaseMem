@@ -415,6 +415,14 @@ class NoteMixin:
             self._trim_text(metadata.get("current_state") or "No current state recorded.", 500),
         ]
 
+        lines.extend([
+            "",
+            "## Code Intelligence",
+            "Use code_find/code_read/code_explore/code_files (MCP) instead of grep/glob/read. "
+            "Auto-index on first use; for plain text search use code_find(query, grep=True); "
+            "empty results → code_init first. Review blast-radius: get_review_context(files).",
+        ])
+
         next_steps = list(metadata.get("next_steps", []))[::-1]
         single_step = metadata.get("next_step", "")
         if single_step:

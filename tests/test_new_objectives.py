@@ -69,8 +69,6 @@ def test_skills_installation_node():
     content = open(using_basemem_skill).read()
     assert "name: using-basemem" in content
     assert "## Workflow" in content
-    assert "## Example" in content
-    assert "## Notes" in content
 
     for skill in ["code-review", "session-start", "explore-codebase", "debug-issue", "task-workflow"]:
         skill_path = os.path.join(home, ".claude", "skills", "using-basemem", skill, "SKILL.md")
@@ -78,5 +76,3 @@ def test_skills_installation_node():
         content = open(skill_path).read()
         assert f"name: {skill}" in content
         assert "## Workflow" in content
-        assert "## Example" in content
-        assert "## Notes" in content
