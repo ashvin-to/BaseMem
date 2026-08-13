@@ -11,7 +11,9 @@ def get_db_path() -> str:
     if not os.path.isfile(path):
         os.makedirs(os.path.dirname(path), exist_ok=True)
     from storage.sessions import _ensure_schema as _ensure_all_schema
-    conn = sqlite3.connect(path)
+    conn = sqlite3.connect(path, timeout=10.0)
+    conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute("PRAGMA busy_timeout=10000;")
     try:
         _ensure_all_schema(conn)
     finally:
@@ -1350,6 +1352,43 @@ def compute_similarity(noteIdA: str, noteIdB: str) -> str:
     result.append("")
     result.append("Agent: decide a similarity score (0-1) and call link_notes with weight=<score>.")
     return "\n".join(result)
+
+
+@server.tool(description="Automatically extract decisions & facts from text into structured memory notes.")
+def extract_memories(topic: str, text: str) -> str:
+    import json
+    from storage.db import StorageManager
+    from storage.sessions import SessionManager
+    storage = StorageManager(get_db_path())
+    manager = SessionManager(storage)
+    extracted = manager.auto_extract_memories(topic, text)
+    if not extracted:
+        return f"No decisions or key facts detected to extract for topic '{topic}'."
+    return json.dumps({"topic": topic, "extracted_count": len(extracted), "items": extracted}, indent=2)
+
+
+@server.tool(description="Scan memory notes for a topic to detect and resolve contradictions automatically.")
+def resolve_contradictions(topic: str) -> str:
+    import json
+    from storage.db import StorageManager
+    from storage.sessions import SessionManager
+    storage = StorageManager(get_db_path())
+    manager = SessionManager(storage)
+    result = manager.resolve_contradictions(topic)
+    return json.dumps(result, indent=2)
+
+
+@server.tool(description="Multi-layer context re-ranking combining FTS similarity, graph distance, and recency.")
+def rank_context(topic: str, query: str = "", limit: int = 20) -> str:
+    import json
+    from storage.db import StorageManager
+    from storage.sessions import SessionManager
+    storage = StorageManager(get_db_path())
+    manager = SessionManager(storage)
+    ranked = manager.rank_context(topic, query=query, limit=limit)
+    if not ranked:
+        return f"No context notes found for topic '{topic}'."
+    return json.dumps({"topic": topic, "count": len(ranked), "results": ranked}, indent=2)
 
 
 @_optional_tool(description="Notes + query for agent reranking.")

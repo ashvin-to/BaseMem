@@ -89,7 +89,9 @@ class CodeIndexer:
         self.project_root = str(root)
         self.project_id = root.name.lower()
         self.db_path = str(root / CODE_DB_FILENAME)
-        self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        self.conn = sqlite3.connect(self.db_path, timeout=10.0, check_same_thread=False)
+        self.conn.execute("PRAGMA journal_mode=WAL;")
+        self.conn.execute("PRAGMA busy_timeout=10000;")
         self.conn.row_factory = sqlite3.Row
         
         # Register generated file detection heuristic for search down-ranking

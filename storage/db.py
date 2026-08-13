@@ -86,8 +86,10 @@ class StorageManager:
 
         self.db_path = Path(resolved)
 
-        # Enable thread-safe mode for Flask/multi-threaded use
-        self.connection = sqlite3.connect(str(self.db_path), check_same_thread=False)
+        # Enable thread-safe mode for Flask/multi-threaded use & WAL mode to avoid database locking
+        self.connection = sqlite3.connect(str(self.db_path), timeout=10.0, check_same_thread=False)
+        self.connection.execute("PRAGMA journal_mode=WAL;")
+        self.connection.execute("PRAGMA busy_timeout=10000;")
         self.connection.row_factory = sqlite3.Row
         self._initialize_schema()
 

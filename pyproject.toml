@@ -52,6 +52,7 @@ disallow_untyped_defs = false
 
 [project.scripts]
 mem = "cli.main:cli"
+basemem-mcp = "mcp_server.server:main"
 
 [project.optional-dependencies]
 dev = [
