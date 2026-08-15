@@ -24,12 +24,14 @@ const AGENTS = [
   { name: 'cline',     format: 'markdown', capabilities: ['rules', 'mcp', 'plugin'] },
   { name: 'zed',       format: 'markdown', capabilities: ['rules', 'mcp'] },
   { name: 'gemini',    format: 'markdown', capabilities: ['rules', 'mcp', 'plugin'] },
-  { name: 'copilot',   format: 'markdown', capabilities: ['rules'] },
+  { name: 'copilot',   format: 'markdown', capabilities: ['rules', 'mcp'] },
   { name: 'aider',     format: 'markdown', capabilities: ['rules'], detectBinary: true },
   { name: 'vscode',    format: 'markdown', capabilities: ['mcp'], detectBinary: true, binaryName: 'code', skipRules: true },
   { name: 'kilo',      format: 'markdown', capabilities: ['rules', 'mcp', 'plugin'] },
   { name: 'kiro',      format: 'markdown', capabilities: ['rules', 'mcp', 'hooks'] },
   { name: 'hermes',    format: 'markdown', capabilities: ['rules', 'mcp'] },
+  { name: 'vibe',      format: 'markdown', capabilities: ['rules', 'mcp'] },
+  { name: 'windsurf',  format: 'markdown', capabilities: ['rules', 'mcp'] },
 ];
 
 const TIER_RULES = { 1: BASEMEM_RULES_TIER1, 2: BASEMEM_RULES_TIER2, 3: BASEMEM_RULES_TIER3 };
@@ -222,10 +224,14 @@ function getMCPConfigPath(name) {
     continue: path.join(home, '.continue', 'config.json'),
     zed:      path.join(xdgConfig, 'zed', 'settings.json'),
     gemini:   path.join(home, '.gemini', 'settings.json'),
-    vscode:   path.join(BASEMEM_ROOT, '.vscode', 'mcp.json'),
-    kilo:     path.join(xdgConfig, 'kilo', 'opencode.jsonc'),
+    vscode:   path.join(xdgConfig, 'Code', 'User', 'mcp.json'),
+    kilo:     path.join(xdgConfig, 'kilo', 'kilo.jsonc'),
     kiro:     path.join(home, '.kiro', 'settings', 'mcp.json'),
     hermes:   path.join(home, '.hermes', 'config.yaml'),
+    copilot:  path.join(home, '.copilot', 'mcp-config.json'),
+    crush:    path.join(xdgConfig, 'crush', 'crush.json'),
+    vibe:     path.join(home, '.vibe', 'config.toml'),
+    windsurf: path.join(home, '.codeium', 'windsurf', 'mcp_config.json'),
   };
   return map[name];
 }
@@ -238,6 +244,14 @@ function stripJsonc(str) {
 }
 
 function mcpOpts() {
+  const mcpBin = path.join(os.homedir(), '.local', 'bin', 'basemem-mcp');
+  if (fs.existsSync(mcpBin)) {
+    return {
+      command: mcpBin,
+      args: [],
+      env: { BASEMEM_DB_PATH: process.env.BASEMEM_DB_PATH || DEFAULT_MCP_DB },
+    };
+  }
   return {
     command: process.env.BASEMEM_MCP_PYTHON || DEFAULT_MCP_PYTHON,
     args: [process.env.BASEMEM_MCP_SCRIPT || DEFAULT_MCP_SCRIPT],
@@ -303,8 +317,8 @@ function writeMCPEntry(name, serverName) {
     return { written: true, path: configPath };
   }
 
-  // TOML (codex)
-  if (name === 'codex') {
+  // TOML (codex, vibe)
+  if (name === 'codex' || name === 'vibe') {
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
     let raw = '';
     try { raw = fs.readFileSync(configPath, 'utf-8'); } catch { raw = ''; }
@@ -790,6 +804,9 @@ function getSkillDestDir(name) {
     cline:    path.join(home, '.cline', 'skills'),
     gemini:   path.join(home, '.gemini', 'skills'),
     kilo:     path.join(home, '.config', 'kilo', 'skills'),
+    copilot:  path.join(home, '.copilot', 'skills'),
+    vibe:     path.join(home, '.vibe', 'skills'),
+    windsurf: path.join(home, '.codeium', 'windsurf', 'skills'),
   };
   return map[name];
 }
@@ -801,69 +818,19 @@ function installSkills(agentName, customDestDir) {
   const skillsSrc = path.join(BASEMEM_ROOT, 'skills');
   if (!fs.existsSync(skillsSrc)) return { copied: false, reason: 'skills directory missing' };
 
-  function cleanLegacy(dir) {
-    const legacyDirs = ['code-review', 'session-start', 'explore-codebase', 'debug-issue', 'task-workflow'];
-    for (const d of legacyDirs) {
-      const legacyPath = path.join(dir, d);
-      if (fs.existsSync(legacyPath)) {
-        try {
-          fs.rmSync(legacyPath, { recursive: true, force: true });
-        } catch (_) {}
-      }
-    }
-  }
+  // Ensure skill destination directory exists
+  fs.mkdirSync(destDir, { recursive: true });
 
-  // Clean legacy top-level skill folders
-  cleanLegacy(destDir);
-
-  const usingBasememDir = path.join(destDir, 'using-basemem');
-  fs.mkdirSync(usingBasememDir, { recursive: true });
-
-  // Clean legacy files directly under using-basemem
-  function cleanLegacyFiles(dir) {
-    const legacyFiles = [
-      'code-review.md', 'debug-issue.md', 'explore-codebase.md',
-      'session-start.md', 'task-workflow.md', 'using-basemem.md', 'SKILL.md'
-    ];
-    for (const f of legacyFiles) {
-      const p = path.join(dir, f);
-      if (fs.existsSync(p)) {
-        try {
-          fs.unlinkSync(p);
-        } catch (_) {}
-      }
-    }
-    const nested = path.join(dir, 'using-basemem');
-    if (fs.existsSync(nested)) {
-      try {
-        fs.rmSync(nested, { recursive: true, force: true });
-      } catch (_) {}
-    }
-  }
-  cleanLegacyFiles(usingBasememDir);
-
-  const readmeSrc = path.join(skillsSrc, 'README.md');
-  if (fs.existsSync(readmeSrc)) {
-    fs.copyFileSync(readmeSrc, path.join(usingBasememDir, 'README.md'));
-  }
-
-  // Copy each skill folder under using-basemem
+  // Copy each skill folder to top-level in destDir (e.g. destDir/using-basemem, destDir/code-review)
   for (const entry of fs.readdirSync(skillsSrc)) {
     const full = path.join(skillsSrc, entry);
     if (fs.statSync(full).isDirectory()) {
-      if (entry === 'using-basemem') {
-        const skillMdSrc = path.join(full, 'SKILL.md');
-        if (fs.existsSync(skillMdSrc)) {
-          fs.copyFileSync(skillMdSrc, path.join(usingBasememDir, 'SKILL.md'));
-        }
-        continue;
-      }
-      const subDest = path.join(usingBasememDir, entry);
-      fs.mkdirSync(subDest, { recursive: true });
+      const targetSkillDir = path.join(destDir, entry);
+      fs.mkdirSync(targetSkillDir, { recursive: true });
       for (const sf of fs.readdirSync(full)) {
         const sFull = path.join(full, sf);
         if (fs.statSync(sFull).isFile()) {
-          fs.copyFileSync(sFull, path.join(subDest, sf));
+          fs.copyFileSync(sFull, path.join(targetSkillDir, sf));
         }
       }
     }
@@ -875,31 +842,16 @@ function installSkills(agentName, customDestDir) {
       path.join(os.homedir(), '.gemini', 'antigravity', 'plugins', 'basemem', 'skills'),
     ];
     for (const extra of agyExtraDestDirs) {
-      cleanLegacy(extra);
-      const extraUsingBasememDir = path.join(extra, 'using-basemem');
-      fs.mkdirSync(extraUsingBasememDir, { recursive: true });
-      cleanLegacyFiles(extraUsingBasememDir);
-
-      if (fs.existsSync(readmeSrc)) {
-        fs.copyFileSync(readmeSrc, path.join(extraUsingBasememDir, 'README.md'));
-      }
-
+      fs.mkdirSync(extra, { recursive: true });
       for (const entry of fs.readdirSync(skillsSrc)) {
         const full = path.join(skillsSrc, entry);
         if (fs.statSync(full).isDirectory()) {
-          if (entry === 'using-basemem') {
-            const skillMdSrc = path.join(full, 'SKILL.md');
-            if (fs.existsSync(skillMdSrc)) {
-              fs.copyFileSync(skillMdSrc, path.join(extraUsingBasememDir, 'SKILL.md'));
-            }
-            continue;
-          }
-          const subDest = path.join(extraUsingBasememDir, entry);
-          fs.mkdirSync(subDest, { recursive: true });
+          const targetSkillDir = path.join(extra, entry);
+          fs.mkdirSync(targetSkillDir, { recursive: true });
           for (const sf of fs.readdirSync(full)) {
             const sFull = path.join(full, sf);
             if (fs.statSync(sFull).isFile()) {
-              fs.copyFileSync(sFull, path.join(subDest, sf));
+              fs.copyFileSync(sFull, path.join(targetSkillDir, sf));
             }
           }
         }
@@ -1102,7 +1054,7 @@ function install(name) {
     if (configPath && fs.existsSync(configPath)) {
       try {
         const raw = fs.readFileSync(configPath, 'utf-8');
-        if (name === 'codex') {
+        if (name === 'codex' || name === 'vibe') {
           already = /^\[mcp_servers\.mem\]/im.test(raw);
         } else {
           const data = readJSONSafe(configPath);
@@ -1132,13 +1084,35 @@ function install(name) {
         d.mcpServers.mem = opts;
         fs.writeFileSync(p, JSON.stringify(d, null, 2) + '\n', 'utf-8');
       }
+    } else if (name === 'cline') {
+      mcpResult = writeMCPEntry(name, 'mem');
+      // Also write to ~/.cline/mcp.json
+      const clineMcpAlt = path.join(os.homedir(), '.cline', 'mcp.json');
+      const opts = mcpOpts();
+      fs.mkdirSync(path.dirname(clineMcpAlt), { recursive: true });
+      let d = readJSONSafe(clineMcpAlt);
+      if (d === undefined) d = {};
+      d.mcpServers = d.mcpServers || {};
+      d.mcpServers.mem = opts;
+      fs.writeFileSync(clineMcpAlt, JSON.stringify(d, null, 2) + '\n', 'utf-8');
+    } else if (name === 'kilo') {
+      mcpResult = writeMCPEntry(name, 'mem');
+      // Also write to ~/.config/kilo/opencode.jsonc if present
+      const kiloAlt = path.join(os.homedir(), '.config', 'kilo', 'opencode.jsonc');
+      if (fs.existsSync(path.dirname(kiloAlt))) {
+        const opts = mcpOpts();
+        let d = readJSONSafe(kiloAlt) || {};
+        d.mcp = d.mcp || {};
+        d.mcp.mem = { type: 'local', command: [opts.command, ...opts.args], enabled: true, environment: opts.env };
+        fs.writeFileSync(kiloAlt, JSON.stringify(d, null, 2) + '\n', 'utf-8');
+      }
     } else if (!already) {
       mcpResult = writeMCPEntry(name, 'mem');
     }
   }
 
   let skillsResult = { copied: false };
-  if (['claude', 'codex', 'cursor', 'devin', 'kiro', 'agy', 'opencode', 'cline', 'gemini', 'kilo'].includes(name)) {
+  if (['claude', 'codex', 'cursor', 'devin', 'kiro', 'agy', 'opencode', 'cline', 'gemini', 'kilo', 'copilot', 'vibe', 'windsurf'].includes(name)) {
     skillsResult = installSkills(name);
   }
 
@@ -1169,6 +1143,23 @@ function ensureEditableInstall() {
 function writeCLIWrapper() {
   const binDir = path.join(os.homedir(), '.local', 'bin');
   fs.mkdirSync(binDir, { recursive: true });
+
+  // MCP executable wrapper
+  const venvMcpBin = path.join(BASEMEM_ROOT, 'venv', 'bin', 'basemem-mcp');
+  const mcpBin = path.join(binDir, 'basemem-mcp');
+  const python = process.env.BASEMEM_MCP_PYTHON || DEFAULT_MCP_PYTHON;
+  const script = process.env.BASEMEM_MCP_SCRIPT || DEFAULT_MCP_SCRIPT;
+  if (process.platform === 'win32') {
+    const mcpBat = path.join(binDir, 'basemem-mcp.bat');
+    fs.writeFileSync(mcpBat, `@echo off\r\n"${python}" "${script}" %*\r\n`, 'utf-8');
+  } else if (fs.existsSync(venvMcpBin)) {
+    if (fs.existsSync(mcpBin)) try { fs.unlinkSync(mcpBin); } catch (_) {}
+    try { fs.symlinkSync(venvMcpBin, mcpBin); }
+    catch (_) { fs.copyFileSync(venvMcpBin, mcpBin); fs.chmodSync(mcpBin, 0o755); }
+  } else {
+    fs.writeFileSync(mcpBin, `#!/bin/bash\nexec "${python}" "${script}" "$@"\n`, 'utf-8');
+    fs.chmodSync(mcpBin, 0o755);
+  }
 
   if (process.platform === 'win32') {
     const batPath = path.join(binDir, 'mem.bat');
@@ -1323,6 +1314,44 @@ function uninstall(name) {
   if (agent.capabilities.includes('mcp')) {
     const r = removeMCPEntry(name, 'mem');
     mcpRemoved = r.removed;
+    if (name === 'cline') {
+      removeMCPEntry('cline', 'mem');
+      const clineMcpAlt = path.join(os.homedir(), '.cline', 'mcp.json');
+      if (fs.existsSync(clineMcpAlt)) {
+        const d = readJSONSafe(clineMcpAlt);
+        if (d && d.mcpServers && d.mcpServers.mem) {
+          delete d.mcpServers.mem;
+          if (!Object.keys(d.mcpServers).length) delete d.mcpServers;
+          fs.writeFileSync(clineMcpAlt, JSON.stringify(d, null, 2) + '\n', 'utf-8');
+        }
+      }
+    }
+    if (name === 'kilo') {
+      const kiloAlt = path.join(os.homedir(), '.config', 'kilo', 'opencode.jsonc');
+      if (fs.existsSync(kiloAlt)) {
+        const d = readJSONSafe(kiloAlt);
+        if (d && d.mcp && d.mcp.mem) {
+          delete d.mcp.mem;
+          if (!Object.keys(d.mcp).length) delete d.mcp;
+          fs.writeFileSync(kiloAlt, JSON.stringify(d, null, 2) + '\n', 'utf-8');
+        }
+      }
+    }
+  }
+
+  // Remove installed skill folders
+  const skillDestDir = getSkillDestDir(name);
+  if (skillDestDir && fs.existsSync(skillDestDir)) {
+    const basememSkills = ['using-basemem', 'code-review', 'explore-codebase', 'debug-issue', 'session-start', 'task-workflow'];
+    for (const sk of basememSkills) {
+      const skPath = path.join(skillDestDir, sk);
+      if (fs.existsSync(skPath)) {
+        try {
+          fs.rmSync(skPath, { recursive: true, force: true });
+          removed.push(skPath);
+        } catch (_) {}
+      }
+    }
   }
 
   return { agent: name, removed, cleaned, mcpRemoved };

@@ -73,6 +73,24 @@ cli.add_command(code)
 
 # ── Top-level commands ──
 
+@cli.command("log")
+@click.argument('message', required=False)
+@click.option('--topic', '-t', help='Topic/planet name')
+@click.option('--message', '-m', 'msg_opt', help='Note message')
+@click.pass_context
+def log_command(ctx, message, topic, msg_opt):
+    """Log an interaction decision or note directly to a planet."""
+    text = message or msg_opt
+    if not text:
+        click.echo("Error: Please provide a message.", err=True)
+        sys.exit(2)
+    top = topic or _topic_from_cwd() or get_project_root()
+    from storage.sessions import SessionManager
+    sm = SessionManager(ctx.obj['storage'])
+    res = sm.add_note(top, top, "decision", text)
+    n_id = res.get("id") if isinstance(res, dict) else res
+    click.echo(f"[ok] Note added to '{top}': {text[:80]} ({n_id})")
+
 @cli.command("list-planets")
 @click.pass_context
 def list_planets(ctx):

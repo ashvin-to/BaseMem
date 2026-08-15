@@ -137,9 +137,9 @@ echo "  Running install.js uninstall-all..."
 node "$BASE_DIR/bin/lib/install.js" uninstall-all 2>/dev/null || true
 
 # --- Step 2: Remove CLI binary ---
-for bin in "$HOME/.local/bin/mem" "/usr/local/bin/mem"; do
+for bin in "$HOME/.local/bin/mem" "$HOME/.local/bin/basemem-mcp" "/usr/local/bin/mem"; do
   [ -f "$bin" ] || continue
-  if grep -q "$BASE_DIR" "$bin"; then
+  if grep -q "$BASE_DIR" "$bin" 2>/dev/null || [ "$(basename "$bin")" = "basemem-mcp" ]; then
     if confirm "Remove $bin?"; then
       if [ -w "$bin" ]; then
         rm -f "$bin"
@@ -163,8 +163,15 @@ remove_mcp_entries "$HOME/.gemini/config/mcp_config.json"
 remove_mcp_entries "$HOME/.cursor/mcp.json"
 remove_mcp_entries "$HOME/.config/devin/mcp_config.json"
 remove_mcp_entries "$HOME/.config/opencode/opencode.jsonc"
-remove_mcp_entries "$HOME/.gemini/antigravity/mcp_config.json"
-remove_mcp_entries "$HOME/.gemini/antigravity-ide/mcp_config.json"
+remove_mcp_entries "$HOME/.cline/mcp.json"
+remove_mcp_entries "$HOME/.cline/data/settings/cline_mcp_settings.json"
+remove_mcp_entries "$HOME/.config/kilo/kilo.jsonc"
+remove_mcp_entries "$HOME/.config/kilo/opencode.jsonc"
+remove_mcp_entries "$HOME/.copilot/mcp-config.json"
+remove_mcp_entries "$HOME/.config/crush/crush.json"
+remove_mcp_entries "$HOME/.codeium/windsurf/mcp_config.json"
+remove_mcp_entries "$HOME/.config/zed/settings.json"
+remove_mcp_entries "$HOME/.kiro/settings/mcp.json"
 
 claude mcp remove -s user basemem-memory 2>/dev/null || true
 claude mcp remove -s user mem 2>/dev/null || true

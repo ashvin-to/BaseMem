@@ -59,8 +59,8 @@ function getAgentPaths() {
       install: path.join(devinBase, 'basemem.md'),
     },
     cline: {
-      detect: [path.join(home, '.clinerules'), path.join(home, '.cline')],
-      install: path.join(home, '.clinerules', 'basemem.md'),
+      detect: path.join(home, '.cline'),
+      install: path.join(home, '.cline', 'rules', 'basemem.md'),
     },
     copilot: {
       detect: path.join(home, '.github'),
@@ -109,6 +109,14 @@ function getAgentPaths() {
     hermes: {
       detect: path.join(home, '.hermes'),
       install: path.join(home, '.hermes', 'HERMES.md'),
+    },
+    vibe: {
+      detect: path.join(home, '.vibe'),
+      install: path.join(home, '.vibe', 'AGENTS.md'),
+    },
+    windsurf: {
+      detect: path.join(home, '.codeium', 'windsurf'),
+      install: path.join(home, '.codeium', 'windsurf', 'memories', 'global_rules.md'),
     },
   };
 }

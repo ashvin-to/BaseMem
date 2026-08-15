@@ -139,10 +139,14 @@ MEM_WRAPPER="#!/bin/bash
 $MCP_PYTHON $BASE_DIR/mem.py --db $BASEMEM_DB_PATH \"\$@\""
 write_executable "$MEM_BIN_DIR/mem" "$MEM_WRAPPER"
 
-# ── MCP entry point ───────────────────────────────────────────────
+# ── MCP entry point wrapper ───────────────────────────────────────
 if [[ -f "$MCP_SCRIPT" ]]; then
   chmod 755 "$MCP_SCRIPT"
 fi
+BASEMEM_MCP_BIN="$MEM_BIN_DIR/basemem-mcp"
+BASEMEM_MCP_WRAPPER="#!/bin/bash
+exec \"$MCP_PYTHON\" \"$MCP_SCRIPT\" \"\$@\""
+write_executable "$BASEMEM_MCP_BIN" "$BASEMEM_MCP_WRAPPER"
 
 # ── Agent rules + hooks + MCP via install.js ──────────────────────
 if [[ -f "$BASE_DIR/bin/lib/install.js" ]]; then
@@ -200,6 +204,19 @@ echo "BASEMEM READY"
 echo ""
 echo "  CLI      $MEM_BIN_DIR/mem"
 echo "  MCP      $MCP_SCRIPT"
+
+# ## Token Saving Guidelines
+#
+# - **`logInteraction` / `mem_note_update`** – keep facts ≤ 30 words; store only the essential decision.
+# - **Prefer `code_find(query, grep=True)`** over `code_read`.  It returns line numbers only (≈ 0 tokens).  
+# - **Tight reads** – when a read is unavoidable, use `code_read(path, offset=X, limit=Y)` with `Y ≤ 50`.  
+# - **Structural queries via the BaseMem index** –  
+#   * `SELECT from_id FROM edges WHERE to_id = "func:handleSaveTurnServer"` → callers (≈ 0 tokens).  
+#   * `SELECT id FROM nodes_fts WHERE nodes_fts MATCH "TURN"` → full‑text match (≈ 0 tokens).  
+# - **Avoid whole‑file reads** unless absolutely necessary; each full‑file read costs hundreds of tokens.  
+# - **Keep `mem_task_create` notes to a single concise sentence** (≤ 20 words).  
+# - **Cache frequently‑asked structural queries** in `mem_note` so they are not recomputed.
+
 echo "  Data     $BASEMEM_DB_PATH"
 echo ""
 echo "Run 'mem planet create my-topic --goal \"...\"' to start."

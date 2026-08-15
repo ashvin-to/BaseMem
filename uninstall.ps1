@@ -90,7 +90,9 @@ Write-Host "Uninstalling BaseMem Galaxy components..." -ForegroundColor Cyan
 $binFiles = @(
     "$env:USERPROFILE\.basemem\kb.bat",
     "$env:USERPROFILE\.basemem\kb.cmd",
-    "$env:USERPROFILE\.basemem\mem.bat"
+    "$env:USERPROFILE\.basemem\mem.bat",
+    "$env:USERPROFILE\.local\bin\basemem-mcp",
+    "$env:USERPROFILE\.local\bin\basemem-mcp.bat"
 )
 foreach ($f in $binFiles) {
     if (Test-Path $f) {
@@ -114,9 +116,19 @@ Write-Host "Removing MCP config entries from agent settings..." -ForegroundColor
 Remove-McpEntry -FilePath "$env:USERPROFILE\.gemini\settings.json" -Key "mem"
 Remove-McpEntry -FilePath "$env:USERPROFILE\.gemini\config\mcp_config.json" -Key "mem"
 Remove-McpEntry -FilePath "$env:USERPROFILE\.claude\settings.json" -Key "mem"
+Remove-McpEntry -FilePath "$env:USERPROFILE\.claude.json" -Key "mem"
 Remove-McpEntry -FilePath "$env:USERPROFILE\.config\opencode\opencode.jsonc" -Key "mem"
 Remove-McpEntry -FilePath "$env:USERPROFILE\.cursor\mcp.json" -Key "mem"
 Remove-McpEntry -FilePath "$env:USERPROFILE\.config\devin\mcp_config.json" -Key "mem"
+Remove-McpEntry -FilePath "$env:USERPROFILE\.cline\mcp.json" -Key "mem"
+Remove-McpEntry -FilePath "$env:USERPROFILE\.cline\data\settings\cline_mcp_settings.json" -Key "mem"
+Remove-McpEntry -FilePath "$env:USERPROFILE\.config\kilo\kilo.jsonc" -Key "mem"
+Remove-McpEntry -FilePath "$env:USERPROFILE\.config\kilo\opencode.jsonc" -Key "mem"
+Remove-McpEntry -FilePath "$env:USERPROFILE\.copilot\mcp-config.json" -Key "mem"
+Remove-McpEntry -FilePath "$env:USERPROFILE\.config\crush\crush.json" -Key "mem"
+Remove-McpEntry -FilePath "$env:USERPROFILE\.codeium\windsurf\mcp_config.json" -Key "mem"
+Remove-McpEntry -FilePath "$env:USERPROFILE\.config\zed\settings.json" -Key "mem"
+Remove-McpEntry -FilePath "$env:USERPROFILE\.kiro\settings\mcp.json" -Key "mem"
 
 # Remove host guidance files
 Write-Host "Removing host guidance files..." -ForegroundColor Yellow

@@ -16,7 +16,6 @@ process.stdin.on('end', () => {
     }
   }
   if (!hasLogged) {
-    emitStopOutput('codex');
     writeMissedLog();
   }
 });

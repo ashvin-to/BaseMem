@@ -200,7 +200,8 @@ if (-not $NoGemini -and (Test-Path "$BaseDir\extensions\gemini")) {
     if (Test-Path $GeminiMcp) {
         try { $GeminiConfig = Get-Content $GeminiMcp -Raw | ConvertFrom-Json -ErrorAction Stop } catch {}
     }
-    $GeminiConfig.mcpServers = @{ mem = @{ command = $McpPython; args = @($McpScriptArg); env = @{ BASEMEM_DB_PATH = $BasememDbPath } } }
+    if (-not $GeminiConfig.mcpServers) { $GeminiConfig | Add-Member -MemberType NoteProperty -Name mcpServers -Value @{} }
+    $GeminiConfig.mcpServers.mem = @{ command = $McpPython; args = @($McpScriptArg); env = @{ BASEMEM_DB_PATH = $BasememDbPath } }
     $json = $GeminiConfig | ConvertTo-Json -Depth 10
     [System.IO.File]::WriteAllText($GeminiMcp, $json, [System.Text.UTF8Encoding]::new($false))
 
