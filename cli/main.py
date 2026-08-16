@@ -73,6 +73,28 @@ cli.add_command(code)
 
 # ── Top-level commands ──
 
+@cli.command("viz")
+@click.option('--port', '-p', default=5000, help='Port to run visualization web server (default: 5000)')
+@click.option('--host', default='127.0.0.1', help='Host interface (default: 127.0.0.1)')
+@click.pass_context
+def viz_command(ctx, port, host):
+    """Launch the BaseMem visualization web server."""
+    base = Path(__file__).parent.parent.absolute()
+    server_script = base / "server.py"
+    if not server_script.exists():
+        click.echo("Error: server.py not found.", err=True)
+        sys.exit(1)
+    python_bin = sys.executable
+    click.echo(f"Starting BaseMem visualization web server at http://{host}:{port}...")
+    import subprocess
+    env = os.environ.copy()
+    if ctx.obj.get('db'):
+        env['BASEMEM_DB_PATH'] = ctx.obj['db']
+    try:
+        subprocess.run([python_bin, str(server_script)], env=env)
+    except KeyboardInterrupt:
+        click.echo("\nServer stopped.")
+
 @cli.command("log")
 @click.argument('message', required=False)
 @click.option('--topic', '-t', help='Topic/planet name')

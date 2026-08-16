@@ -7,19 +7,19 @@
       }
     ]
   },
+  "basemem-prompt": {
+    "UserPromptSubmit": [
+      {
+        "type": "command",
+        "command": "node \"${extensionPath}/hooks/prompt-tracker.js\""
+      }
+    ]
+  },
   "basemem-stop": {
     "Stop": [
       {
         "type": "command",
         "command": "node \"${extensionPath}/hooks/session-stop.js\""
-      }
-    ]
-  },
-  "basemem-capture": {
-    "PostToolUse": [
-      {
-        "type": "command",
-        "command": "node \"${extensionPath}/hooks/capture.js\""
       }
     ]
   }
