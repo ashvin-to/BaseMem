@@ -203,6 +203,76 @@ class NoteMixin:
                 self.reinforce_link(nid, nb["id"])
         return rows
 
+    def auto_extract_memories(self, topic: str, text: str, agent_id: str = "default") -> list[dict]:
+        """Automatically parse text to extract decisions & facts, creating notes in storage."""
+        import re
+
+        topic_slug = self.normalize_topic(topic)
+        extracted = []
+
+        lines = text.split("\n")
+        for line in lines:
+            line_str = line.strip()
+            if not line_str or len(line_str) < 10:
+                continue
+
+            if re.search(r"\b(decided|agreed|chose|selected|opted|will use|decision|arch)\b", line_str, re.IGNORECASE):
+                title = line_str[:80]
+                note = self.add_note(topic, topic_slug, "decision", line_str, agent_id=agent_id, title=title)
+                extracted.append({"type": "decision", "note_id": note["id"], "content": line_str})
+            elif re.search(r"\b(note|fact|key|config|setting|path)\b", line_str, re.IGNORECASE):
+                title = line_str[:80]
+                note = self.add_note(topic, topic_slug, "fact", line_str, agent_id=agent_id, title=title)
+                extracted.append({"type": "fact", "note_id": note["id"], "content": line_str})
+
+        return extracted
+
+    def resolve_contradictions(self, topic: str) -> dict:
+        """Scan notes in a topic for contradictions and mark older ones as superseded."""
+        topic_slug = self.normalize_topic(topic)
+        cursor = self.storage.connection.cursor()
+        rows = cursor.execute(
+            "SELECT id, kind, title, content, created_at, status FROM notes WHERE topic = ? AND status != 'superseded' ORDER BY id ASC",
+            (topic_slug,),
+        ).fetchall()
+        notes = [dict(r) for r in rows]
+
+        resolved = []
+        for i in range(len(notes)):
+            for j in range(i + 1, len(notes)):
+                n1 = notes[i]
+                n2 = notes[j]
+
+                tokens1 = self._tokenize(n1["title"] + " " + n1["content"])
+                tokens2 = self._tokenize(n2["title"] + " " + n2["content"])
+
+                if not tokens1 or not tokens2:
+                    continue
+
+                overlap = len(tokens1 & tokens2)
+                if overlap >= 2:
+                    t1_text = (n1["title"] + " " + n1["content"]).lower()
+                    t2_text = (n2["title"] + " " + n2["content"]).lower()
+
+                    is_conflict = False
+                    if ("not" in t1_text and "not" not in t2_text) or ("disable" in t1_text and "enable" in t2_text) or ("false" in t1_text and "true" in t2_text) or ("deprecated" in t2_text or "superseded" in t2_text or "instead of" in t2_text):
+                        is_conflict = True
+
+                    if is_conflict:
+                        exec_stmt(
+                            self.storage.connection,
+                            "UPDATE notes SET status = 'superseded' WHERE id = ?",
+                            (n1["id"],),
+                        )
+                        self.link_notes(n1["id"], n2["id"], link_type="contradicts", weight=1.0)
+                        resolved.append({
+                            "superseded_note_id": f"note-{n1['id']}",
+                            "active_note_id": f"note-{n2['id']}",
+                            "reason": f"Conflict detected between note-{n1['id']} and note-{n2['id']}",
+                        })
+
+        return {"topic": topic_slug, "resolved_count": len(resolved), "conflicts": resolved}
+
     def _auto_link_note(self, note_id: int, topic_slug: str) -> None:
 
         cursor = self.storage.connection.cursor()
@@ -732,3 +802,54 @@ class NoteMixin:
             (slug, slug),
         ).fetchall()
         return [dict(r) for r in rows]
+
+    def rank_context(
+        self,
+        topic: str,
+        query: str = "",
+        limit: int = 20,
+        w_fts: float = 0.4,
+        w_graph: float = 0.4,
+        w_recency: float = 0.2,
+    ) -> list[dict]:
+        """Multi-layer context re-ranking combining FTS similarity, graph distance/weight, and recency."""
+        slug = self.normalize_topic(topic)
+        notes = self.get_notes_for_planet(slug, limit=100)
+        if not notes:
+            return []
+
+        query_tokens = self._tokenize(query) if query else set()
+        max_id = max(n["id"] for n in notes) if notes else 1
+
+        results = []
+        for n in notes:
+            nid = n["id"]
+            title_text = n.get("title") or ""
+            content_text = n.get("content") or ""
+
+            if query_tokens:
+                note_tokens = self._tokenize(title_text + " " + content_text)
+                overlap = len(query_tokens & note_tokens) if note_tokens else 0
+                fts_score = overlap / len(query_tokens)
+            else:
+                fts_score = 0.5
+
+            neighbors = self.get_note_neighbors(nid)
+            if neighbors:
+                avg_weight = sum(nb.get("weight", 1.0) for nb in neighbors) / len(neighbors)
+                graph_score = min(1.0, (len(neighbors) * 0.2) + (avg_weight * 0.4))
+            else:
+                graph_score = 0.1
+
+            recency_score = nid / max_id if max_id > 0 else 1.0
+            final_score = (w_fts * fts_score) + (w_graph * graph_score) + (w_recency * recency_score)
+
+            note_dict = dict(n)
+            note_dict["score"] = round(final_score, 4)
+            note_dict["fts_score"] = round(fts_score, 4)
+            note_dict["graph_score"] = round(graph_score, 4)
+            note_dict["recency_score"] = round(recency_score, 4)
+            results.append(note_dict)
+
+        results.sort(key=lambda x: x["score"], reverse=True)
+        return results[:limit]

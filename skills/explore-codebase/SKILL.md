@@ -1,15 +1,21 @@
 ---
 name: explore-codebase
-description: Navigate code via symbol search and call graphs — no raw file reads
-tools: [code_find, code_explore, code_read, code_files]
+description: "Explore repository structure, locate symbol definitions, and trace call graphs without loading large files into context. Triggers on: explore codebase, find symbol, navigate code, locate function, map repository."
 ---
+
+# Codebase Exploration Protocol
+
+Navigate codebase structure and AST symbols efficiently using indexed BaseMem queries.
 
 ## Workflow
 
-| Step | Tool | Input |
-|------|------|-------|
-| 1 | `code_find` | `query="symbol"`, `source=True` |
-| 2 | `code_explore` | `query="symbol"` — callers, callees, source |
-| 3 | `code_read` | `filePath`, `offset`, `limit` for exact ranges |
+| Step | Tool | Input | Purpose |
+| :--- | :--- | :--- | :--- |
+| 1 | `code_find` | `query="symbol"`, `grep=True` | Return matching filenames and line numbers (~0 tokens) |
+| 2 | `code_explore` | `query="symbol"` | Discover callers, callees, and declaration signature |
+| 3 | `code_read` | `path`, `offset`, `limit` (max 50 lines) | Read exact snippet containing the implementation |
 
-Forbidden: `view_file`, `grep_search`, `list_dir`. Tools auto-index when needed.
+## Rules
+
+1. **Token Efficiency**: Always prefer `code_find` and `code_explore` over whole-file reads.
+2. **Auto-Indexing**: BaseMem auto-indexes on first use. If results are empty, call `code_init(repo_path="...")`.

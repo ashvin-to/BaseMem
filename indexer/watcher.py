@@ -18,6 +18,7 @@ try:
     Observer = _Observer
 except ImportError:
     Observer = None  # type: ignore[assignment]
+    FileSystemEventHandler = object  # type: ignore[assignment, misc]
     HAS_WATCHDOG = False
 
 
@@ -130,17 +131,23 @@ class CodeGraphWatcher:
 
 
 
+    def sync_once(self) -> dict:
+        """Trigger an immediate incremental sync check on the watched workspace."""
+        if hasattr(self.indexer, "sync_index"):
+            return self.indexer.sync_index()
+        return {"status": "no_op"}
+
     def _handle_change(self, modified: list, created: list, deleted: list):
         if deleted:
             for f in deleted:
                 if self.indexer._is_skipped(f):
                     continue
                 self.indexer.remove_file(f)
-                print(f"  [del] {f}")
+                logger.info(f"  [del] {f}")
 
         to_index = [f for f in (modified + created) if not self.indexer._is_skipped(f)]
         if to_index:
             result = self.indexer.index_files(self.root_path, to_index)
             for f in to_index:
-                print(f"  [mod] {f}")
-            print(f"  -> {result['symbols_added']} symbols, {result['edges_added']} edges")
+                logger.info(f"  [mod] {f}")
+            logger.info(f"  -> {result['symbols_added']} symbols, {result['edges_added']} edges")
