@@ -11,7 +11,9 @@ mem planet create "my-project" --goal "Build feature X" --state "Research phase"
 # Update its status and next steps
 mem planet set "my-project" --status active --next "Read the docs"
 
-# Add a decision or fact
+# Add a decision or fact (one-shot logging)
+mem log "Use SQLite with WAL mode for concurrency" --topic "my-project"
+# or
 mem note add "my-project" --type decision -m "Use SQLite for persistence"
 
 # Get agent-ready context (auto-injected at session start; use for mid-session refresh)

@@ -1,6 +1,6 @@
 # BaseMem: AI Knowledge Base System
 
-Lightweight, persistent memory for AI agents. Planets hold task context, notes persist decisions, linked edges form a learnable graph. **25 MCP tools** (34 with advanced) let any agent read and write the same data, and **session-start hooks/plugins** auto-inject memory context into every chat session — no manual `getContext` call needed.
+Lightweight, persistent memory for AI agents. Planets hold task context, notes persist decisions, linked edges form a learnable graph. **31 MCP tools** let any agent read and write the same data, with zero background RAM consumption via standard `stdio` single-binary executable launching (`basemem-mcp`). Session-start hooks/plugins auto-inject memory context into every chat session — no manual `getContext` call needed.
 
 ## Quick Start
 
@@ -35,7 +35,8 @@ node bin/lib/install.js uninstall codex
 ```bash
 mem list-planets
 mem planet create "my-project" --goal "Build feature X"
-mem note add "my-project" --type decision -m "Use SQLite for persistence"
+mem log "Use SQLite with WAL mode for concurrency" --topic "my-project"
+mem viz  # Launch D3 visualization web server at http://127.0.0.1:5000
 ```
 
 ## Token Optimization
@@ -43,15 +44,17 @@ mem note add "my-project" --type decision -m "Use SQLite for persistence"
 BaseMem is designed to minimize LLM context consumption:
 
 - **Rules**: Compact shared core (~65 tokens/session) — behavioral directives only, no verbose headers
-- **Skills**: Stripped to essential workflow tables — ~60% smaller than typical skill files
-- **MCP server**: Shorter tool descriptions, lazy instructions (no DB query on connect)
+- **Skills**: Modular skill folders with explicit decision matrices, workflows, and gotchas
+- **MCP server**: Executable binary launcher (`~/.local/bin/basemem-mcp`) with lazy instructions (no DB query on connect)
 
-## Slash Commands
+## Slash Commands & CLI Logging
 
-Opencode and Antigravity get 6 slash commands installed automatically:
+BaseMem provides top-level logging and visualization commands in CLI and slash commands for supported IDEs:
 
 | Command | Purpose |
 |---------|---------|
+| `mem log "msg" --topic "name"` | Log a decision or fact directly to a planet in one pass |
+| `mem viz` | Launch D3 graph visualization web server |
 | `/ctx` | Fetch memory context for a project |
 | `/log` | Log a decision or fact |
 | `/review` | Review changed files with blast radius |
@@ -75,24 +78,27 @@ If context was fetched successfully, the agent sees it as a `KNOWLEDGE_BASE_CONT
 
 **Supported agents by capability:**
 
-| Agent | Capabilities | Detected By |
+| Agent | Capabilities | Config Path |
 |-------|-------------|-------------|
-| Claude Code | rules + MCP + hooks | `~/.claude/settings.json` |
-| Codex CLI | rules + MCP + hooks | `~/.codex/config.toml` |
-| Antigravity (agy) | rules + MCP + hooks | `~/.gemini/.../mcp_config.json` |
-| OpenCode | rules + MCP + plugin | `~/.config/opencode/opencode.jsonc` |
-| Cursor | rules + MCP + hooks | `~/.cursor/mcp.json` |
-| Devin | rules + MCP + hooks + plugin | `~/.config/devin/` |
-| Cline | rules + MCP + plugin | `~/.cline/` |
-| Kilo | rules + MCP + plugin | `~/.config/kilo/` |
-| Kiro | rules + MCP + hooks | `~/.config/kiro/` |
-| Gemini CLI | rules + MCP + plugin | `~/.gemini/settings.json` |
+| Claude Code | rules + MCP + hooks + skills | `~/.claude.json` |
+| Codex CLI | rules + MCP + hooks + skills | `~/.codex/config.toml` |
+| Antigravity (agy) | rules + MCP + hooks + skills | `~/.gemini/config/mcp_config.json` |
+| OpenCode | rules + MCP + plugin + skills | `~/.config/opencode/opencode.jsonc` |
+| Cursor | rules + MCP + hooks + skills | `~/.cursor/mcp.json` |
+| Devin | rules + MCP + hooks + plugin + skills | `~/.config/devin/mcp_config.json` |
+| Cline | rules + MCP + plugin + skills | `~/.cline/mcp.json` & `cline_mcp_settings.json` |
+| Kilo | rules + MCP + plugin + skills | `~/.config/kilo/kilo.jsonc` |
+| Kiro | rules + MCP + hooks + skills | `~/.kiro/settings/mcp.json` |
+| Gemini CLI | rules + MCP + plugin + skills | `~/.gemini/settings.json` |
 | Continue | rules + MCP | `~/.continue/config.json` |
 | Zed | rules + MCP | `~/.config/zed/settings.json` |
-| GitHub Copilot | rules | `copilot-instructions.md` |
+| GitHub Copilot | rules + MCP + skills | `~/.copilot/mcp-config.json` |
+| Crush | rules + MCP | `~/.config/crush/crush.json` |
+| Mistral Vibe | rules + MCP + skills | `~/.vibe/config.toml` |
+| Windsurf | rules + MCP + skills | `~/.codeium/windsurf/mcp_config.json` |
 | Aider | rules | `~/.aider/` (binary detection) |
-| VS Code | MCP | `.vscode/mcp.json` |
-| Hermes | rules + MCP | (binary detection) |
+| VS Code | MCP | `~/.config/Code/User/mcp.json` |
+| Hermes | rules + MCP | `~/.hermes/config.yaml` |
 
 Run `node bin/lib/install.js detect` to see which are detected on your system.
 
@@ -148,6 +154,7 @@ bash bin/lib/test/run.sh      # JS installer tests
 - **[doc/memory.md](./doc/memory.md)** — planets, notes, graphs, CLI, data models, auto-linking, memory tiers, all 25 MCP tools
 - **[doc/code-intelligence.md](./doc/code-intelligence.md)** — tree-sitter code indexing, code tools, zero-read edit workflow
 - **[doc/tasks.md](./doc/tasks.md)** — task system, CLI, MCP tools, dependency cycle prevention
+- **[doc/visualization.md](./doc/visualization.md)** — D3.js knowledge graph visualizer, web server, REST API reference
 
 ## Architecture
 
@@ -157,12 +164,12 @@ All interfaces (CLI, MCP, Flask) read and write the same SQLite tables — no sy
 
 ### Core Components
 
-1. **Storage Layer** (`storage/`) — SQLite + FTS5, `SessionManager`, schema: planets, notes, note_links, planet_links, sessions, tasks; config via env vars
-2. **MCP Server** (`mcp_server/server.py`) — 25 core MCP tools (34 with `BASEMEM_ENABLE_ADVANCED_TOOLS=1`)
+1. **Storage Layer** (`storage/`) — SQLite + FTS5 with WAL journal mode and 10s busy timeouts for high-concurrency safety; `SessionManager`, schema: planets, notes, note_links, planet_links, sessions, tasks; config via env vars
+2. **MCP Server** (`mcp_server/server.py`) — 31 tools registered via stdio executable launcher (`~/.local/bin/basemem-mcp`)
 3. **Hook System** (`src/hooks/`) — session-start hook scripts shared across agents, context fetching via `mem agent-context`, conditional preamble injection
 4. **Agent Plugins** (`src/agents/`) — per-agent plugin/hook definitions (opencode, cline, gemini, kilo, kiro, etc.)
 5. **Web Hub** (`server.py`) — Flask REST API, D3.js graph visualization
-6. **CLI** (`cli/`) — subcommands: planet, note, task, session, code, edge
+6. **CLI** (`cli/`) — subcommands: log, planet, note, task, session, code, edge
 7. **Code Intelligence** (`indexer/`) — tree-sitter powered, per-project `.basemem.code.db`
 
 ### Project Structure
