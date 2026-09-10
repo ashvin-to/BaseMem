@@ -59,13 +59,14 @@ from mcp.server.fastmcp import FastMCP
 
 def _get_initial_instructions() -> "str | None":
     return (
-        "BaseMem memory + code intelligence. Context is auto-injected at session start — "
-        "do NOT call getContext then; call it only to refresh or switch topics. "
-        "For code: use code_find / code_read / code_explore / code_files instead of grep/glob/read "
-        "(they auto-index on first use; for plain text search use code_find(query, grep=True); "
-        "if results are empty run code_init first). For review blast-radius use get_review_context(files). "
-        "Log decisions with logInteraction(topic, decision=...) and end sessions with "
-        'logInteraction(topic, summary=..., activity="done"). Topic = repo folder name.'
+        "BaseMem memory + code intelligence. "
+        "When the user asks about code, a bug, or exploring the repo: call code_find FIRST "
+        "(grep=True for text search; empty result means call code_init(projectRoot) once, then retry). "
+        "Read code with code_read(filePath, offset, limit<=50); trace callers with code_explore; "
+        "list files with code_files; review diffs with get_review_context(files). "
+        "Context is auto-injected at session start — do NOT call getContext then; call it only to refresh or switch topics. "
+        "When you make a decision, fix, or learn a fact: call logInteraction(topic, decision=...) immediately. "
+        "End sessions with logInteraction(topic, summary=..., activity=\"done\"). Topic = repo folder name."
     )
 
 
@@ -131,7 +132,7 @@ def _fmt_loc(file_path: str) -> str:
     return "/".join(parts[-3:]) if len(parts) > 3 else path
 
 
-@server.tool(description="Find code symbols or grep text (grep=True). source=True adds lines. references=True finds usages. context=N shows N lines of surrounding text when grep=True.")
+@server.tool(description="STEP 1 for any code question, bug, or exploration: find symbols or grep text. Use grep=True for text search. THEN read windows with code_read. Empty result means call code_init(projectRoot) once and retry.")
 def code_find(
     query: str = "",
     projectRoot: str = "",
@@ -810,7 +811,7 @@ def get_review_context(
 
 
 
-@server.tool(description="CALL FIRST — load session memory: state, decisions, facts, code stats.")
+@server.tool(description="Mid-session memory refresh or topic switch ONLY (context is auto-injected at session start — do NOT call then). Loads state, decisions, facts, code stats for a topic.")
 def getContext(topic: str = "", project: str = "", query: str = "") -> str:
     from storage.db import StorageManager
     from storage.sessions import SessionManager
@@ -910,7 +911,7 @@ def read_planet(topic: str, raw: bool = False, limit: int = 50) -> str:
     return "\n".join(lines)
 
 
-@server.tool(description="Log decision, fact, or summary to a topic. topic required. At least one of decision/fact/summary/currentState/nextStep required.")
+@server.tool(description="Call IMMEDIATELY when you make a decision, apply a fix, or learn a fact — do not defer to session end. Also use for session summaries (summary + activity=\"done\"). topic required.")
 def logInteraction(
     topic: str = "",
     decision: str = "",
@@ -1028,6 +1029,91 @@ def list_planets() -> str:
         status_tag = f" [{p['status']}]" if p["status"] and p["status"] != "active" else ""
         lines.append(f"- {name}{status_tag}")
     return "\n".join(lines)
+
+
+@server.tool(description="Query-aware recall: FTS5 search memory notes + code symbols for a user prompt. Same engine as `mem prompt-context` (used by UserPromptSubmit hooks). Prints nothing when no relevant context.")
+def prompt_context(query: str, topic: str = "", projectRoot: str = "", limit: int = 3) -> str:
+    """Recall relevant memory + code for a user prompt via FTS5.
+
+    Searches notes_fts (topic-scoped when topic given) and the per-project
+    .basemem.code.db code_symbols_fts index. Returns a compact block or ''.
+    """
+    import os as _os
+    from storage.db import StorageManager
+    from storage.sessions import SessionManager
+    try:
+        from storage.notes import tokenize_query as _tok
+    except Exception:
+        _tok = None
+
+    text = (query or "").strip()
+    if len(text) < 8:
+        return ""
+    if len(text) > 2000:
+        text = text[:2000]
+    tokens = _tok(text) if _tok else []
+    if not tokens:
+        return ""
+
+    db_path = get_db_path()
+    if not _os.path.isfile(db_path):
+        return ""
+    storage = StorageManager(db_path)
+    manager = SessionManager(storage)
+    mem_hits: list = []
+    try:
+        if hasattr(manager, "search_notes_fts"):
+            mem_hits = manager.search_notes_fts(topic or "general", " ".join(tokens[:12]), limit=limit) or []
+    except Exception:
+        mem_hits = []
+
+    code_hits: list = []
+    try:
+        from indexer import CODE_DB_FILENAME, CodeIndexer
+        croot = _os.path.abspath(projectRoot or _os.getcwd())
+        cur = croot
+        found = None
+        for _ in range(4):
+            cand = _os.path.join(cur, CODE_DB_FILENAME)
+            if _os.path.isfile(cand):
+                found = cur
+                break
+            parent = _os.path.dirname(cur)
+            if parent == cur:
+                break
+            cur = parent
+        if found:
+            indexer = CodeIndexer(found)
+            try:
+                code_hits = indexer.search_symbols(" ".join(tokens[:8]), limit=limit) or []
+            finally:
+                try:
+                    indexer.close()
+                except Exception:
+                    pass
+    except Exception:
+        code_hits = []
+    if not mem_hits and not code_hits:
+        return ""
+    lines: list[str] = []
+    if mem_hits:
+        lines.append("[Relevant memory]")
+        for n in mem_hits[:limit]:
+            kind = n.get("kind") or "note"
+            title = (n.get("title") or "")[:100]
+            content = " ".join((n.get("content") or "").split())[:300]
+            lines.append(f"- ({kind}) {title}: {content}" if title else f"- ({kind}) {content}")
+    if code_hits:
+        lines.append("[Relevant code]")
+        for s in code_hits[:limit]:
+            sig = " ".join((s.get("signature") or "").split())[:160]
+            loc = f"{s.get('file_path')}:{s.get('start_line')}-{s.get('end_line')}"
+            desc = f"{s.get('symbol_name')} ({s.get('symbol_type')}) {loc}"
+            if sig:
+                desc += f" — {sig}"
+            lines.append(f"- {desc}"[:350])
+    out = "\n".join(lines)
+    return out[:1497] + "..." if len(out) > 1500 else out
 
 
 @server.tool(description="Full-text search across planets, notes, nodes.")
@@ -1538,7 +1624,7 @@ def session_list(topic: str = "", status: str = "") -> str:
 
 # ── Code Graph MCP Tools ─────────────────────────────────
 
-@server.tool(description="Read file contents with line numbers. offset=start line, limit=max lines. REQUIRED: filePath (the file path to read). 'path' is accepted as an alias for filePath.")
+@server.tool(description="STEP 2 after code_find: read a 50-line window. REQUIRED filePath (relative to project root), offset=start line, limit=max lines (keep <=50). Replaces native Read — use this, not Read.")
 def code_read(filePath: str = "", projectRoot: str = "", offset: int = 0, limit: int = 200, path: str = "") -> str:
     """Read a file from the indexed project. Replaces native Read tool.
        filePath (REQUIRED): path to the file, relative to the project root.

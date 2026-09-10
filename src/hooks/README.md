@@ -43,7 +43,8 @@ All under `src/hooks/lib/`:
 | `context.js` | `fetchContext(options?)` | Derives topic, runs `mem agent-context`, returns `{topic, context}` or `null`. Options: `timeout` (default 3000ms), `maxDepth` (default 3). |
 | `output.js` | `emitHookOutput(format, contextResult, rulesText)` | Writes the correct JSON protocol line(s) for the agent format. Formats: `claude`, `codex`, `cursor`, `devin`, `agy` (default). |
 | `flagfile.js` | `writeFlagFile(configDir)` | Writes `.basemem-active` into the agent's config directory (with symlink-resolve safety check). |
-| `tracker.js` | `emitTrackerOutput(format)` | Used by `UserPromptSubmit` / prompt-tracker hooks to re-remind the agent on every prompt. |
+| `tracker.js` | `emitTrackerOutput(format, promptContext?)` | Used by `UserPromptSubmit` / prompt-tracker hooks to re-remind the agent on every prompt. When `promptContext` is non-empty it is appended as `<BASEMEM_PROMPT_CONTEXT>`. |
+| `prompt-context.js` | `extractPromptText(raw)`, `fetchPromptContext(text, opts?)`, `handlePromptInput(format, raw)` | **Query-aware recall (every prompt):** extracts the user prompt from UserPromptSubmit stdin, runs `mem prompt-context --topic <topic> --query <prompt> --root <projectRoot>` which FTS5-searches BOTH `notes_fts` (memory DB, topic-scoped) and `code_symbols_fts` (per-project `.basemem.code.db`), and injects hits as `<BASEMEM_PROMPT_CONTEXT>`. Silent when nothing relevant (falls back to the plain tracker nudge). Limits: prompt capped at 2000 chars, min 8 chars, 4s timeout, output capped at ~1500 chars. Same engine is also exposed as the MCP tool `prompt_context(query, topic?, projectRoot?, limit?)`. |
 
 `emitHookOutput` replaces a placeholder string in the rules text (`"Memory context for this project is already injected above..."`) with either the live context or a fallback message telling the agent to call `getContext`. If the placeholder is not found (e.g., the rules were customized), the context is appended.
 

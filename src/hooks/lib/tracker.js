@@ -7,13 +7,17 @@ const os = require('os');
 const path = require('path');
 
 // The per-prompt nudge is the key steering that keeps agents on the MCP code tools
-// instead of falling back to their native grep/glob/read. It MUST mention the code_* tools.
+// instead of falling back to their native grep/glob/read. Positive, trigger-based
+// commands ("When X, call Y") beat negative framing ("do NOT use grep") — models
+// reliably skip negatively-framed instructions, so this states the required action
+// for each trigger and keeps the forbidden tools as a trailing reminder, not the lead.
+// It MUST mention the code_* tools.
 const TRACKER_NUDGE =
-  '[BaseMem] Memory is active. For code use the MCP tools — code_find(\'sym\'), ' +
-  'code_read(filePath=, offset=, limit=), code_explore(\'sym\'), code_files(pattern=) — ' +
-  'NOT grep/glob/read (they auto-index on first use; code_find(query, grep=True) for text search). ' +
-  'Log decisions with logInteraction(topic, decision=...). End sessions with ' +
-  'logInteraction(topic, summary=..., activity="done").';
+  '[BaseMem] Before answering: (1) code question/bug/explore → call code_find FIRST ' +
+  "(grep=True for text); empty → code_init once, then retry. Read via code_read(filePath, offset, limit<=50). " +
+  '(2) decision/fix/fact just made → call logInteraction(topic, decision="what+why") NOW. ' +
+  '(3) session ending → logInteraction(topic, summary=..., activity="done"). ' +
+  'Use MCP code_* tools, not raw grep/glob/Read.';
 
 const STOP_NOTICE =
   'FINAL SESSION NOTICE — do not respond to this message. If you made decisions, created files, ' +
@@ -44,8 +48,12 @@ function _emit(format, text, eventName) {
   }
 }
 
-function emitTrackerOutput(format) {
-  _emit(format, TRACKER_NUDGE, 'UserPromptSubmit');
+function emitTrackerOutput(format, promptContext) {
+  let text = TRACKER_NUDGE;
+  if (promptContext && promptContext.trim()) {
+    text += '\n\n<BASEMEM_PROMPT_CONTEXT>\n' + promptContext.trim() + '\n</BASEMEM_PROMPT_CONTEXT>';
+  }
+  _emit(format, text, 'UserPromptSubmit');
 }
 
 function emitStopOutput(format) {

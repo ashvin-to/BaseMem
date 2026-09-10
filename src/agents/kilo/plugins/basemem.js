@@ -57,6 +57,20 @@ async function fetchMemContext(topic) {
   }
 }
 
+function fetchRecallSync(promptText, topic) {
+  if (!promptText || promptText.trim().length < 8) return '';
+  try {
+    const { spawnSync } = require('child_process');
+    const res = spawnSync('mem',
+      ['prompt-context', '--topic', topic, '--query', promptText.slice(0, 2000)],
+      { timeout: 4000, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] });
+    if (res.error || res.status !== 0) return '';
+    return (res.stdout || '').trim().slice(0, 2000);
+  } catch (_) {
+    return '';
+  }
+}
+
 const BaseMemPlugin = async ({ client, directory }) => {
   return {
     'experimental.chat.messages.transform': async (_input, output) => {
@@ -121,7 +135,11 @@ const BaseMemPlugin = async ({ client, directory }) => {
         if (lastUser && lastUser.parts?.length) {
           const textPart = lastUser.parts.find(p => p.type === 'text');
           if (textPart) {
-            textPart.text += '\n\n[Memory Reminder] BaseMem memory is active — use mem_*/code_* tools; log edits with logInteraction(topic=<repo>).';
+            // Per-prompt recall: FTS5 memory + code hits for THIS user message.
+            let recall = '';
+            try { recall = fetchRecallSync(textPart.text || '', findProjectName()); } catch (_) { recall = ''; }
+            textPart.text += '\n\n[Memory Reminder] BaseMem memory is active — use mem_*/code_* tools; log edits with logInteraction(topic=<repo>).'
+              + (recall ? `\n\n<BASEMEM_PROMPT_CONTEXT>\n${recall}\n</BASEMEM_PROMPT_CONTEXT>` : '');
           }
         }
       }

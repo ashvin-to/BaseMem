@@ -36,6 +36,28 @@ STOPWORDS = {
 }
 
 
+def fts_escape_token(token: str) -> str:
+    """Escape a single token for safe embedding in an FTS5 MATCH expression."""
+    return '"' + token.replace('"', '""') + '"'
+
+
+def fts_or_query(tokens: list[str]) -> str:
+    """Build an OR-joined FTS5 MATCH query from raw tokens."""
+    return " OR ".join(fts_escape_token(t) for t in tokens)
+
+
+def tokenize_query(text: str) -> list[str]:
+    """Tokenize user prompt text into FTS5-safe search tokens (len>=3, no stopwords)."""
+    import re
+    words = re.findall(r"[a-zA-Z0-9_]{3,}", (text or "").lower())
+    seen: list[str] = []
+    for w in words:
+        if w in STOPWORDS or w in seen:
+            continue
+        seen.append(w)
+    return seen
+
+
 class NoteMixin:
     """Mixin providing note CRUD and linking methods. Requires self.storage (StorageManager)."""
 
@@ -574,6 +596,58 @@ class NoteMixin:
         cursor = self.storage.connection.cursor()
         row = cursor.execute("SELECT * FROM notes WHERE id = ?", (note_id,)).fetchone()
         return dict(row) if row else None
+
+    def search_notes_fts(
+        self, topic: str, query: str, limit: int = 10
+    ) -> list[dict]:
+        """FTS5 search over notes_fts scoped to a topic. Returns ranked note dicts.
+
+        Used by the per-prompt recall hook (`mem prompt-context`): the user
+        prompt is tokenized into an OR query so any matching token hits.
+        Falls back to per-token LIKE search when FTS5 is unavailable.
+        """
+        slug = self.normalize_topic(topic)
+        tokens = tokenize_query(query)
+        if not tokens:
+            return []
+        fts_query = fts_or_query(tokens)
+        cursor = self.storage.connection.cursor()
+        try:
+            rows = cursor.execute(
+                """SELECT n.id, n.topic, n.kind, n.content, n.title, n.created_at, n.tags, n.pinned
+                   FROM notes n
+                   JOIN notes_fts f ON n.id = f.rowid
+                   WHERE f.topic = ? AND notes_fts MATCH ?
+                   ORDER BY rank LIMIT ?""",
+                (slug, fts_query, limit),
+            ).fetchall()
+            hits = [dict(r) for r in rows]
+            if hits:
+                return hits
+        except Exception as e:
+            logger.debug(f"search_notes_fts FTS failed, falling back to LIKE: {e}")
+        # Fallback: per-token LIKE union (same semantics, no ranking)
+        seen: set = set()
+        out: list[dict] = []
+        for tok in tokens[:12]:
+            like = f"%{tok}%"
+            try:
+                rows = cursor.execute(
+                    """SELECT id, topic, kind, content, title, created_at, tags, pinned FROM notes
+                       WHERE topic = ? AND (content LIKE ? OR title LIKE ?)
+                       ORDER BY pinned DESC, created_at DESC LIMIT ?""",
+                    (slug, like, like, limit),
+                ).fetchall()
+            except Exception:
+                continue
+            for r in rows:
+                d = dict(r)
+                if d.get("id") not in seen:
+                    seen.add(d.get("id"))
+                    out.append(d)
+            if len(out) >= limit:
+                break
+        return out[:limit]
 
     def search_notes(
         self, topic: str, kind: str = "", query: str = "", tags: str = "", limit: int = 10

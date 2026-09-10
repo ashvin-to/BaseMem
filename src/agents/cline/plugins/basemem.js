@@ -59,6 +59,20 @@ function fetchMemContext(topic) {
   }
 }
 
+function fetchRecall(promptText, topic) {
+  if (!promptText || promptText.trim().length < 8) return '';
+  try {
+    const { spawnSync } = require('child_process');
+    const res = spawnSync(memPath,
+      ['prompt-context', '--topic', topic, '--query', promptText.slice(0, 2000)],
+      { timeout: 4000, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] });
+    if (res.error || res.status !== 0) return '';
+    return (res.stdout || '').trim().slice(0, 2000);
+  } catch (_) {
+    return '';
+  }
+}
+
 const basememPlugin = {
   name: 'basemem',
   manifest: {
@@ -97,6 +111,21 @@ const basememPlugin = {
         type: 'context_injection',
         context: bootstrap,
       };
+    },
+    user_message(context) {
+      // Per-prompt recall: FTS5 memory + code hits for THIS user message.
+      try {
+        const parts = context && (context.parts || context.messageParts);
+        const text = Array.isArray(parts)
+          ? parts.filter(p => p && typeof p.text === 'string').map(p => p.text).join('\n')
+          : (typeof context === 'string' ? context : (context && context.text) || '');
+        const cwd = process.env.PWD && fs.existsSync(process.env.PWD) ? process.env.PWD : process.cwd();
+        const hits = fetchRecall(text, findProjectName(cwd));
+        if (hits) {
+          return { type: 'context_injection', context: `<BASEMEM_PROMPT_CONTEXT>\n${hits}\n</BASEMEM_PROMPT_CONTEXT>` };
+        }
+      } catch (_) {}
+      return undefined;
     },
   },
 };

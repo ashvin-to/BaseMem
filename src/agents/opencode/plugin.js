@@ -48,6 +48,28 @@ function fetchMemContext(projectName) {
   }
 }
 
+function fetchPromptContextSync(promptText, topic) {
+  if (!promptText || promptText.trim().length < 8) return '';
+  try {
+    const { spawnSync } = require('child_process');
+    const memBin = process.env.BASEMEM_BIN_DIR
+      ? path.join(process.env.BASEMEM_BIN_DIR, 'mem')
+      : 'mem';
+    const res = spawnSync(memBin,
+      ['prompt-context', '--topic', topic || findProjectName(), '--query', promptText.slice(0, 2000)],
+      { timeout: 4000, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] });
+    if (res.error || res.status !== 0) return '';
+    return (res.stdout || '').trim().slice(0, 2000);
+  } catch (_) {
+    return '';
+  }
+}
+
+function recallBlock(promptText, topic) {
+  const hits = fetchPromptContextSync(promptText, topic);
+  return hits ? `\n\n<BASEMEM_PROMPT_CONTEXT>\n${hits}\n</BASEMEM_PROMPT_CONTEXT>` : '';
+}
+
 let injected = false;
 
 export const BaseMemPlugin = async ({ project, client, $, directory, worktree }) => {
@@ -160,7 +182,11 @@ export const BaseMemPlugin = async ({ project, client, $, directory, worktree })
       if (output.parts && output.parts.length) {
         const textPart = output.parts.find(p => p.type === 'text' && p.text);
         if (textPart && !textPart.text.includes('[Memory Reminder]')) {
-          textPart.text += '\n\n[Memory Reminder] BaseMem memory is active — use mem_*/code_* tools; log edits with logInteraction(topic=<repo>).';
+          // Query-aware recall: FTS5 memory + code hits for THIS prompt.
+          const projectName = findProjectName();
+          let recall = '';
+          try { recall = recallBlock(textPart.text, projectName); } catch (_) { recall = ''; }
+          textPart.text += '\n\n[Memory Reminder] BaseMem memory is active — use mem_*/code_* tools; log edits with logInteraction(topic=<repo>).' + recall;
         }
       }
     },

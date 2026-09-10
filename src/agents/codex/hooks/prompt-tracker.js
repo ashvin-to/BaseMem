@@ -1,8 +1,7 @@
 #!/usr/bin/env node
-const { emitTrackerOutput } = require('../../../hooks/lib/tracker.js');
+const { handlePromptInput } = require('../../../hooks/lib/prompt-context.js');
 let input = '';
 process.stdin.on('data', chunk => { input += chunk; });
 process.stdin.on('end', () => {
-  try { JSON.parse(input); } catch (_) {}
-  emitTrackerOutput('codex');
+  handlePromptInput('codex', input);
 });

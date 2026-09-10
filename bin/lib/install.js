@@ -615,6 +615,7 @@ function copyWithRewrite(srcFile, destFile) {
     let content = fs.readFileSync(srcFile, 'utf-8');
     // Replace relative paths to shared hook libs with absolute paths to BASEMEM_ROOT
     content = content.replace(/require\(['"]\.\.\/\.\.\/\.\.\/hooks\/lib\/([^'"]+)['"]\)/g, `require('${BASEMEM_ROOT}/src/hooks/lib/$1')`);
+    content = content.replace(/require\(['"]\.\.\/\.\.\/hooks\/lib\/([^'"]+)['"]\)/g, `require('${BASEMEM_ROOT}/src/hooks/lib/$1')`);
     content = content.replace(/require\(['"]\.\.\/\.\.\/\.\.\/\.\.\/bin\/lib\/rules\.js['"]\)/g, `require('${BASEMEM_ROOT}/bin/lib/rules.js')`);
     content = content.replace(/require\(['"]\.\.\/\.\.\/\.\.\/bin\/lib\/rules\.js['"]\)/g, `require('${BASEMEM_ROOT}/bin/lib/rules.js')`);
     fs.writeFileSync(destFile, content, 'utf-8');
@@ -708,6 +709,24 @@ function deployHooks(name) {
   }
 
   fs.mkdirSync(dest, { recursive: true });
+
+  // Shared hook libs (src/hooks/lib/*) must ship alongside the hooks:
+  // prompt-tracker.js requires ../../../hooks/lib/prompt-context.js which
+  // copyWithRewrite absolutizes to BASEMEM_ROOT — but the deployed copy must
+  // ALSO resolve if BASEMEM_ROOT moves. Deploy lib/ next to hooks as backup.
+  // Layout: dest/../lib/*.js mirrors src/hooks/lib/*.js.
+  try {
+    const libSrc = path.join(BASEMEM_ROOT, 'src', 'hooks', 'lib');
+    const libDest = path.resolve(dest, '..', 'lib');
+    if (fs.existsSync(libSrc)) {
+      fs.mkdirSync(libDest, { recursive: true });
+      for (const entry of fs.readdirSync(libSrc)) {
+        if (!entry.endsWith('.js')) continue;
+        copyWithRewrite(path.join(libSrc, entry), path.join(libDest, entry));
+        try { fs.chmodSync(path.join(libDest, entry), 0o644); } catch (_) {}
+      }
+    }
+  } catch (_) {}
 
   const entries = fs.readdirSync(src);
   for (const entry of entries) {

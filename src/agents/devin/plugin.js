@@ -89,11 +89,25 @@ export const BaseMemPlugin = async ({ client, directory }) => {
 
       if (isUser) {
         const reminder = '\n\n[Memory Reminder] BaseMem memory is active — use mem_*/code_* tools; log edits with logInteraction(topic=<repo>).';
+        // Per-prompt recall: FTS5 memory + code hits for THIS user message.
+        let recall = '';
+        try {
+          const promptText = input?.message?.parts?.filter(p => p.type === 'text').map(p => p.text || '').join('\n') || '';
+          const topic = findProjectName();
+          if (promptText.trim().length >= 8) {
+            const { spawnSync } = await import('child_process');
+            const res = spawnSync('mem', ['prompt-context', '--topic', topic, '--query', promptText.slice(0, 2000)],
+              { timeout: 4000, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] });
+            if (!res.error && res.status === 0 && (res.stdout || '').trim()) {
+              recall = `\n\n<BASEMEM_PROMPT_CONTEXT>\n${res.stdout.trim().slice(0, 2000)}\n</BASEMEM_PROMPT_CONTEXT>`;
+            }
+          }
+        } catch (_) { recall = ''; }
         if (output?.messages?.length) {
           const lastUser = output.messages.findLast(m => m.info?.role === 'user');
           if (lastUser && lastUser.parts?.length) {
             const textPart = lastUser.parts.find(p => p.type === 'text');
-            if (textPart) textPart.text += reminder;
+            if (textPart) textPart.text += reminder + recall;
           }
         }
       }

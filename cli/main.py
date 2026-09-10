@@ -441,6 +441,103 @@ def migrate():
     click.echo("Schema up-to-date.")
 
 
+@cli.command(name="prompt-context")
+@click.option('--topic', '-t', default=None, help='Topic/planet name (defaults to cwd project)')
+@click.option('--query', '-q', required=True, help='User prompt text to search for relevant context')
+@click.option('--root', default='.', help='Project root for code index lookup (defaults to cwd)')
+@click.option('--limit', default=3, type=int, help='Max hits per source (memory + code)')
+@click.option('--format', 'out_format', type=click.Choice(['text', 'json']), default='text')
+@click.option('--max-chars', default=1500, type=int, help='Max output characters (text format)')
+@click.pass_context
+def prompt_context(ctx, topic, query, root, limit, out_format, max_chars):
+    """Query-aware recall: FTS5 search memory notes + code symbols for a user prompt.
+
+    Designed for UserPromptSubmit hooks: fast (<1s), silent on failure,
+    prints nothing when no relevant context is found (exit 0).
+    """
+    import os
+    text = (query or '').strip()
+    if len(text) < 8:
+        return  # too short to be meaningful — stay silent
+    # Cap prompt length sent into FTS tokenizers
+    if len(text) > 2000:
+        text = text[:2000]
+    from storage.sessions import SessionManager
+    from storage.notes import tokenize_query
+    manager = SessionManager(ctx.obj['storage'])
+    if not topic:
+        topic = _topic_from_cwd() or get_project_root()
+
+    tokens = tokenize_query(text)
+    if not tokens:
+        return
+
+    mem_hits: list = []
+    try:
+        # True FTS5 recall over notes_fts (topic-scoped, falls back to LIKE).
+        mem_hits = manager.search_notes_fts(topic, ' '.join(tokens[:12]), limit=limit) or []
+    except Exception:
+        mem_hits = []
+
+    code_hits: list = []
+    try:
+        from indexer import CODE_DB_FILENAME, CodeIndexer
+        croot = os.path.abspath(root or os.getcwd())
+        # Walk up to 3 levels to find the code index (hook cwd may be a subdir)
+        db_path = None
+        cur = croot
+        for _ in range(4):
+            cand = os.path.join(cur, CODE_DB_FILENAME)
+            if os.path.isfile(cand):
+                db_path = cand
+                croot = cur
+                break
+            parent = os.path.dirname(cur)
+            if parent == cur:
+                break
+            cur = parent
+        if db_path:
+            indexer = CodeIndexer(croot)
+            try:
+                code_hits = indexer.search_symbols(' '.join(tokens[:8]), limit=limit) or []
+            finally:
+                try:
+                    indexer.close()
+                except Exception:
+                    pass
+    except Exception:
+        code_hits = []
+
+    if not mem_hits and not code_hits:
+        return
+
+    if out_format == 'json':
+        click.echo(json.dumps({'memory': mem_hits, 'code': code_hits}, default=str))
+        return
+
+    lines: list[str] = []
+    if mem_hits:
+        lines.append('[Relevant memory]')
+        for n in mem_hits[:limit]:
+            kind = (n.get('kind') or 'note')
+            title = (n.get('title') or '')[:100]
+            content = ' '.join((n.get('content') or '').split())[:300]
+            lines.append(f"- ({kind}) {title}: {content}" if title else f"- ({kind}) {content}")
+    if code_hits:
+        lines.append('[Relevant code]')
+        for s in code_hits[:limit]:
+            sig = ' '.join((s.get('signature') or '').split())[:160]
+            loc = f"{s.get('file_path')}:{s.get('start_line')}-{s.get('end_line')}"
+            desc = f"{s.get('symbol_name')} ({s.get('symbol_type')}) {loc}"
+            if sig:
+                desc += f" — {sig}"
+            lines.append(f"- {desc}"[:350])
+    out = '\n'.join(lines)
+    if len(out) > max_chars:
+        out = out[:max_chars - 3].rstrip() + '...'
+    click.echo(out)
+
+
 @cli.command()
 @click.option('--planet', help='Export only a specific planet')
 @click.option('--output', '-o', default='basemem-export.json', help='Output file path')
