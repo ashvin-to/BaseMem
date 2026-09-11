@@ -115,10 +115,12 @@ function testTrackerOutputContent() {
 
     process.stdout.write = origWrite;
 
+    // Positive trigger framing: the lead verbs must name the tools.
     assert.ok(output.includes('code_find'), `${format} tracker output should mention code_find, got: ${output}`);
     assert.ok(output.includes('logInteraction'), `${format} tracker output should mention logInteraction, got: ${output}`);
     assert.ok(output.includes('code_read'), `${format} tracker output should mention code_read, got: ${output}`);
-    assert.ok(output.includes('code_explore'), `${format} tracker output should mention code_explore, got: ${output}`);
+    assert.ok(output.includes('code_*'), `${format} tracker output should mention the code_* family, got: ${output}`);
+    assert.ok(output.includes('Before answering'), `${format} tracker output should lead with an action trigger, got: ${output}`);
   }
 }
 

@@ -2,7 +2,7 @@
 // emitHookOutput(format, contextResult, rulesText) writes the JSON the agent expects.
 // contextResult is the { topic, context, codeStats } | null returned by context.js#fetchContext.
 
-const PLACEHOLDER =
+const PLACEHOLDER = require('../../../bin/lib/rules.js').INJECTED_TAIL ||
   'Memory context for this project is already injected above — do not call getContext or ' +
   'list_planets at session start. Only use getContext mid-session if you need a refresh or switch topics.';
 

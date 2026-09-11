@@ -3,18 +3,29 @@ const path = require('path');
 const os = require('os');
 const { MARKER_START, MARKER_END } = require('./constants.js');
 
-const BASEMEM_RULES_CORE = `Memory context injected — do not call getContext at session start. Log decisions: logInteraction(topic, decision="what and why"). End sessions: logInteraction(topic, summary="...", activity="done"). Code: use code_find/code_read/code_explore/code_files instead of grep/glob/read — they auto-index on first use. For plain text search use code_find(query, grep=True). Empty results → code_init first. Review: use get_review_context(files). Check skills/ before multi-step tasks. Topic = repo folder name.`;
+const BASEMEM_RULES_BODY = `Topic = repo folder name; pass it to every memory tool call.
+Code question, bug, or explore? Call code_find FIRST — never grep/glob/Read first (grep=True for text search). Empty result → code_init(projectRoot) once, then retry. Read windows with code_read(filePath, offset, limit<=50); trace callers with code_explore; list files with code_files; review diffs with get_review_context(files).
+Decision made, fix applied, or fact learned? Call logInteraction(topic, decision="what + why") NOW — never defer it to session end.
+Session ending? Call logInteraction(topic, summary="...", activity="done").
+Check skills/ before multi-step tasks.`;
+
+// NOTE: INJECTED_TAIL must stay identical to PLACEHOLDER in src/hooks/lib/output.js —
+// output.js replaces that sentence with the live context. A test pins them equal.
+const INJECTED_TAIL = 'Memory context for this project is already injected above — do not call getContext or list_planets at session start. Only use getContext mid-session if you need a refresh or switch topics.';
+
+const BASEMEM_RULES_CORE = `Memory context injected — live context is below, do not re-fetch it.
+${BASEMEM_RULES_BODY}
+${INJECTED_TAIL}`;
 
 const BASEMEM_RULES_TIER1 = BASEMEM_RULES_CORE;
 
 const BASEMEM_RULES_TIER2 = `NOTE: BaseMem rules may be incomplete — run: node bin/lib/install.js repair
-Call getContext exactly once at session start. Then answer directly — do not call search_notes/search_nodes/read_planets.
 ${BASEMEM_RULES_CORE}`;
 
 const BASEMEM_RULES_TIER3 = `NOTE: BaseMem rules may be incomplete — run: node bin/lib/install.js repair
-Call getContext exactly once at session start. Then answer directly — do not call search_notes/search_nodes/read_planets.
-Max one memory read tool call per user message.
-${BASEMEM_RULES_CORE}`;
+Call getContext exactly once at session start.
+${BASEMEM_RULES_BODY}
+Max one memory read tool call per user message.`;
 
 const BASEMEM_RULES = BASEMEM_RULES_TIER1;
 
@@ -88,7 +99,7 @@ function removeRuleBlock(filePath) {
   }
 }
 
-module.exports = { BASEMEM_RULES, BASEMEM_RULES_CORE, BASEMEM_RULES_TIER1, BASEMEM_RULES_TIER2, BASEMEM_RULES_TIER3, writeRuleFile, removeRuleBlock };
+module.exports = { BASEMEM_RULES, BASEMEM_RULES_CORE, BASEMEM_RULES_BODY, INJECTED_TAIL, BASEMEM_RULES_TIER1, BASEMEM_RULES_TIER2, BASEMEM_RULES_TIER3, writeRuleFile, removeRuleBlock };
 
 if (require.main === module) {
   const tmp = path.join(os.tmpdir(), 'basemem-self-test-rules.md');
