@@ -13,6 +13,8 @@ import warnings
 from pathlib import Path
 from typing import Optional
 
+from .languages import LANGUAGE_QUERIES as _LANGUAGE_QUERIES
+
 try:
     from tree_sitter import Language, Node, Parser, Query, QueryCursor
     from tree_sitter_language_pack import ProcessConfig, detect_language_from_extension, process
@@ -37,6 +39,9 @@ _LANGUAGE_SO = {
     "typescript": ("libtree_sitter_typescript.so", "tree_sitter_typescript"),
     "tsx":        ("libtree_sitter_tsx.so",        "tree_sitter_tsx"),
     "rust":       ("libtree_sitter_rust.so",       "tree_sitter_rust"),
+    "java":       ("libtree_sitter_java.so",       "tree_sitter_java"),
+    "c":          ("libtree_sitter_c.so",          "tree_sitter_c"),
+    "cpp":        ("libtree_sitter_cpp.so",        "tree_sitter_cpp"),
 }
 
 
@@ -107,8 +112,12 @@ PYTHON_QUERIES = {
     """,
     "import_from": """
         (import_from_statement
-            module_name: (dotted_name) @module
-            name: (dotted_name) @name) @import_from
+            module_name: (_) @module
+            name: (_) @name) @import_from
+    """,
+    "relative_import": """
+        (import_from_statement
+            name: (relative_import) @name) @import_from
     """,
     "decorator": """
         (decorator (identifier) @name) @decorator
@@ -144,6 +153,14 @@ JS_QUERIES = {
         (call_expression
             function: (member_expression
                 property: (property_identifier) @method)) @call
+    """,
+    "optional_call": """
+        (optional_call_expression
+            function: (member_expression
+                property: (property_identifier) @method)) @call
+    """,
+    "new": """
+        (new_expression constructor: (identifier) @func) @call
     """,
     "import": """
         (import_statement
@@ -208,6 +225,14 @@ TS_QUERIES = {
             function: (member_expression
                 property: (property_identifier) @method)) @call
     """,
+    "optional_call": """
+        (optional_call_expression
+            function: (member_expression
+                property: (property_identifier) @method)) @call
+    """,
+    "new": """
+        (new_expression constructor: (identifier) @func) @call
+    """,
     "import": """
         (import_statement
             source: (string) @source) @import
@@ -246,6 +271,10 @@ RUST_QUERIES = {
         (call_expression
             function: (identifier) @func) @call
     """,
+    "scoped_call": """
+        (call_expression
+            function: (scoped_identifier) @func) @call
+    """,
     "method_call": """
         (call_expression
             function: (field_expression
@@ -268,6 +297,8 @@ LANGUAGE_QUERIES = {
     "tsx": TS_QUERIES,
     "rust": RUST_QUERIES,
 }
+
+LANGUAGE_QUERIES = _LANGUAGE_QUERIES
 
 
 # ── Process-based structure kind mapping ─────────────────────────────
@@ -372,6 +403,8 @@ class CodeParser:
             ("struct", "struct"),
             ("trait", "trait"),
             ("impl", "impl"),
+            ("constructor", "constructor"),
+            ("namespace", "namespace"),
             ("arrow", "arrow"),
         ]:
             if query_name not in self.queries:
@@ -413,6 +446,12 @@ class CodeParser:
                         if kt in ("get", "set"):
                             kind_val = f"{kt}_{kind}"
 
+                rust_parent = None
+                if self.language == "rust" and kind == "function":
+                    rust_parent = _find_parent_class(root, sym_node)
+                    if rust_parent is not None and rust_parent.type == "impl_item":
+                        kind_val = "method"
+
                 signature = ""
                 if "params" in cap_map:
                     params_node = _first_node(cap_map["params"])
@@ -424,7 +463,7 @@ class CodeParser:
 
                 # Determine parent for methods
                 if kind_val in ("method", "async_method", "method_signature"):
-                    parent = _find_parent_class(root, sym_node)
+                    parent = rust_parent or _find_parent_class(root, sym_node)
                     if parent:
                         parent_name_node = _find_named_child(parent, self.language)
                         if parent_name_node:
@@ -494,6 +533,28 @@ class CodeParser:
                         "line_number": method_node.start_point[0] + 1,
                     })
 
+        for query_name, capture_name in (
+            ("optional_call", "method"),
+            ("new", "func"),
+            ("scoped_call", "func"),
+        ):
+            query = self._get_query(query_name)
+            if query is None:
+                continue
+            cursor = QueryCursor(query)
+            for _p_idx, captures in cursor.matches(root):
+                call_node = _first_node(captures.get("call"))
+                callee_node = _first_node(captures.get(capture_name))
+                if call_node and callee_node:
+                    caller = _find_enclosing_func(root, call_node)
+                    edges.append({
+                        "edge_type": "calls",
+                        "from_name": caller or "",
+                        "target_name": _node_text(callee_node, source_bytes),
+                        "file_path": file_path,
+                        "line_number": callee_node.start_point[0] + 1,
+                    })
+
         return edges
 
     def _extract_imports(self, root: Node, source_bytes: bytes, file_path: str):
@@ -525,21 +586,29 @@ class CodeParser:
                         "line_number": name_node.start_point[0] + 1,
                     })
 
-        if q_from:
-            cursor = QueryCursor(q_from)
+        for import_query in (q_from, self._get_query("relative_import")):
+            if import_query is None:
+                continue
+            cursor = QueryCursor(import_query)
             for _p_idx, captures in cursor.matches(root):
                 module_node = _first_node(captures.get("module"))
                 name_node = _first_node(captures.get("name"))
                 if module_node:
                     module = _node_text(module_node, source_bytes)
                     name = _node_text(name_node, source_bytes) if name_node else "*"
-                    edges.append({
-                        "edge_type": "imports",
-                        "from_name": f"{module}.{name}",
-                        "target_name": None,
-                        "file_path": file_path,
-                        "line_number": module_node.start_point[0] + 1,
-                    })
+                    import_name = f"{module}.{name}"
+                elif name_node:
+                    import_name = _node_text(name_node, source_bytes)
+                else:
+                    continue
+                anchor = module_node or name_node
+                edges.append({
+                    "edge_type": "imports",
+                    "from_name": import_name,
+                    "target_name": None,
+                    "file_path": file_path,
+                    "line_number": anchor.start_point[0] + 1,
+                })
 
         return edges
 
@@ -697,7 +766,7 @@ def _find_parent_class(_root, method_node):
     cursor = method_node.walk()
     parent = cursor.node.parent
     while parent is not None and parent.type not in ("module", "program"):
-        if parent.type in ("class_definition", "class_declaration"):
+        if parent.type in ("class_definition", "class_declaration", "impl_item"):
             return parent
         parent = parent.parent
     return None

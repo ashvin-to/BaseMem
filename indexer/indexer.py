@@ -558,6 +558,36 @@ class CodeIndexer:
         result["indexed"] = True
         return result
 
+    def get_index_diagnostics(self) -> dict:
+        stats = self.get_project_stats()
+        if not stats.get("indexed"):
+            return {"status": "not_indexed", "project": self.project_root}
+        languages = [
+            dict(row)
+            for row in self.conn.execute(
+                "SELECT language, COUNT(*) AS symbols FROM code_symbols "
+                "WHERE project_id = ? GROUP BY language ORDER BY symbols DESC",
+                (self.project_id,),
+            )
+        ]
+        unresolved = self.conn.execute(
+            "SELECT COUNT(*) AS c FROM code_edges "
+            "WHERE project_id = ? AND edge_type = 'calls' AND to_symbol_id = 0",
+            (self.project_id,),
+        ).fetchone()
+        indexed_files = self.conn.execute(
+            "SELECT COUNT(DISTINCT file_path) AS c FROM code_symbols WHERE project_id = ?",
+            (self.project_id,),
+        ).fetchone()
+        return {
+            "status": "ready",
+            "project": self.project_root,
+            "last_indexed": stats.get("last_indexed"),
+            "files": indexed_files["c"] if indexed_files else 0,
+            "languages": languages,
+            "unresolved_calls": unresolved["c"] if unresolved else 0,
+        }
+
     # ── Internal ──────────────────────────────────────────────────
 
     def _clear_project(self):
@@ -832,6 +862,21 @@ class CodeIndexer:
                 pass
 
         if not changed:
+            last_indexed = stats.get("last_indexed")
+            if last_indexed:
+                try:
+                    from datetime import datetime, timezone
+
+                    indexed_at = datetime.fromisoformat(last_indexed).replace(tzinfo=timezone.utc).timestamp()
+                    changed = [
+                        str(fp.relative_to(repo))
+                        for fp in self._discover_files(repo)
+                        if fp.stat().st_mtime > indexed_at
+                    ]
+                except (TypeError, ValueError, OSError):
+                    changed = []
+
+        if not changed:
             stat = self.get_project_stats()
             return {"status": "unchanged", "files": 0, "symbols": stat.get("symbol_count", 0), "edges": 0}
 
@@ -884,6 +929,15 @@ class CodeIndexer:
                         SELECT cs.id FROM code_symbols cs
                         WHERE cs.symbol_name = code_edges.{name_col}
                           AND cs.project_id = code_edges.project_id
+                          AND (
+                              code_edges.from_symbol_id = 0
+                              OR cs.language = (
+                                  SELECT caller.language FROM code_symbols caller
+                                  WHERE caller.id = code_edges.from_symbol_id
+                              )
+                          )
+                        ORDER BY CASE WHEN cs.symbol_type IN ('method', 'class', 'interface', 'struct') THEN 0 ELSE 1 END,
+                                 cs.id
                         LIMIT 1
                     )
                     WHERE code_edges.{col} = 0

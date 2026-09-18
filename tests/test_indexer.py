@@ -5,7 +5,7 @@ import sqlite3
 import pytest
 
 from indexer.indexer import CodeIndexer
-from indexer.parser import CodeParser
+from indexer.parser import LANGUAGE_QUERIES, _LANGUAGE_SO, CodeParser
 
 @pytest.fixture
 def temp_project():
@@ -15,6 +15,36 @@ def temp_project():
         project_dir = Path(tmpdir) / "TestProject"
         project_dir.mkdir()
         yield project_dir
+
+
+def test_custom_language_query_contracts():
+    assert "optional_call" in LANGUAGE_QUERIES["javascript"]
+    assert "new" in LANGUAGE_QUERIES["javascript"]
+    assert "optional_call" in LANGUAGE_QUERIES["typescript"]
+    assert "new" in LANGUAGE_QUERIES["tsx"]
+    assert "scoped_call" in LANGUAGE_QUERIES["rust"]
+    assert "relative_import" in LANGUAGE_QUERIES["python"]
+    assert {"java", "c", "cpp"}.issubset(_LANGUAGE_SO)
+    assert {"java", "c", "cpp"}.issubset(LANGUAGE_QUERIES)
+    assert "method_invocation" in LANGUAGE_QUERIES["java"]["call"]
+    assert "preproc_include" in LANGUAGE_QUERIES["c"]["import"]
+    assert "function_definition" in LANGUAGE_QUERIES["cpp"]["function"]
+    assert "preproc_include" in LANGUAGE_QUERIES["cpp"]["import"]
+
+
+def test_custom_language_grammar_fixtures():
+    pytest.importorskip("tree_sitter_language_pack")
+    samples = {
+        "java": (b"import q.R; class A { void m(){ helper(); } }", "Fixture.java"),
+        "c": (b"struct S { int field; }; int add(int a) { return helper(a); }", "fixture.c"),
+        "cpp": (b"namespace n { int f(){ return g(); } }", "fixture.cpp"),
+    }
+    for language, (source, path) in samples.items():
+        symbols, edges = CodeParser(language).parse(source, path)
+        names = {symbol["symbol_name"] for symbol in symbols}
+        targets = {edge.get("target_name") for edge in edges}
+        assert names
+        assert targets - {None}
 
 
 def test_indexer_lowercase_project_id(temp_project):
