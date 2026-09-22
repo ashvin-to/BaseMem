@@ -71,6 +71,35 @@ cli.add_command(edge)
 cli.add_command(code)
 
 
+def _read_injected_exclude_ids(topic: str, cache_dir: str | None = None) -> set[int]:
+    """Read note ids surfaced by the most recent `mem agent-context` for a topic.
+
+    Mirrors SessionManager.normalize_topic so slugs match the write side in
+    storage/notes.py#_write_injected_notes_cache. Missing/corrupt file → empty
+    set; never raises.
+    """
+    from storage.sessions import SessionManager as _SM
+    import json as _json
+    import os as _os
+    try:
+        slug = _SM.normalize_topic(topic)
+        if cache_dir is None:
+            override = _os.environ.get("BASEMEM_INJECTED_DIR")
+            base = override or _os.path.join(
+                _os.path.expanduser("~"), ".basemem", "injected-notes"
+            )
+        else:
+            base = cache_dir
+        p = _os.path.join(base, f"{slug}.json")
+        if not _os.path.isfile(p):
+            return set()
+        with open(p, "r", encoding="utf-8") as f:
+            data = _json.load(f)
+        return {int(i) for i in (data.get("note_ids") or [])}
+    except Exception:
+        return set()
+
+
 # ── Top-level commands ──
 
 @cli.command("viz")
@@ -472,10 +501,15 @@ def prompt_context(ctx, topic, query, root, limit, out_format, max_chars):
     if not tokens:
         return
 
+    exclude_ids = _read_injected_exclude_ids(topic)
+
     mem_hits: list = []
     try:
         # True FTS5 recall over notes_fts (topic-scoped, falls back to LIKE).
-        mem_hits = manager.search_notes_fts(topic, ' '.join(tokens[:12]), limit=limit) or []
+        # Suppress notes already surfaced by the most recent agent-context call.
+        mem_hits = manager.search_notes_fts(
+            topic, ' '.join(tokens[:12]), limit=limit, exclude_ids=exclude_ids
+        ) or []
     except Exception:
         mem_hits = []
 

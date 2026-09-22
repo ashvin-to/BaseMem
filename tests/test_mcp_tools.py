@@ -567,7 +567,21 @@ class TestCodeTools:
         r = code_find(query="test", grep=True, projectRoot="/tmp", context=2)
         assert isinstance(r, str)
 
-    @pytestmark_code
+    def test_code_find_grep_regex(self, tmp_path):
+        from mcp_server.server import code_find
+        (tmp_path / "a.txt").write_text("alpha\nbeta\ngamma\n")
+        r = code_find(query=r"alpha|gamma", grep=True, useRegex=True, projectRoot=str(tmp_path))
+        assert "alpha" in r
+        assert "gamma" in r
+        assert "grep error" not in r
+
+    def test_code_read_caps_window(self, tmp_path):
+        from mcp_server.server import code_read
+        (tmp_path / "long.txt").write_text("\n".join(str(i) for i in range(80)) + "\n")
+        r = code_read("long.txt", projectRoot=str(tmp_path), offset=1, limit=200)
+        assert "shown=50" in r
+        assert "capped: requested 200" in r
+
     def test_code_trace_no_index(self):
         from mcp_server.server import code_trace
         r = code_trace("main", projectRoot="/tmp/__nonexistent__")
@@ -594,8 +608,22 @@ class TestCodeTools:
         r = code_files(projectRoot=str(tmp_path), pattern="**/*.nosuch")
         assert "No files matching" in r
 
+    def test_code_files_compact_glob(self, tmp_path):
+        from mcp_server.server import code_files
+        (tmp_path / "a.json").write_text("{}")
+        r = code_files(projectRoot=str(tmp_path), pattern="**/*.json", limit=1)
+        assert r.startswith("code_files pattern=")
+        assert "a.json" in r
+        assert "total=1 shown=1" in r
+
     @pytestmark_code
-    def test_code_explore_no_index(self):
+    def test_code_explore_caps_source(self, tmp_path):
+        from mcp_server.server import code_explore
+        (tmp_path / "long.py").write_text("def target():\n" + "\n".join(f"    x = {i}" for i in range(80)) + "\n")
+        r = code_explore("target", projectRoot=str(tmp_path), limit=1)
+        assert "source:" in r
+        assert "more: code_read" in r
+
         from mcp_server.server import code_explore
         r = code_explore("main", projectRoot="/tmp/__nonexistent__")
         assert "not found" in r.lower() or "No code index" in r or "No matches" in r or "not a directory" in r.lower()
@@ -606,11 +634,13 @@ class TestCodeTools:
         r = code_impact("main", projectRoot="/tmp/__nonexistent__")
         assert "No code index" in r
 
-    @pytestmark_code
-    def test_code_read_no_index(self):
+    def test_code_read_no_index(self, tmp_path):
         from mcp_server.server import code_read
-        r = code_read("main.py", projectRoot="/tmp/__nonexistent__")
-        assert "No code index" in r
+        (tmp_path / "main.py").write_text("one\ntwo\nthree\n")
+        r = code_read("main.py", projectRoot=str(tmp_path), offset=2, limit=2)
+        assert r.startswith("code_read main.py:2-3 total=3 shown=2")
+        assert "2|two" in r
+        assert "3|three" in r
 
     @pytestmark_code
     def test_code_list_projects(self):

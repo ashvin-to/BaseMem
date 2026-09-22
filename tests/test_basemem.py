@@ -1,5 +1,6 @@
 """Tests for BaseMem"""
 
+import json
 import tempfile
 from pathlib import Path
 
@@ -202,6 +203,135 @@ class TestSessions:
         assert "Keep agent handoff memory small and durable." in context
         assert "Use kb agent-context as the canonical entrypoint." in context
 
+
+class TestInjectedNotesDedup:
+    """Dedup between agent-context (session start) and prompt-context (per prompt).
+
+    build_agent_context writes a per-topic cache of surfaced note ids;
+    search_notes_fts excludes those ids; cli reads the cache into exclude_ids.
+    """
+
+    def _setup(self, temp_db, topic="dedup-project"):
+        manager = SessionManager(temp_db)
+        manager.update_planet("home-dashboard", topic, status="active")
+        return manager
+
+    def test_agent_context_writes_injected_notes_cache(self, temp_db, monkeypatch, tmp_path):
+        manager = self._setup(temp_db)
+        cache_dir = tmp_path / "injected"
+        monkeypatch.setenv("BASEMEM_INJECTED_DIR", str(cache_dir))
+        n = manager.add_note(
+            "home-dashboard", "dedup-project", "decision",
+            "Use JWT refresh tokens for session auth flow", agent_id="codex",
+        )
+        ctx = manager.build_agent_context("dedup-project")
+        assert ctx  # context generated
+        cache_file = cache_dir / "dedup-project.json"
+        assert cache_file.exists(), "agent-context must write the injected-notes cache"
+        data = json.loads(cache_file.read_text())
+        assert "note_ids" in data and "written_at" in data
+        assert manager._parse_note_id(n["id"]) in data["note_ids"]
+
+    def test_agent_context_cache_is_overwritten_on_each_call(
+        self, temp_db, monkeypatch, tmp_path
+    ):
+        manager = self._setup(temp_db)
+        cache_dir = tmp_path / "injected"
+        monkeypatch.setenv("BASEMEM_INJECTED_DIR", str(cache_dir))
+        n1 = manager.add_note(
+            "home-dashboard", "dedup-project", "decision", "First decision note",
+            agent_id="codex",
+        )
+        manager.build_agent_context("dedup-project")
+        # Add a second note; the next agent-context should overwrite with both.
+        n2 = manager.add_note(
+            "home-dashboard", "dedup-project", "fact", "Second fact note",
+            agent_id="codex",
+        )
+        manager.build_agent_context("dedup-project")
+        data = json.loads((cache_dir / "dedup-project.json").read_text())
+        ids = set(data["note_ids"])
+        assert manager._parse_note_id(n1["id"]) in ids
+        assert manager._parse_note_id(n2["id"]) in ids
+    def test_search_notes_fts_excludes_ids_fts_mode(self, temp_db):
+        manager = self._setup(temp_db)
+        a = manager.add_note(
+            "home-dashboard", "dedup-project", "decision",
+            "Use JWT refresh tokens for session auth flow", agent_id="codex",
+        )
+        b = manager.add_note(
+            "home-dashboard", "dedup-project", "fact",
+            "The session module lives in the billing package", agent_id="codex",
+        )
+        aid = manager._parse_note_id(a["id"])
+        bid = manager._parse_note_id(b["id"])
+        # Both match before exclusion
+        hits = manager.search_notes_fts("dedup-project", "session auth flow")
+        assert any(h["id"] == aid for h in hits)
+        assert any(h["id"] == bid for h in hits)
+        # Excluding A removes it but keeps B
+        excluded = manager.search_notes_fts(
+            "dedup-project", "session auth flow", exclude_ids={aid}
+        )
+        assert all(h["id"] != aid for h in excluded)
+        assert any(h["id"] == bid for h in excluded)
+
+    def test_search_notes_fts_excludes_ids_like_fallback(self, temp_db):
+        manager = self._setup(temp_db)
+        a = manager.add_note(
+            "home-dashboard", "dedup-project", "decision",
+            "Use JWT refresh tokens for session auth flow", agent_id="codex",
+        )
+        b = manager.add_note(
+            "home-dashboard", "dedup-project", "fact",
+            "session manager resides in the auth package", agent_id="codex",
+        )
+        aid = manager._parse_note_id(a["id"])
+        bid = manager._parse_note_id(b["id"])
+        # Force the LIKE fallback by emptying the FTS index.
+        manager.storage.connection.execute("DELETE FROM notes_fts")
+        manager.storage.connection.commit()
+        hits = manager.search_notes_fts("dedup-project", "session auth")
+        assert any(h["id"] == aid for h in hits), "fallback should still match A"
+        assert any(h["id"] == bid for h in hits), "fallback should still match B"
+        excluded = manager.search_notes_fts(
+            "dedup-project", "session auth", exclude_ids={aid}
+        )
+        assert all(h["id"] != aid for h in excluded), "LIKE fallback must exclude A"
+        assert any(h["id"] == bid for h in excluded), "LIKE fallback keeps B"
+
+    def test_missing_and_corrupt_cache_graceful(self, tmp_path):
+        from cli.main import _read_injected_exclude_ids
+        cache_dir = tmp_path / "injected"
+        # Missing dir/file -> empty set, no error
+        assert _read_injected_exclude_ids("dedup-project", str(cache_dir)) == set()
+        # Corrupt JSON -> empty set, no error
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        (cache_dir / "dedup-project.json").write_text("{not valid json", encoding="utf-8")
+        assert _read_injected_exclude_ids("dedup-project", str(cache_dir)) == set()
+        # Valid cache round-trips as ints
+        (cache_dir / "dedup-project.json").write_text(
+            json.dumps({"note_ids": [12, 47, 103], "written_at": "now"}), encoding="utf-8"
+        )
+        assert _read_injected_exclude_ids("dedup-project", str(cache_dir)) == {12, 47, 103}
+
+    def test_end_to_end_surface_then_suppress(self, temp_db, monkeypatch, tmp_path):
+        """A note surfaced by agent-context is NOT returned by prompt-context dedup."""
+        from cli.main import _read_injected_exclude_ids
+        manager = self._setup(temp_db)
+        cache_dir = tmp_path / "injected"
+        monkeypatch.setenv("BASEMEM_INJECTED_DIR", str(cache_dir))
+        n = manager.add_note(
+            "home-dashboard", "dedup-project", "decision",
+            "Use JWT refresh tokens for session auth flow", agent_id="codex",
+        )
+        ctx = manager.build_agent_context("dedup-project")
+        assert ctx
+        nid = manager._parse_note_id(n["id"])
+        exclude = _read_injected_exclude_ids("dedup-project")
+        assert nid in exclude, "agent-context must record the surfaced note id"
+        hits = manager.search_notes_fts("dedup-project", "auth session", exclude_ids=exclude)
+        assert all(h["id"] != nid for h in hits), "surfaced note must be suppressed"
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

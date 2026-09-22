@@ -468,6 +468,27 @@ class NoteMixin:
                 pass
         return key_notes
 
+    def _injected_notes_dir(self) -> str:
+        """Directory for the per-topic injected-notes dedup cache.
+
+        Honors BASEMEM_INJECTED_DIR (test override), else ~/.basemem/injected-notes.
+        """
+        override = os.environ.get("BASEMEM_INJECTED_DIR")
+        if override:
+            return override
+        return os.path.join(os.path.expanduser("~"), ".basemem", "injected-notes")
+
+    def _write_injected_notes_cache(self, topic_slug: str, note_ids: list[int]) -> None:
+        """Best-effort; never raises. Powers dedup in `mem prompt-context`."""
+        try:
+            d = self._injected_notes_dir()
+            os.makedirs(d, exist_ok=True)
+            path = os.path.join(d, f"{topic_slug}.json")
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump({"note_ids": note_ids, "written_at": self._now()}, f)
+        except Exception:
+            pass
+
     def build_agent_context(
         self, topic: str, query: str | None = None, result_limit: int = 5
     ) -> str:
@@ -590,6 +611,18 @@ class NoteMixin:
                 self._trim_text(handoff, 400),
             ])
 
+        # Record which notes were just surfaced so `mem prompt-context` can dedup
+        # them (avoid re-injecting the same note on the first per-prompt recall).
+        try:
+            injected_ids = [
+                n["id"] for n in (pinned_notes + key_notes) if isinstance(n.get("id"), int)
+            ]
+            injected_ids = list(dict.fromkeys(injected_ids))
+            if injected_ids:
+                self._write_injected_notes_cache(topic_slug, injected_ids)
+        except Exception:
+            pass
+
         return "\n".join(lines)
 
     def get_note(self, note_id: int) -> dict | None:
@@ -598,28 +631,44 @@ class NoteMixin:
         return dict(row) if row else None
 
     def search_notes_fts(
-        self, topic: str, query: str, limit: int = 10
+        self,
+        topic: str,
+        query: str,
+        limit: int = 10,
+        exclude_ids: set[int] | None = None,
     ) -> list[dict]:
         """FTS5 search over notes_fts scoped to a topic. Returns ranked note dicts.
 
         Used by the per-prompt recall hook (`mem prompt-context`): the user
         prompt is tokenized into an OR query so any matching token hits.
         Falls back to per-token LIKE search when FTS5 is unavailable.
+
+        exclude_ids: optional set of note ids to suppress (dedup against notes
+        already surfaced by `mem agent-context`). Applied to both the FTS path
+        and the LIKE fallback.
         """
         slug = self.normalize_topic(topic)
         tokens = tokenize_query(query)
         if not tokens:
             return []
+        exclude_ids = exclude_ids or set()
+        exclude_list = sorted(int(i) for i in exclude_ids if isinstance(i, int))
         fts_query = fts_or_query(tokens)
         cursor = self.storage.connection.cursor()
+        exclude_clause = ""
+        excl_params: list = []
+        if exclude_list:
+            ph = ",".join("?" for _ in exclude_list)
+            exclude_clause = f" AND n.id NOT IN ({ph})"
+            excl_params = list(exclude_list)
         try:
             rows = cursor.execute(
                 """SELECT n.id, n.topic, n.kind, n.content, n.title, n.created_at, n.tags, n.pinned
                    FROM notes n
                    JOIN notes_fts f ON n.id = f.rowid
-                   WHERE f.topic = ? AND notes_fts MATCH ?
+                   WHERE f.topic = ? AND notes_fts MATCH ?""" + exclude_clause + """
                    ORDER BY rank LIMIT ?""",
-                (slug, fts_query, limit),
+                [slug, fts_query] + excl_params + [limit],
             ).fetchall()
             hits = [dict(r) for r in rows]
             if hits:
@@ -642,12 +691,37 @@ class NoteMixin:
                 continue
             for r in rows:
                 d = dict(r)
+                if exclude_list and d.get("id") in exclude_list:
+                    continue
                 if d.get("id") not in seen:
                     seen.add(d.get("id"))
                     out.append(d)
             if len(out) >= limit:
                 break
         return out[:limit]
+
+    def list_notes(
+        self, topic: str = "", kind: str = "", limit: int = 10, pinned_only: bool = False
+    ) -> list[dict]:
+        """List notes, newest first. Empty topic = all planets."""
+        cursor = self.storage.connection.cursor()
+        sql = "SELECT id, topic, kind, title, content, created_at, tags, pinned FROM notes"
+        cond: list[str] = []
+        params: list = []
+        if topic:
+            cond.append("topic = ?")
+            params.append(self.normalize_topic(topic))
+        if kind:
+            cond.append("kind = ?")
+            params.append(kind)
+        if pinned_only:
+            cond.append("pinned = 1")
+        if cond:
+            sql += " WHERE " + " AND ".join(cond)
+        sql += " ORDER BY pinned DESC, created_at DESC, id DESC LIMIT ?"
+        params.append(int(limit))
+        rows = cursor.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
 
     def search_notes(
         self, topic: str, kind: str = "", query: str = "", tags: str = "", limit: int = 10

@@ -29,6 +29,37 @@ def note_add(ctx, topic, kind, message, title, status, agent_id):
     click.echo(msg)
 
 
+@note.command("list")
+@click.argument('topic', required=False)
+@click.option('--recent', 'limit', default=10, type=int, help='How many notes to show (default: 10)')
+@click.option('--type', 'kind', help='Filter by kind: decision, fact, summary, task, issue, question, concept, example')
+@click.option('--pinned', is_flag=True, help='Only pinned notes')
+@click.option('--json', 'as_json', is_flag=True, help='Output as JSON')
+@click.pass_context
+def note_list(ctx, topic, limit, kind, pinned, as_json):
+    """List notes, newest first. Topic defaults to the current project."""
+    from storage.sessions import SessionManager
+    if not topic:
+        from .main import _topic_from_cwd
+        topic = _topic_from_cwd() or _get_project_root()
+    manager = SessionManager(ctx.obj['storage'])
+    notes = manager.list_notes(topic=topic, kind=kind, limit=limit, pinned_only=pinned)
+    if not notes:
+        scope = f"topic '{topic}'" + (f", kind '{kind}'" if kind else "")
+        click.echo(f"No notes found for {scope}.")
+        return
+    if as_json:
+        import json
+        click.echo(json.dumps(notes, indent=2, default=str))
+        return
+    click.echo(f"Notes for '{topic}' (showing {len(notes)}, newest first):")
+    for n in notes:
+        title = n['title'] or ' '.join((n['content'] or '').split())[:72]
+        pin = " [pinned]" if n.get('pinned') else ""
+        tags = f" {{{n['tags']}}}" if n.get('tags') else ""
+        click.echo(f"  note-{n['id']} [{n['kind']}] {n['created_at'][:16]}{pin} {title}{tags}")
+
+
 @note.command("link")
 @click.argument('from_id')
 @click.argument('to_id')

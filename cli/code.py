@@ -571,6 +571,11 @@ def code_status(root):
             click.echo("No code indexed. Run `mem code init` first.")
             return
         click.echo(f"{stats.get('name', '?')}: {stats['file_count']}f {stats['symbol_count']}s {stats.get('edges', 0)}e")
+        diagnostics = indexer.get_index_diagnostics()
+        click.echo(f"Status: {diagnostics['status']} | unresolved calls: {diagnostics['unresolved_calls']}")
+        if diagnostics["languages"]:
+            langs = ", ".join(f"{item['language']}={item['symbols']}" for item in diagnostics["languages"][:8])
+            click.echo(f"Languages: {langs}")
     finally:
         indexer.close()
 

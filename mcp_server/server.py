@@ -97,9 +97,8 @@ def code_init(projectRoot: str) -> str:
     try:
         result = indexer.index_project(_max_workers=4)
         return (
-            f"Indexed {result['files']} files, {result['symbols']} symbols, "
-            f"{result['edges']} edges in {result['elapsed']:.1f}s\n"
-            f"DB: {indexer.db_path}"
+            f"code_init ok files={result['files']} symbols={result['symbols']} "
+            f"edges={result['edges']} elapsed={result['elapsed']:.1f}s"
         )
     finally:
         indexer.close()
@@ -132,11 +131,42 @@ def _fmt_loc(file_path: str) -> str:
     return "/".join(parts[-3:]) if len(parts) > 3 else path
 
 
-@server.tool(description="STEP 1 for any code question, bug, or exploration: find symbols or grep text. Use grep=True for text search. THEN read windows with code_read. Empty result means call code_init(projectRoot) once and retry.")
+_MAX_CODE_LINES = 50
+
+
+def _bounded_limit(limit: int) -> int:
+    if limit <= 0:
+        return _MAX_CODE_LINES
+    return min(limit, _MAX_CODE_LINES)
+
+
+def _ensure_code_index(project_root: str):
+    from indexer.lifecycle import open_or_create_index
+
+    return open_or_create_index(project_root, max_workers=4)
+
+
+def _rg_text_search(root: str, query: str, file_path: str, use_regex: bool, context: int):
+    import subprocess
+
+    cmd = ["rg", "-n", "--no-heading", "--color", "never"]
+    if context > 0:
+        cmd.extend(["-C", str(context)])
+    if file_path:
+        cmd.extend(["--glob", file_path])
+    if use_regex:
+        cmd.extend(["--regexp", query])
+    else:
+        cmd.extend(["--fixed-strings", query])
+    cmd.append(root)
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+
+
+@server.tool(description="STEP 1 for any code question or exploration. Returns compact symbol/text locations first; use code_read for source. grep=True searches text; useRegex=True requires grep=True. Results are bounded to 50 entries.")
 def code_find(
     query: str = "",
     projectRoot: str = "",
-    limit: int = 20,
+    limit: int = 10,
     useRegex: bool = False,
     dead: bool = False,
     filePath: str = "",
@@ -152,37 +182,32 @@ def code_find(
     if not filePath and path:
         filePath = path
 
-    # Grep mode — raw text search across all files via ripgrep (no indexer needed)
+    requested_limit = limit
+    limit = _bounded_limit(limit)
+
     if grep and query:
-        cmd = ["rg", "-n", "--no-heading"]
-        if context > 0:
-            cmd.extend(["-C", str(context)])
-        if useRegex:
-            cmd.append("--regexp")
-        else:
-            cmd.extend(["--fixed-strings"])
-        if filePath:
-            cmd.extend(["--glob", filePath])
         root = projectRoot or _detect_project_root() or "."
-        cmd.extend([query, root])
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            result = _rg_text_search(root, query, filePath, useRegex, max(0, context))
             if result.returncode not in (0, 1):
-                return f"grep error: {result.stderr.strip()}"
+                return f"code_find: grep error: {result.stderr.strip()}"
             if not result.stdout.strip():
-                return f"No matches for '{query}'."
+                return f"code_find: no matches: {query}"
             lines = result.stdout.strip().splitlines()
             shown = lines[:limit]
-            parts = [f"{len(lines)} match(es) for '{query}':"]
+            root_prefix = os.path.abspath(root).rstrip(os.sep) + os.sep
+            parts = [f"code_find text={len(lines)} shown={len(shown)} query={query!r}"]
             for line in shown:
-                parts.append(f"  {line}")
+                parts.append(line.replace(root_prefix, ""))
             if len(lines) > limit:
-                parts.append(f"  ... and {len(lines) - limit} more")
+                parts.append(f"more: increase limit (max {_MAX_CODE_LINES}) or narrow filePath/query")
+            if requested_limit > _MAX_CODE_LINES:
+                parts.append(f"capped: requested {requested_limit}, returned {limit}")
             return "\n".join(parts)
         except FileNotFoundError:
-            return "ripgrep (rg) not found. Install it or use references=True for indexed files."
+            return "code_find: ripgrep (rg) not found; retry without grep=True"
         except subprocess.TimeoutExpired:
-            return f"Search timed out for '{query}'."
+            return f"code_find: search timed out: {query}"
 
     from indexer import CODE_DB_FILENAME, CodeIndexer
     if not projectRoot:
@@ -279,27 +304,33 @@ def code_find(
             callers = indexer.get_callers(sym['symbol_name'])
             callees = indexer.get_callees(sym['symbol_name'], sym['file_path'])
             loc = _fmt_loc(sym['file_path'])
-            parts = [f"{sym['symbol_name']} ({loc}) {sym['language']}"]
+            start_line = sym.get('start_line') or 1
+            end_line = sym.get('end_line') or start_line
+            parts = [f"code_find symbol id={sym['id']} {sym['symbol_name']} {loc}:{start_line}-{end_line} lang={sym['language']}"]
             if sym.get('signature'):
-                parts.append(f"  sig: {sym['signature']}")
+                parts.append(f"signature: {sym['signature']}")
             if sym.get('docstring'):
-                parts.append(f"  doc: {sym['docstring'][:200]}")
+                parts.append(f"doc: {sym['docstring'][:200]}")
             if callers:
                 cstr = ", ".join(f"{c['symbol_name']}:{c['line_number']}" for c in callers[:10])
-                parts.append(f"  callers: {cstr}")
+                parts.append(f"callers: {cstr}")
             if callees:
                 cstr = ", ".join(f"{c['to_name']}:{c['line_number']}" for c in callees[:10])
-                parts.append(f"  calls: {cstr}")
+                parts.append(f"calls: {cstr}")
             if source:
                 abs_fp = os.path.join(projectRoot, sym['file_path'])
                 if os.path.isfile(abs_fp):
                     with open(abs_fp) as _f:
                         lines = _f.read().splitlines()
-                    start = max(0, sym['start_line'] - 1)
-                    end = min(len(lines), sym['end_line'])
-                    parts.append(f"  source ({sym['start_line']}:{sym['end_line']}):")
+                    start = max(0, start_line - 1)
+                    end = min(len(lines), end_line, start + _MAX_CODE_LINES)
+                    parts.append(f"source: {sym['file_path']}:{start + 1}-{end}")
                     for i in range(start, end):
-                        parts.append(f"    L{i+1}: {lines[i]}")
+                        parts.append(f"{i+1}|{lines[i]}")
+                    if end < end_line:
+                        parts.append(f"more: code_read(filePath={sym['file_path']!r}, offset={end + 1}, limit={_MAX_CODE_LINES})")
+            else:
+                parts.append(f"read: code_read(filePath={sym['file_path']!r}, offset={start_line}, limit=50)")
             return "\n".join(parts)
 
         results = indexer.search_symbols(query, limit=limit, use_regex=useRegex)
@@ -343,42 +374,36 @@ def code_find(
         # natural language queries, config files, and cross-package refs.
         if not grep and query and query.strip() not in (".", "*", "%", ""):
             try:
-                cmd = ["rg", "-n", "--no-heading"]
-                if context > 0:
-                    cmd.extend(["-C", str(context)])
-                if filePath:
-                    cmd.extend(["--glob", filePath])
-                cmd.extend([query, projectRoot])
-                rg_result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                rg_result = _rg_text_search(projectRoot, query, filePath, useRegex, max(0, context))
                 if rg_result.returncode in (0, 1) and rg_result.stdout.strip():
-                    rg_lines = rg_result.stdout.strip().splitlines()[:limit]
-                    parts = [f"Text matches for '{query}':"]
-                    for line in rg_lines:
-                        parts.append(f"  {line}")
-                    if len(rg_lines) >= limit:
-                        parts.append(f"  ... and more")
+                    rg_lines = rg_result.stdout.strip().splitlines()
+                    shown = rg_lines[:limit]
+                    root_prefix = os.path.abspath(projectRoot).rstrip(os.sep) + os.sep
+                    parts = [f"code_find text={len(rg_lines)} shown={len(shown)} query={query!r} fallback=true"]
+                    for line in shown:
+                        parts.append(line.replace(root_prefix, ""))
+                    if len(rg_lines) > limit:
+                        parts.append(f"more: increase limit (max {_MAX_CODE_LINES}) or narrow filePath/query")
                     return "\n".join(parts)
             except FileNotFoundError:
                 pass
             except subprocess.TimeoutExpired:
                 pass
 
-        # Browse fallback — show file overview with symbol counts
         _c = indexer.conn
         total = _c.execute("SELECT COUNT(*) FROM code_symbols").fetchone()[0]
         files = _c.execute("SELECT COUNT(DISTINCT file_path) FROM code_symbols").fetchone()[0]
-        parts = [f"{os.path.basename(projectRoot)} — {files}f {total}s"]
-        parts.append(f"No match for '{query}' — show files (use code_find(filePath=...) or code_find('sym') to drill in):\n")
-        for row in _c.execute("""
-            SELECT file_path, COUNT(*) as cnt, MAX(symbol_type) as type
-            FROM code_symbols GROUP BY file_path ORDER BY file_path
-            LIMIT 100
-        """):
+        parts = [f"code_find no_match query={query!r} files={files} symbols={total}"]
+        rows = _c.execute("""
+            SELECT file_path, COUNT(*) as cnt
+            FROM code_symbols GROUP BY file_path ORDER BY file_path LIMIT ?
+        """, (limit,)).fetchall()
+        for row in rows:
             if filePath and row['file_path'] != filePath:
                 continue
-            parts.append(f"  {row['file_path']} ({row['cnt']} sym)")
-        if files > 100:
-            parts.append(f"\n  ... and {files - 100} more files (use prefix filter)")
+            parts.append(f"file: {row['file_path']} symbols={row['cnt']}")
+        if files > limit:
+            parts.append(f"more: increase limit (max {_MAX_CODE_LINES}) or narrow filePath")
         return "\n".join(parts)
     finally:
         indexer.close()
@@ -397,10 +422,14 @@ def code_trace(
     from indexer import CODE_DB_FILENAME, CodeIndexer
     if not projectRoot:
         projectRoot = _detect_project_root()
+    limit = _bounded_limit(limit)
+    if not os.path.isdir(projectRoot):
+        return f"No code index at {projectRoot}."
     db_path = os.path.join(projectRoot, CODE_DB_FILENAME)
     if not os.path.exists(db_path):
-        return f"No code index at {db_path}."
-    indexer = CodeIndexer(projectRoot)
+        indexer = _ensure_code_index(projectRoot)
+    else:
+        indexer = CodeIndexer(projectRoot)
     try:
         lines = []
         seen = set()
@@ -414,20 +443,20 @@ def code_trace(
                 if callers:
                     for c in callers[:limit]:
                         loc = _fmt_loc(c['file_path'])
-                        lines.append(f"{prefix}  <- {c['symbol_name']} ({loc}:{c['line_number']})")
+                        lines.append(f"{prefix}inbound {c['symbol_name']} {loc}:{c['line_number']}")
                         _trace(c['symbol_name'], d + 1, prefix + "    ")
             if direction in ("outbound", "both"):
                 callees = indexer.get_callees(name)
                 if callees:
                     for c in callees[:limit]:
                         loc = _fmt_loc(c['file_path'])
-                        lines.append(f"{prefix}  -> {c['to_name']} ({loc}:{c['line_number']})")
+                        lines.append(f"{prefix}outbound {c['to_name']} {loc}:{c['line_number']}")
                         _trace(c['to_name'], d + 1, prefix + "    ")
 
-        lines.append(f"Trace: {symbolName} ({direction}, depth={depth})")
+        lines.insert(0, f"code_trace symbol={symbolName!r} direction={direction} depth={depth} limit={limit}")
         _trace(symbolName, 1)
         if len(lines) <= 1:
-            return f"{symbolName}: no call chain found."
+            return f"code_trace: no call chain for {symbolName!r}"
         return "\n".join(lines)
     finally:
         indexer.close()
@@ -446,55 +475,48 @@ def code_list_projects(searchRoot: str = "") -> str:
     return "\n".join(parts)
 
 
-@server.tool(description="List indexed files or glob by pattern. prefix='src/' filters results. Auto-indexes if needed.")
-def code_files(projectRoot: str = "", prefix: str = "", pattern: str = "", limit: int = 100) -> str:
+@server.tool(description="List files or glob paths. Returns compact file paths with counts, shown/total metadata, and a continuation hint; auto-indexes if needed.")
+def code_files(projectRoot: str = "", prefix: str = "", pattern: str = "", limit: int = 50) -> str:
     import glob as _glob
     import os
+
+    requested_limit = limit
+    limit = _bounded_limit(limit)
+    if not projectRoot:
+        projectRoot = _detect_project_root() or "."
+    if not os.path.isdir(projectRoot):
+        return f"code_files: directory not found: {projectRoot}"
     if pattern:
-        if not projectRoot:
-            projectRoot = _detect_project_root()
         matches = sorted(_glob.glob(os.path.join(projectRoot, pattern), recursive=True))
-        if not matches:
+        rels = [os.path.relpath(m, projectRoot).replace(os.sep, "/") for m in matches if os.path.isfile(m)]
+        if not rels:
             return f"No files matching '{pattern}'."
-        rels = [os.path.relpath(m, projectRoot) for m in matches]
-        parts = [f"{len(rels)} file(s) matching '{pattern}':"]
-        for r in rels[:limit]:
-            parts.append(f"  {r}")
+        parts = [f"code_files pattern={pattern!r} total={len(rels)} shown={min(len(rels), limit)}"]
+        parts.extend(rels[:limit])
         if len(rels) > limit:
-            parts.append(f"  ... and {len(rels) - limit} more")
+            parts.append(f"more: increase limit (max {_MAX_CODE_LINES}) or narrow pattern")
+        if requested_limit > _MAX_CODE_LINES:
+            parts.append(f"capped: requested {requested_limit}")
         return "\n".join(parts)
 
-    from indexer import CODE_DB_FILENAME, CodeIndexer
-    if not projectRoot:
-        projectRoot = _detect_project_root()
-    db_path = os.path.join(projectRoot, CODE_DB_FILENAME)
-    if not os.path.exists(db_path):
-        try:
-            _ci = CodeIndexer(projectRoot)
-        except ValueError as e:
-            return str(e)
-        try:
-            _ci.index_project(_max_workers=4)
-        finally:
-            _ci.close()
-    indexer = CodeIndexer(projectRoot)
+    indexer = _ensure_code_index(projectRoot)
     try:
         files = indexer.list_files(prefix=prefix, limit=limit)
-        if not files:
-            return "No files in index."
-        parts = [f"{len(files)} file(s):"]
-        for f in files:
-            parts.append(f"  {f['file_path']} ({f['symbol_count']}s)")
+        parts = [f"code_files prefix={prefix!r} shown={len(files)} limit={limit}"]
+        parts.extend(f"file: {f['file_path']} symbols={f['symbol_count']}" for f in files)
+        if len(files) == limit:
+            parts.append(f"more: increase limit (max {_MAX_CODE_LINES}) or narrow prefix")
         return "\n".join(parts)
     finally:
         indexer.close()
 
 
-@server.tool(description="Explore: view source + call paths in one shot. Auto-indexes if needed. Falls back to text search for natural language queries.")
+@server.tool(description="Explore symbols with compact source and call paths. Auto-indexes, bounds source to 50 lines, and falls back to text search.")
 def code_explore(query: str, projectRoot: str = "", limit: int = 10) -> str:
     import os
     import subprocess as _subprocess
 
+    limit = _bounded_limit(limit)
     from indexer import CODE_DB_FILENAME, CodeIndexer
     if not projectRoot:
         projectRoot = _detect_project_root()
@@ -531,15 +553,15 @@ def code_explore(query: str, projectRoot: str = "", limit: int = 10) -> str:
         # Natural language fallback: use ripgrep to find matching lines in source files
         if not symbols:
             try:
-                cmd = ["rg", "-n", "--no-heading", query, projectRoot]
-                result = _subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                result = _rg_text_search(projectRoot, query, "", False, 0)
                 if result.returncode in (0, 1) and result.stdout.strip():
-                    lines = result.stdout.strip().splitlines()[:limit]
-                    parts = [f"Text matches for '{query}':"]
-                    for line in lines:
-                        parts.append(f"  {line}")
-                    if len(lines) >= limit:
-                        parts.append(f"  ... and more")
+                    lines = result.stdout.strip().splitlines()
+                    shown = lines[:limit]
+                    root_prefix = os.path.abspath(projectRoot).rstrip(os.sep) + os.sep
+                    parts = [f"code_explore text={len(lines)} shown={len(shown)} query={query!r}"]
+                    parts.extend(line.replace(root_prefix, "") for line in shown)
+                    if len(lines) > limit:
+                        parts.append(f"more: increase limit (max {_MAX_CODE_LINES}) or narrow query")
                     return "\n".join(parts)
             except FileNotFoundError:
                 pass
@@ -547,33 +569,34 @@ def code_explore(query: str, projectRoot: str = "", limit: int = 10) -> str:
                 pass
 
         if not symbols:
-            return f"No matches for '{query}'."
+            return f"code_explore: no matches for {query!r}"
         parts = []
         for sym in symbols[:limit]:
             loc = _fmt_loc(sym['file_path'])
-            parts.append(f"\n── {sym['symbol_name']} ({loc}) {sym['symbol_type']} ──")
+            start_line = sym.get('start_line') or 1
+            end_line = sym.get('end_line') or start_line
+            parts.append(f"symbol {sym['id']} {sym['symbol_name']} {loc}:{start_line}-{end_line} type={sym['symbol_type']}")
             if sym.get('signature'):
-                parts.append(f"  sig: {sym['signature']}")
+                parts.append(f"signature: {sym['signature']}")
             callers = indexer.get_callers(sym['symbol_name'])
             if callers:
                 cstr = ", ".join(f"{c['symbol_name']}:{c['line_number']}" for c in callers[:5])
-                parts.append(f"  callers: {cstr}")
+                parts.append(f"callers: {cstr}")
             callees = indexer.get_callees(sym['symbol_name'], sym['file_path'])
             if callees:
                 cstr = ", ".join(f"{c['to_name']}:{c['line_number']}" for c in callees[:5])
-                parts.append(f"  calls: {cstr}")
-            # Show source — always show for the matched symbol
+                parts.append(f"calls: {cstr}")
             abs_fp = os.path.join(projectRoot, sym['file_path'])
             if os.path.isfile(abs_fp):
                 with open(abs_fp) as f:
                     lines = f.read().splitlines()
-                start = max(0, sym['start_line'] - 1)
-                end = min(len(lines), sym['end_line'])
-                parts.append(f"  source ({sym['start_line']}:{sym['end_line']}):")
-                for i in range(start, end):
-                    marker = "->" if i == sym['start_line'] - 1 else "  "
-                    parts.append(f"    {marker} L{i+1}: {lines[i]}")
-        return "\n".join(parts) if parts else "No results."
+                start = max(0, start_line - 1)
+                end = min(len(lines), end_line, start + _MAX_CODE_LINES)
+                parts.append(f"source: {sym['file_path']}:{start + 1}-{end}")
+                parts.extend(f"{i + 1}|{lines[i]}" for i in range(start, end))
+                if end < end_line:
+                    parts.append(f"more: code_read(filePath={sym['file_path']!r}, offset={end + 1}, limit={_MAX_CODE_LINES})")
+        return "\n".join(parts) if parts else "code_explore: no results"
     finally:
         indexer.close()
 
@@ -586,18 +609,22 @@ def code_impact(symbolName: str, projectRoot: str = "", depth: int = 2, limit: i
     if not projectRoot:
         projectRoot = _detect_project_root()
     db_path = os.path.join(projectRoot, CODE_DB_FILENAME)
+    limit = _bounded_limit(limit)
     if not os.path.exists(db_path):
-        return f"No code index at {db_path}."
-    indexer = CodeIndexer(projectRoot)
+        indexer = _ensure_code_index(projectRoot)
+    else:
+        indexer = CodeIndexer(projectRoot)
     try:
         results = indexer.get_impact(symbolName, depth=depth, limit=limit)
         if not results:
-            return f"No impact found for '{symbolName}'."
-        parts = [f"Impact analysis for '{symbolName}' (depth={depth}):"]
+            return f"code_impact: no impact for {symbolName!r}"
+        parts = [f"code_impact symbol={symbolName!r} shown={len(results)} depth={depth} limit={limit}"]
         for r in results:
             loc = _fmt_loc(r['file_path'])
-            via = f" (via {r['via']})" if r.get('via') else ""
-            parts.append(f"  [{r['id']}] {r['symbol_name']} ({loc}:{r['line_number']}){via}")
+            via = f" via={r['via']}" if r.get('via') else ""
+            parts.append(f"impact id={r['id']} {r['symbol_name']} {loc}:{r['line_number']}{via}")
+        if len(results) >= limit:
+            parts.append(f"more: increase limit (max {_MAX_CODE_LINES})")
         return "\n".join(parts)
     finally:
         indexer.close()
@@ -1624,55 +1651,51 @@ def session_list(topic: str = "", status: str = "") -> str:
 
 # ── Code Graph MCP Tools ─────────────────────────────────
 
-@server.tool(description="STEP 2 after code_find: read a 50-line window. REQUIRED filePath (relative to project root), offset=start line, limit=max lines (keep <=50). Replaces native Read — use this, not Read.")
-def code_read(filePath: str = "", projectRoot: str = "", offset: int = 0, limit: int = 200, path: str = "") -> str:
-    """Read a file from the indexed project. Replaces native Read tool.
-       filePath (REQUIRED): path to the file, relative to the project root.
-       'path' is accepted as an alias if filePath is not provided.
-       offset (1-indexed): start line. limit: max lines. 0 = all lines.
-       Path traversal is prevented — must be within the project."""
+@server.tool(description="STEP 2 after code_find: read a compact, bounded source window. filePath is relative to projectRoot; offset is 1-indexed; limit defaults to and is capped at 50. Returns exact line numbers and a next-offset hint.")
+def code_read(filePath: str = "", projectRoot: str = "", offset: int = 0, limit: int = 50, path: str = "") -> str:
+    """Read a bounded source window without requiring a code index."""
     import os
 
     if not filePath and path:
         filePath = path
     if not filePath:
-        return "Error: 'filePath' (or 'path') argument is required — the path of the file to read."
-    from indexer import CODE_DB_FILENAME
+        return "code_read: filePath is required"
     if not projectRoot:
-        projectRoot = _detect_project_root()
+        projectRoot = _detect_project_root() or "."
+    if not os.path.isdir(projectRoot):
+        return f"code_read: directory not found: {projectRoot}"
+    if offset < 0:
+        return "code_read: offset must be >= 0"
 
-    # Resolve filePath relative to projectRoot and prevent traversal
-    abs_fp = os.path.normpath(os.path.join(projectRoot, filePath))
-    abs_root = os.path.normpath(projectRoot)
-    if not abs_fp.startswith(abs_root + os.sep) and abs_fp != abs_root:
-        return f"File is outside project root: {filePath}"
-
-    db_path = os.path.join(projectRoot, CODE_DB_FILENAME)
-    if not os.path.exists(db_path):
-        return f"No code index at {projectRoot}."
-
+    requested_limit = limit
+    limit = _bounded_limit(limit)
+    abs_root = os.path.abspath(os.path.normpath(projectRoot))
+    abs_fp = os.path.abspath(os.path.normpath(os.path.join(abs_root, filePath)))
+    if not (abs_fp == abs_root or abs_fp.startswith(abs_root + os.sep)):
+        return f"code_read: outside project root: {filePath}"
     if not os.path.isfile(abs_fp):
-        return f"File not found: {filePath}"
+        return f"code_read: file not found: {filePath}"
 
     try:
         with open(abs_fp, errors="replace") as f:
             lines = f.readlines()
-    except Exception as e:
-        return f"Error reading {filePath}: {e}"
+    except OSError as e:
+        return f"code_read: cannot read {filePath}: {e}"
 
     total = len(lines)
-    start = offset - 1 if offset > 0 else 0
-    end = start + limit if limit > 0 else total
-    if start > total:
-        return f"Offset {offset} exceeds file length ({total} lines)."
-    if end > total:
-        end = total
+    start = max(0, offset - 1 if offset else 0)
+    end = min(total, start + limit)
+    if offset > total:
+        return f"code_read: offset {offset} exceeds file length {total}"
 
-    parts = [f"--- {filePath} ({total} lines)"]
+    display_path = os.path.relpath(abs_fp, abs_root).replace(os.sep, "/")
+    parts = [f"code_read {display_path}:{start + 1}-{end} total={total} shown={end - start}"]
     for i in range(start, end):
-        parts.append(f"  L{i+1}: {lines[i].rstrip()}")
+        parts.append(f"{i + 1}|{lines[i].rstrip()}")
     if end < total:
-        parts.append(f"  ... {total - end} more lines")
+        parts.append(f"next: code_read(filePath={display_path!r}, offset={end + 1}, limit={_MAX_CODE_LINES})")
+    if requested_limit > _MAX_CODE_LINES:
+        parts.append(f"capped: requested {requested_limit}, returned {end - start}")
     return "\n".join(parts)
 
 
