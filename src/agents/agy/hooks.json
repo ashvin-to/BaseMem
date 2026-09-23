@@ -1,21 +1,15 @@
 {
-  "basemem-startup": {
+  "basemem-hooks": {
     "PreInvocation": [
       {
         "type": "command",
         "command": "node \"${extensionPath}/hooks/session-start.js\""
-      }
-    ]
-  },
-  "basemem-prompt": {
-    "UserPromptSubmit": [
+      },
       {
         "type": "command",
         "command": "node \"${extensionPath}/hooks/prompt-tracker.js\""
       }
-    ]
-  },
-  "basemem-stop": {
+    ],
     "Stop": [
       {
         "type": "command",

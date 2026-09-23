@@ -104,14 +104,16 @@ function fetchPromptContext(promptText, options) {
 // rawInput is the complete stdin string; format is 'claude'|'codex'|'cursor'|'agy'|'devin'|other.
 function handlePromptInput(format, rawInput) {
   let extra = '';
+  let prompt = '';
   try {
-    const prompt = extractPromptText(rawInput || '');
-    if (prompt) extra = fetchPromptContext(prompt);
+    prompt = extractPromptText(rawInput || '');
+    const { classifyPrompt } = require('./tracker.js');
+    if (prompt && classifyPrompt(prompt) !== 'general') extra = fetchPromptContext(prompt);
   } catch (_) {
     extra = '';
   }
   const { emitTrackerOutput } = require('./tracker.js');
-  emitTrackerOutput(format, extra);
+  emitTrackerOutput(format, extra, prompt);
 }
 
 module.exports = { extractPromptText, fetchPromptContext, handlePromptInput, MAX_PROMPT_CHARS };

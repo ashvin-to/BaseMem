@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { execSync } from 'child_process';
+import { execSync, spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -62,7 +62,6 @@ function fetchMemContext(topic) {
 function fetchRecall(promptText, topic) {
   if (!promptText || promptText.trim().length < 8) return '';
   try {
-    const { spawnSync } = require('child_process');
     const res = spawnSync(memPath,
       ['prompt-context', '--topic', topic, '--query', promptText.slice(0, 2000)],
       { timeout: 4000, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] });

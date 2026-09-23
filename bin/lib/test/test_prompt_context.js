@@ -44,10 +44,27 @@ function testHandleRecall() {
   assert.ok(out.includes('[Relevant memory]'), 'recall content present');
 }
 
+function testAdaptiveTracker() {
+  const origWrite = process.stdout.write;
+  let out = '';
+  process.stdout.write = (d) => { out += d; return true; };
+  try {
+    handlePromptInput('claude', JSON.stringify({ prompt: 'debug the failing function' }));
+    assert.ok(out.includes('code_explore'), 'code prompt gets code guidance');
+    out = '';
+    handlePromptInput('claude', JSON.stringify({ prompt: 'what is the weather' }));
+    assert.ok(out.includes('Use BaseMem tools when relevant'), 'generic prompt gets compact guidance');
+  } finally {
+    process.stdout.write = origWrite;
+  }
+}
+
 console.log('Running testExtract...');
 testExtract();
 console.log('Running testHandleSilent...');
 testHandleSilent();
 console.log('Running testHandleRecall...');
 testHandleRecall();
+console.log('Running testAdaptiveTracker...');
+testAdaptiveTracker();
 console.log('All test_prompt_context tests passed.');

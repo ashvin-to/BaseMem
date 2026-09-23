@@ -48,8 +48,35 @@ function _emit(format, text, eventName) {
   }
 }
 
-function emitTrackerOutput(format, promptContext) {
-  let text = TRACKER_NUDGE;
+function classifyPrompt(promptText) {
+  const text = (promptText || '').toLowerCase();
+  const code = /\b(code|bug|error|fix|debug|implement|refactor|test|file|function|class|api|parse|index|compile)\b/.test(text);
+  const decision = /\b(decided|decision|learned|fact|chose|choice|root cause|discovered)\b/.test(text);
+  const ending = /\b(done|finished|complete|summary|wrap up|end session)\b/.test(text);
+  const memory = /\b(remember|memory|context|previous|past|why|decision|learned|fact)\b/.test(text);
+  if (ending) return 'session';
+  if (decision) return 'decision';
+  if (code) return 'code';
+  if (memory) return 'memory';
+  return 'general';
+}
+
+function _trackerNudge(promptText) {
+  const text = (promptText || '').toLowerCase();
+  if (!text || text.length < 8) return TRACKER_NUDGE;
+  const intent = classifyPrompt(text);
+  const parts = [];
+  if (intent === 'code') parts.push('code task → code_explore FIRST, then code_read only if needed');
+  if (intent === 'decision') parts.push('decision/fix/fact → logInteraction(topic, decision="what+why") NOW');
+  if (intent === 'session') parts.push('session ending → logInteraction(topic, summary=..., activity="done")');
+  if (intent === 'memory') parts.push('memory/context request → use the injected prompt context when relevant');
+  return parts.length
+    ? '[BaseMem] ' + parts.join('; ') + '.'
+    : '[BaseMem] Use BaseMem tools when relevant.';
+}
+
+function emitTrackerOutput(format, promptContext, promptText) {
+  let text = _trackerNudge(promptText);
   if (promptContext && promptContext.trim()) {
     text += '\n\n<BASEMEM_PROMPT_CONTEXT>\n' + promptContext.trim() + '\n</BASEMEM_PROMPT_CONTEXT>';
   }
@@ -76,4 +103,4 @@ function writeMissedLog() {
   }
 }
 
-module.exports = { emitTrackerOutput, emitStopOutput, writeMissedLog, TRACKER_NUDGE, STOP_NOTICE };
+module.exports = { emitTrackerOutput, emitStopOutput, writeMissedLog, classifyPrompt, TRACKER_NUDGE, STOP_NOTICE };

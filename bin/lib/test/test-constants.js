@@ -28,14 +28,14 @@ console.log('PASS getClaudeDir: CLAUDE_CONFIG_DIR override');
 const paths = constants.getAgentPaths();
 const expected = ['claude', 'cursor', 'devin', 'cline', 'copilot', 'continue',
   'zed', 'aider', 'codex', 'opencode', 'gemini', 'agy', 'vscode',
-  'kilo', 'kiro', 'hermes'];
+  'kilo', 'kiro', 'hermes', 'vibe', 'windsurf'];
 
 for (const name of expected) {
   assert.ok(paths[name], `getAgentPaths should have ${name}`);
   assert.ok(paths[name].detect, `${name}.detect`);
   assert.ok(paths[name].install, `${name}.install`);
 }
-assert.strictEqual(Object.keys(paths).length, 16, `Expected 16 agents, got ${Object.keys(paths).length}`);
+assert.strictEqual(Object.keys(paths).length, expected.length, `Expected ${expected.length} agents, got ${Object.keys(paths).length}`);
 console.log(`PASS getAgentPaths: ${expected.length} agents (claude..hermes)`);
 
 // Agent install paths should be absolute
