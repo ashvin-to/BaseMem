@@ -54,6 +54,9 @@ function testAdaptiveTracker() {
     out = '';
     handlePromptInput('claude', JSON.stringify({ prompt: 'what is the weather' }));
     assert.ok(out.includes('Use BaseMem tools when relevant'), 'generic prompt gets compact guidance');
+    out = '';
+    handlePromptInput('claude', JSON.stringify({ prompt: 'recap my previous session work' }));
+    assert.ok(out.includes('session_recap'), 'recap prompt gets session recap guidance');
   } finally {
     process.stdout.write = origWrite;
   }

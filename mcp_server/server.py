@@ -334,7 +334,7 @@ def code_find(
                     end = min(len(lines), end_line, start + _MAX_CODE_LINES)
                     parts.append(f"source: {sym['file_path']}:{start + 1}-{end}")
                     for i in range(start, end):
-                        parts.append(f"{i+1}|{lines[i]}")
+                        parts.append(lines[i])
                     if end < end_line:
                         parts.append(f"more: code_read(filePath={sym['file_path']!r}, offset={end + 1}, limit={_MAX_CODE_LINES})")
             else:
@@ -601,10 +601,70 @@ def code_explore(query: str, projectRoot: str = "", limit: int = 10) -> str:
                 start = max(0, start_line - 1)
                 end = min(len(lines), end_line, start + _MAX_CODE_LINES)
                 parts.append(f"source: {sym['file_path']}:{start + 1}-{end}")
-                parts.extend(f"{i + 1}|{lines[i]}" for i in range(start, end))
+                parts.extend(lines[i] for i in range(start, end))
                 if end < end_line:
                     parts.append(f"more: code_read(filePath={sym['file_path']!r}, offset={end + 1}, limit={_MAX_CODE_LINES})")
         return "\n".join(parts) if parts else "code_explore: no results"
+    finally:
+        indexer.close()
+
+
+@server.tool(description="One-shot symbol context: definition, bounded source, callers, callees, imports, related tests, and next action.")
+def code_context(query: str, projectRoot: str = "", limit: int = 10) -> str:
+    import os
+
+    if not projectRoot:
+        projectRoot = _detect_project_root()
+    if not os.path.isdir(projectRoot):
+        return f"code_context: directory not found: {projectRoot}"
+    limit = _bounded_limit(limit)
+    indexer = _ensure_code_index(projectRoot)
+    try:
+        symbols = []
+        try:
+            symbol_id = int(query)
+            symbol = indexer.get_symbol(symbol_id)
+            if symbol:
+                symbols = [symbol]
+        except ValueError:
+            symbols = indexer.get_symbol_by_name(query)
+        if not symbols:
+            symbols = indexer.search_symbols(query, limit=limit)
+        if not symbols:
+            return f"code_context: no symbol match: {query!r}"
+
+        symbol = symbols[0]
+        file_path = symbol["file_path"]
+        start_line = max(1, symbol.get("start_line") or 1)
+        source = code_read(filePath=file_path, projectRoot=projectRoot, offset=start_line, limit=_MAX_CODE_LINES)
+        callers = indexer.get_callers(symbol["symbol_name"])
+        callees = indexer.get_callees(symbol["symbol_name"], file_path)
+        imports = [
+            dict(row)
+            for row in indexer.conn.execute(
+                "SELECT DISTINCT from_name, line_number FROM code_edges "
+                "WHERE project_id = ? AND file_path = ? AND edge_type = 'imports' "
+                "ORDER BY line_number LIMIT ?",
+                (indexer.project_id, file_path, limit),
+            )
+        ]
+        stem = os.path.splitext(os.path.basename(file_path))[0].lower()
+        tests = [
+            f["file_path"]
+            for f in indexer.list_files(limit=0)
+            if "test" in f["file_path"].lower() and stem in f["file_path"].lower()
+        ][:limit]
+
+        parts = [f"code_context symbol={symbol['symbol_name']!r} file={file_path}:{start_line} language={symbol.get('language', '?')}"]
+        if symbol.get("signature"):
+            parts.append(f"signature: {symbol['signature']}")
+        parts.append(source)
+        parts.append("callers: " + (", ".join(f"{c['symbol_name']}@{c['file_path']}:{c['line_number']}" for c in callers[:limit]) or "none"))
+        parts.append("callees: " + (", ".join(f"{c['to_name']}@{c['file_path']}:{c['line_number']}" for c in callees[:limit]) or "none"))
+        parts.append("imports: " + (", ".join(str(item.get("from_name", "")) for item in imports) or "none"))
+        parts.append("tests: " + (", ".join(tests) or "none found"))
+        parts.append(f"next: code_explore({symbol['symbol_name']!r}, projectRoot={projectRoot!r}, limit={limit})")
+        return "\n".join(parts)
     finally:
         indexer.close()
 
@@ -1316,6 +1376,33 @@ def task_update(task_id: int, status: str | None = None, priority: str | None = 
     return msg
 
 
+@server.tool(description="Batch-update multiple tasks in one call using {task_id, status, priority, files, notes} objects. Returns one compact result per task.")
+def task_update_many(updates: list[dict]) -> str:
+    from storage.db import StorageManager
+    from storage.sessions import SessionManager
+
+    storage = StorageManager(get_db_path())
+    manager = SessionManager(storage)
+    results = []
+    for update in updates:
+        task_id = update.get("task_id")
+        if task_id is None:
+            results.append("error: missing task_id")
+            continue
+        notes = update.get("notes")
+        if notes:
+            notes = [int(n.replace("note-", "")) if isinstance(n, str) and "note-" in n else int(n) for n in notes]
+        ok, message = manager.update_task(
+            int(task_id),
+            status=update.get("status"),
+            priority=update.get("priority"),
+            files=update.get("files"),
+            notes=notes,
+        )
+        results.append(f"task-{task_id}: {'ok' if ok else 'error'} {message}")
+    return f"task_update_many updated={len(results)} errors={sum(1 for r in results if r.startswith('error'))}\n" + "\n".join(results)
+
+
 @server.tool(description="List tasks, optionally filtered by topic, status, priority.")
 def task_list(topic: str | None = None, status: str | None = None, priority: str | None = None) -> str:
     from storage.db import StorageManager
@@ -1637,6 +1724,44 @@ def session_read(session_id: int) -> str:
     return "\n".join(lines)
 
 
+@server.tool(description="Recap the previous session for a topic: summary, recent decisions/facts, state, next step, and active/closed sessions.")
+def session_recap(topic: str = "", limit: int = 3) -> str:
+    import json
+    from storage.db import StorageManager
+    from storage.sessions import SessionManager
+
+    if not topic:
+        topic = os.path.basename(os.getcwd())
+    storage = StorageManager(get_db_path())
+    manager = SessionManager(storage)
+    sessions = manager.list_sessions(topic)
+    if not sessions:
+        return f"session_recap: no sessions found for {topic!r}"
+    sessions.sort(key=lambda item: item.get("last_active_at", ""), reverse=True)
+    recent = sessions[: max(1, min(limit, 10))]
+    last = next((s for s in recent if s.get("status") in ("closed", "paused")), recent[0])
+    note_ids = json.loads(last.get("note_ids", "[]"))[-3:]
+    notes = []
+    if note_ids:
+        placeholders = ",".join("?" for _ in note_ids)
+        notes = [
+            dict(row)
+            for row in storage.connection.execute(
+                f"SELECT id, kind, title, content FROM notes WHERE id IN ({placeholders}) ORDER BY id DESC",
+                note_ids,
+            ).fetchall()
+        ]
+    lines = [f"session_recap topic={topic!r} sessions={len(sessions)}"]
+    lines.append(f"last: id={last.get('id')} title={last.get('title', 'untitled')!r} status={last.get('status', '?')} agent={last.get('agent_id', '?')} active={last.get('last_active_at', '?')}")
+    if last.get("summary"):
+        lines.append(f"summary: {last['summary']}")
+    for note in notes:
+        preview = (note.get("content") or "")[:160].replace("\n", " ")
+        lines.append(f"note: {note.get('kind', '?')} {preview}")
+    lines.append("next: resume_session or session_recap for the selected session")
+    return "\n".join(lines)
+
+
 @_optional_tool(description="List sessions for a topic, optionally filtered by status.")
 def session_list(topic: str = "", status: str = "") -> str:
     """List sessions for a planet."""
@@ -1659,8 +1784,8 @@ def session_list(topic: str = "", status: str = "") -> str:
 
 # ── Code Graph MCP Tools ─────────────────────────────────
 
-@server.tool(description="STEP 2 after code_find: read a compact, bounded source window. filePath is relative to projectRoot; offset is 1-indexed; limit defaults to and is capped at 50. Returns exact line numbers and a next-offset hint.")
-def code_read(filePath: str = "", projectRoot: str = "", offset: int = 0, limit: int = 50, path: str = "") -> str:
+@server.tool(description="STEP 2 after code_find: read a compact, bounded source window. filePath is relative to projectRoot; offset is 1-indexed; limit defaults to and is capped at 50. Source is unnumbered by default; set lineNumbers=true when explicit prefixes help.")
+def code_read(filePath: str = "", projectRoot: str = "", offset: int = 0, limit: int = 50, path: str = "", lineNumbers: bool = False) -> str:
     """Read a bounded source window without requiring a code index."""
     import os
 
@@ -1699,7 +1824,7 @@ def code_read(filePath: str = "", projectRoot: str = "", offset: int = 0, limit:
     display_path = os.path.relpath(abs_fp, abs_root).replace(os.sep, "/")
     parts = [f"code_read {display_path}:{start + 1}-{end} total={total} shown={end - start}"]
     for i in range(start, end):
-        parts.append(f"{i + 1}|{lines[i].rstrip()}")
+        parts.append(f"{i + 1}|{lines[i].rstrip()}" if lineNumbers else lines[i].rstrip())
     if end < total:
         parts.append(f"next: code_read(filePath={display_path!r}, offset={end + 1}, limit={_MAX_CODE_LINES})")
     if requested_limit > _MAX_CODE_LINES:

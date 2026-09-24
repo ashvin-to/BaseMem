@@ -54,6 +54,8 @@ function classifyPrompt(promptText) {
   const decision = /\b(decided|decision|learned|fact|chose|choice|root cause|discovered)\b/.test(text);
   const ending = /\b(done|finished|complete|summary|wrap up|end session)\b/.test(text);
   const memory = /\b(remember|memory|context|previous|past|why|decision|learned|fact)\b/.test(text);
+  const recap = /\b(recap|previous session|last session|prior session|session work|where we left)\b/.test(text);
+  if (recap) return 'recap';
   if (ending) return 'session';
   if (decision) return 'decision';
   if (code) return 'code';
@@ -70,6 +72,7 @@ function _trackerNudge(promptText) {
   if (intent === 'decision') parts.push('decision/fix/fact → logInteraction(topic, decision="what+why") NOW');
   if (intent === 'session') parts.push('session ending → logInteraction(topic, summary=..., activity="done")');
   if (intent === 'memory') parts.push('memory/context request → use the injected prompt context when relevant');
+  if (intent === 'recap') parts.push('previous session recap → session_recap(topic) FIRST');
   return parts.length
     ? '[BaseMem] ' + parts.join('; ') + '.'
     : '[BaseMem] Use BaseMem tools when relevant.';

@@ -145,6 +145,27 @@ class TestNoteTools:
         r = logInteraction(topic="log-test")
         assert "no-op" in r
 
+    def test_task_update_many(self, temp_db):
+        from mcp_server.server import task_update_many
+        _db_path, _storage, manager = temp_db
+        first = manager.create_task("test", "First")["id"]
+        second = manager.create_task("test", "Second")["id"]
+        result = task_update_many([
+            {"task_id": first, "status": "done"},
+            {"task_id": second, "priority": "high"},
+        ])
+        assert "updated=2 errors=0" in result
+        assert manager.get_task_summary("test")["counts"]["done"] == 1
+
+    def test_session_recap(self, temp_db):
+        from mcp_server.server import session_recap
+        _db_path, _storage, manager = temp_db
+        session_id = manager.create_session("test", "Previous work", "test-agent")
+        manager.close_session(session_id, summary="Fixed the parser and added regression tests")
+        result = session_recap("test")
+        assert "session_recap topic='test'" in result
+        assert "Fixed the parser" in result
+
     def test_search_notes(self, temp_db):
         from mcp_server.server import search_notes
         db_path, storage, manager = temp_db
@@ -649,6 +670,17 @@ class TestCodeTools:
         assert "source:" in r
         assert "more: code_read" in r
 
+    @pytestmark_code
+    def test_code_context_symbol(self, tmp_path):
+        from mcp_server.server import code_context
+        (tmp_path / "main.py").write_text("def helper():\n    return 1\n\ndef main():\n    return helper()\n")
+        result = code_context("helper", projectRoot=str(tmp_path))
+        assert "code_context symbol='helper'" in result
+        assert "callers:" in result
+        assert "next: code_explore" in result
+
+    @pytestmark_code
+    def test_code_explore_no_index(self):
         from mcp_server.server import code_explore
         r = code_explore("main", projectRoot="/tmp/__nonexistent__")
         assert "not found" in r.lower() or "No code index" in r or "No matches" in r or "not a directory" in r.lower()
@@ -664,8 +696,10 @@ class TestCodeTools:
         (tmp_path / "main.py").write_text("one\ntwo\nthree\n")
         r = code_read("main.py", projectRoot=str(tmp_path), offset=2, limit=2)
         assert r.startswith("code_read main.py:2-3 total=3 shown=2")
-        assert "2|two" in r
-        assert "3|three" in r
+        assert "two" in r
+        assert "three" in r
+        numbered = code_read("main.py", projectRoot=str(tmp_path), offset=2, limit=2, lineNumbers=True)
+        assert "2|two" in numbered
 
     @pytestmark_code
     def test_code_list_projects(self):
