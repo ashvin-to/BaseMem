@@ -146,6 +146,13 @@ def _ensure_code_index(project_root: str):
     return open_or_create_index(project_root, max_workers=4)
 
 
+def _grouped_text_query(query: str) -> str:
+    import re
+
+    terms = [re.escape(term) for term in query.split() if len(term) > 1]
+    return r"\b(?:" + "|".join(terms) + r")\b" if len(terms) > 1 else query
+
+
 def _rg_text_search(root: str, query: str, file_path: str, use_regex: bool, context: int):
     import subprocess
 
@@ -188,7 +195,8 @@ def code_find(
     if grep and query:
         root = projectRoot or _detect_project_root() or "."
         try:
-            result = _rg_text_search(root, query, filePath, useRegex, max(0, context))
+            search_query = query if useRegex else _grouped_text_query(query)
+            result = _rg_text_search(root, search_query, filePath, useRegex or " " in query, max(0, context))
             if result.returncode not in (0, 1):
                 return f"code_find: grep error: {result.stderr.strip()}"
             if not result.stdout.strip():
@@ -553,7 +561,7 @@ def code_explore(query: str, projectRoot: str = "", limit: int = 10) -> str:
         # Natural language fallback: use ripgrep to find matching lines in source files
         if not symbols:
             try:
-                result = _rg_text_search(projectRoot, query, "", False, 0)
+                result = _rg_text_search(projectRoot, _grouped_text_query(query), "", True, 0)
                 if result.returncode in (0, 1) and result.stdout.strip():
                     lines = result.stdout.strip().splitlines()
                     shown = lines[:limit]
@@ -1198,7 +1206,7 @@ def search_nodes(query: str, limit: int = 10) -> str:
 
 
 @server.tool(description="Search notes by topic, kind, text.")
-def search_notes(topic: str, kind: str = "", query: str = "", limit: int = 10) -> str:
+def search_notes(topic: str = "", kind: str = "", query: str = "", limit: int = 10) -> str:
     from storage.db import StorageManager
     from storage.sessions import SessionManager
 
@@ -1727,9 +1735,22 @@ def list_mcp_resources() -> str:
     return "\n".join(parts)
 
 
-@server.tool(description="Read an MCP resource by URI. Supported URIs: code/schema, code/project/<name>.")
+@server.tool(description="Read an MCP resource by URI. Supported URIs: resource://code/schema, resource://code/project/<name>, and resource://memory/stats.")
 def read_mcp_resource(uri: str) -> str:
     import os
+
+    uri = uri.removeprefix("resource://")
+    if uri == "memory/stats":
+        db_path = get_db_path()
+        conn = sqlite3.connect(db_path)
+        counts = {}
+        for table in ("planets", "notes", "tasks", "sessions"):
+            try:
+                counts[table] = conn.execute(f"SELECT COUNT(*) AS c FROM {table}").fetchone()["c"]
+            except Exception:
+                counts[table] = 0
+        conn.close()
+        return json.dumps({"resource": "memory/stats", "counts": counts}, indent=2)
 
     if uri == "code/schema":
         return """Code Index Schema (.basemem.code.db):

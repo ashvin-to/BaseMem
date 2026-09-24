@@ -926,7 +926,7 @@ class CodeIndexer:
             name_col = "to_name" if col == "to_symbol_id" else "from_name"
             cur = self.conn.execute(
                 f"""UPDATE code_edges SET {col} = (
-                        SELECT cs.id FROM code_symbols cs
+                        COALESCE((SELECT cs.id FROM code_symbols cs
                         WHERE cs.symbol_name = code_edges.{name_col}
                           AND cs.project_id = code_edges.project_id
                           AND (
@@ -938,8 +938,7 @@ class CodeIndexer:
                           )
                         ORDER BY CASE WHEN cs.symbol_type IN ('method', 'class', 'interface', 'struct') THEN 0 ELSE 1 END,
                                  cs.id
-                        LIMIT 1
-                    )
+                        LIMIT 1), 0))
                     WHERE code_edges.{col} = 0
                       AND code_edges.project_id = ?
                       AND code_edges.{name_col} IN (

@@ -238,11 +238,19 @@ class NoteMixin:
             if not line_str or len(line_str) < 10:
                 continue
 
-            if re.search(r"\b(decided|agreed|chose|selected|opted|will use|decision|arch)\b", line_str, re.IGNORECASE):
+            if re.search(
+                r"\b(decided|decide|agreed|agree|chose|choose|selected|select|opted|opt|will use|we will|should|must|plan to|decision|decision is|arch)\b",
+                line_str,
+                re.IGNORECASE,
+            ):
                 title = line_str[:80]
                 note = self.add_note(topic, topic_slug, "decision", line_str, agent_id=agent_id, title=title)
                 extracted.append({"type": "decision", "note_id": note["id"], "content": line_str})
-            elif re.search(r"\b(note|fact|key|config|setting|path)\b", line_str, re.IGNORECASE):
+            elif re.search(
+                r"\b(note|fact|key|config|setting|path|bug|error|issue|fail|failed|failure|broken|crash|regression|root cause|unexpected|doesn.t work|not working)\b",
+                line_str,
+                re.IGNORECASE,
+            ):
                 title = line_str[:80]
                 note = self.add_note(topic, topic_slug, "fact", line_str, agent_id=agent_id, title=title)
                 extracted.append({"type": "fact", "note_id": note["id"], "content": line_str})
@@ -727,20 +735,28 @@ class NoteMixin:
         self, topic: str, kind: str = "", query: str = "", tags: str = "", limit: int = 10
     ) -> list[dict]:
         cursor = self.storage.connection.cursor()
-        sql = "SELECT id, topic, kind, content, created_at, tags, pinned FROM notes WHERE topic = ?"
-        params: list = [self.normalize_topic(topic)]
+        sql = "SELECT id, topic, kind, content, created_at, tags, pinned FROM notes"
+        params: list = []
+        where_added = False
+        if topic:
+            sql += " WHERE topic = ?"
+            params.append(self.normalize_topic(topic))
+            where_added = True
         if kind:
-            sql += " AND kind = ?"
+            sql += (" AND " if where_added else " WHERE ") + "kind = ?"
+            where_added = True
             params.append(kind)
         if query:
             like = f"%{query}%"
-            sql += " AND (content LIKE ? OR title LIKE ?)"
+            sql += (" AND " if where_added else " WHERE ") + "(content LIKE ? OR title LIKE ?)"
+            where_added = True
             params.extend([like, like])
         if tags:
             for tag in tags.split(","):
                 tag = tag.strip()
                 if tag:
-                    sql += " AND tags LIKE ?"
+                    sql += (" AND " if where_added else " WHERE ") + "tags LIKE ?"
+                    where_added = True
                     params.append(f"%\"{tag}\"%")
         sql += " ORDER BY pinned DESC, created_at DESC LIMIT ?"
         params.append(limit)
@@ -798,18 +814,26 @@ class NoteMixin:
         return " | ".join(parts)
 
     def search_all(self, query: str, limit: int = 10) -> dict:
-        like = f"%{query}%"
+        terms = [t for t in query.lower().split() if len(t) > 1] or [query.lower()]
+        term_params = [f"%{term}%" for term in terms]
+
+        def field_match(field: str) -> str:
+            return " OR ".join([f"LOWER({field}) LIKE ?" for _ in terms])
+
         cursor = self.storage.connection.cursor()
 
         planet_rows = cursor.execute(
-            "SELECT topic, display_topic, current_state, goal FROM planets WHERE topic LIKE ? OR display_topic LIKE ? OR current_state LIKE ? OR goal LIKE ?",
-            (like, like, like, like),
+            "SELECT topic, display_topic, current_state, goal FROM planets WHERE "
+            + " OR ".join(field_match(field) for field in ("topic", "display_topic", "current_state", "goal")),
+            term_params * 4,
         ).fetchall()
         planets = [dict(r) for r in planet_rows]
 
         note_rows = cursor.execute(
-            "SELECT id, topic, kind, content, title FROM notes WHERE content LIKE ? OR title LIKE ? LIMIT ?",
-            (like, like, limit),
+            "SELECT id, topic, kind, content, title FROM notes WHERE "
+            + " OR ".join(field_match(field) for field in ("content", "title"))
+            + " LIMIT ?",
+            term_params * 2 + [limit],
         ).fetchall()
         notes = [dict(r) for r in note_rows]
 

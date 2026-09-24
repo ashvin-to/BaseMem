@@ -152,10 +152,29 @@ class TestNoteTools:
         r = search_notes(topic="search-test")
         assert "find me" in r
 
+    def test_search_notes_without_topic(self, temp_db):
+        from mcp_server.server import search_notes
+        _db_path, _storage, manager = temp_db
+        manager.add_note("test", "all-topics", "fact", "global search hit")
+        r = search_notes(query="global search hit")
+        assert "global search hit" in r
+
     def test_search_notes_empty(self, temp_db):
         from mcp_server.server import search_notes
         r = search_notes(topic="nope")
         assert "No matching" in r
+
+    def test_extract_memories_recognizes_planning_decision(self, temp_db):
+        _db_path, _storage, manager = temp_db
+        extracted = manager.auto_extract_memories("test", "We should switch to PostgreSQL for storage.")
+        assert extracted
+        assert extracted[0]["type"] == "decision"
+
+    def test_extract_memories_recognizes_bug_report_as_fact(self, temp_db):
+        _db_path, _storage, manager = temp_db
+        extracted = manager.auto_extract_memories("test", "The authentication flow crashes with a broken session token.")
+        assert extracted
+        assert extracted[0]["type"] == "fact"
 
     def test_search_notes_kind_filter(self, temp_db):
         from mcp_server.server import search_notes
@@ -575,7 +594,13 @@ class TestCodeTools:
         assert "gamma" in r
         assert "grep error" not in r
 
-    def test_code_read_caps_window(self, tmp_path):
+    def test_code_find_grep_groups_terms(self, tmp_path):
+        from mcp_server.server import code_find
+        (tmp_path / "a.txt").write_text("prompt tracker\nother\n")
+        r = code_find(query="prompt tracker", grep=True, projectRoot=str(tmp_path))
+        assert "prompt tracker" in r
+        assert "tracker" in r
+
         from mcp_server.server import code_read
         (tmp_path / "long.txt").write_text("\n".join(str(i) for i in range(80)) + "\n")
         r = code_read("long.txt", projectRoot=str(tmp_path), offset=1, limit=200)
@@ -671,7 +696,13 @@ class TestCodeTools:
         assert isinstance(r, str)
         assert "code_symbols" in r or "Schema" in r
 
-    def test_read_mcp_resource_unknown(self):
+    def test_read_mcp_resource_full_uris(self):
+        from mcp_server.server import read_mcp_resource
+        schema = read_mcp_resource("resource://code/schema")
+        stats = read_mcp_resource("resource://memory/stats")
+        assert "code_symbols" in schema
+        assert '"counts"' in stats
+
         """read_mcp_resource with unknown URI returns error."""
         from mcp_server.server import read_mcp_resource
         r = read_mcp_resource("unknown://uri")
