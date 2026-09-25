@@ -659,6 +659,29 @@ class TestCodeTools:
         assert "more: code_read" in r
 
     @pytestmark_code
+    def test_code_explore_respects_output_budget(self, tmp_path):
+        from mcp_server.server import code_explore
+        (tmp_path / "long.py").write_text("def target():\n" + "\n".join(f"    x = {i}" for i in range(80)) + "\n")
+        result = code_explore("target", projectRoot=str(tmp_path), limit=10, maxChars=300)
+        assert len(result) <= 340
+        assert "output budget reached" in result
+
+    @pytestmark_code
+    def test_code_explore_natural_language_symbol_fallback(self, tmp_path):
+        from mcp_server.server import code_explore
+        (tmp_path / "auth.py").write_text("def verify_token():\n    return True\n")
+        result = code_explore("where is token verification", projectRoot=str(tmp_path), limit=3)
+        assert "verify_token" in result
+
+    @pytestmark_code
+    def test_code_find_output_budget(self, tmp_path):
+        from mcp_server.server import code_find
+        (tmp_path / "data.py").write_text("needle = 1\n" * 20)
+        result = code_find("needle", projectRoot=str(tmp_path), grep=True, limit=20, maxChars=250)
+        assert len(result) <= 280
+        assert "output budget reached" in result
+
+    @pytestmark_code
     def test_code_context_symbol(self, tmp_path):
         from mcp_server.server import code_context
         (tmp_path / "main.py").write_text("def helper():\n    return 1\n\ndef main():\n    return helper()\n")

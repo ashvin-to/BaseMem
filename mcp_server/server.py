@@ -176,12 +176,37 @@ def _fmt_loc(file_path: str) -> str:
 
 
 _MAX_CODE_LINES = 50
+_MAX_CODE_CHARS = 20_000
 
 
 def _bounded_limit(limit: int) -> int:
     if limit <= 0:
         return _MAX_CODE_LINES
     return min(limit, _MAX_CODE_LINES)
+
+
+def _bounded_chars(value: int) -> int:
+    if value <= 0:
+        return 6_000
+    return min(value, _MAX_CODE_CHARS)
+
+
+def _trim_output(parts: list[str], max_chars: int) -> str:
+    marker = "more: output budget reached; narrow query or use code_read"
+    output: list[str] = []
+    used = 0
+    for part in parts:
+        remaining = max_chars - used
+        if remaining <= len(marker) + 1:
+            output.append(marker)
+            break
+        if len(part) > remaining:
+            available = remaining - len(marker) - 1
+            output.extend((part[:available].rstrip(), marker))
+            break
+        output.append(part)
+        used += len(part) + 1
+    return "\n".join(output)
 
 
 def _ensure_code_index(project_root: str):
@@ -195,6 +220,17 @@ def _grouped_text_query(query: str) -> str:
 
     terms = [re.escape(term) for term in query.split() if len(term) > 1]
     return r"\b(?:" + "|".join(terms) + r")\b" if len(terms) > 1 else query
+
+
+def _symbol_search_query(query: str) -> str:
+    import re
+
+    terms = [
+        term.lower()
+        for term in re.findall(r"[A-Za-z_][A-Za-z0-9_]{2,}", query)
+        if term.lower() not in {"the", "and", "for", "with", "where", "what", "which", "how", "does", "from", "into", "this", "that"}
+    ]
+    return " OR ".join(f'"{term}"' for term in dict.fromkeys(terms)) if terms else query
 
 
 def _rg_text_search(root: str, query: str, file_path: str, use_regex: bool, context: int):
@@ -226,6 +262,7 @@ def code_find(
     grep: bool = False,
     path: str = "",
     context: int = 0,
+    maxChars: int = 6000,
 ) -> str:
     import os
     import subprocess
@@ -235,6 +272,7 @@ def code_find(
 
     requested_limit = limit
     limit = _bounded_limit(limit)
+    max_chars = _bounded_chars(maxChars)
 
     if grep and query:
         root = projectRoot or _detect_project_root() or "."
@@ -255,7 +293,7 @@ def code_find(
                 parts.append(f"more: increase limit (max {_MAX_CODE_LINES}) or narrow filePath/query")
             if requested_limit > _MAX_CODE_LINES:
                 parts.append(f"capped: requested {requested_limit}, returned {limit}")
-            return "\n".join(parts)
+            return _trim_output(parts, max_chars)
         except FileNotFoundError:
             return "code_find: ripgrep (rg) not found; retry without grep=True"
         except subprocess.TimeoutExpired:
@@ -305,7 +343,7 @@ def code_find(
                             parts.append(f"  {line}")
                         if len(rg_lines) >= limit:
                             parts.append("  ... and more")
-                        return "\n".join(parts)
+                        return _trim_output(parts, max_chars)
                 except FileNotFoundError:
                     pass
                 except _rg.TimeoutExpired:
@@ -383,7 +421,7 @@ def code_find(
                         parts.append(f"more: code_read(filePath={sym['file_path']!r}, offset={end + 1}, limit={_MAX_CODE_LINES})")
             else:
                 parts.append(f"read: code_read(filePath={sym['file_path']!r}, offset={start_line}, limit=50)")
-            return "\n".join(parts)
+            return _trim_output(parts, max_chars)
 
         results = indexer.search_symbols(query, limit=limit, use_regex=useRegex)
         if filePath:
@@ -394,7 +432,7 @@ def code_find(
                 loc = _fmt_loc(r['file_path'])
                 sig = f" {r['signature'][:60]}" if r.get('signature') else ""
                 parts.append(f"  [{r['id']}] {r['symbol_name']} ({loc}){sig}")
-            return "\n".join(parts)
+            return _trim_output(parts, max_chars)
 
         # Partial-match fallback: LIKE '%query%' on symbol_name (case-insensitive)
         if not grep and query and query.strip() not in (".", "*", "%", ""):
@@ -560,12 +598,13 @@ def code_files(projectRoot: str = "", prefix: str = "", pattern: str = "", limit
         indexer.close()
 
 
-@server.tool(description="Explore symbols with compact source and call paths. Auto-indexes, bounds source to 50 lines, and falls back to text search.")
-def code_explore(query: str, projectRoot: str = "", limit: int = 10) -> str:
+@server.tool(description="Explore symbols with compact source and call paths. Auto-indexes, bounds source, and falls back to text search.")
+def code_explore(query: str, projectRoot: str = "", limit: int = 10, maxChars: int = 6000) -> str:
     import os
     import subprocess as _subprocess
 
     limit = _bounded_limit(limit)
+    max_chars = _bounded_chars(maxChars)
     from indexer import CODE_DB_FILENAME, CodeIndexer
     if not projectRoot:
         projectRoot = _detect_project_root()
@@ -597,7 +636,9 @@ def code_explore(query: str, projectRoot: str = "", limit: int = 10) -> str:
                 symbols = exact[:limit]
 
         if not symbols:
-            symbols = indexer.search_symbols(query, limit=limit)
+            symbols = indexer.search_symbols(query, limit=limit * 2)
+        if not symbols:
+            symbols = indexer.search_symbols(_symbol_search_query(query), limit=limit * 2)
 
         # Natural language fallback: use ripgrep to find matching lines in source files
         if not symbols:
@@ -611,7 +652,7 @@ def code_explore(query: str, projectRoot: str = "", limit: int = 10) -> str:
                     parts.extend(line.replace(root_prefix, "") for line in shown)
                     if len(lines) > limit:
                         parts.append(f"more: increase limit (max {_MAX_CODE_LINES}) or narrow query")
-                    return "\n".join(parts)
+                    return _trim_output(parts, max_chars)
             except FileNotFoundError:
                 pass
             except _subprocess.TimeoutExpired:
@@ -619,8 +660,8 @@ def code_explore(query: str, projectRoot: str = "", limit: int = 10) -> str:
 
         if not symbols:
             return f"code_explore: no matches for {query!r}"
-        parts = []
-        for sym in symbols[:limit]:
+        parts = [f"code_explore query={query!r} candidates={len(symbols)} shown={min(limit, len(symbols))}"]
+        for position, sym in enumerate(symbols[:limit]):
             loc = _fmt_loc(sym['file_path'])
             start_line = sym.get('start_line') or 1
             end_line = sym.get('end_line') or start_line
@@ -636,7 +677,7 @@ def code_explore(query: str, projectRoot: str = "", limit: int = 10) -> str:
                 cstr = ", ".join(f"{c['to_name']}:{c['line_number']}" for c in callees[:5])
                 parts.append(f"calls: {cstr}")
             abs_fp = os.path.join(projectRoot, sym['file_path'])
-            if os.path.isfile(abs_fp):
+            if position < 3 and os.path.isfile(abs_fp):
                 with open(abs_fp) as f:
                     lines = f.read().splitlines()
                 start = max(0, start_line - 1)
@@ -645,7 +686,7 @@ def code_explore(query: str, projectRoot: str = "", limit: int = 10) -> str:
                 parts.extend(lines[i] for i in range(start, end))
                 if end < end_line:
                     parts.append(f"more: code_read(filePath={sym['file_path']!r}, offset={end + 1}, limit={_MAX_CODE_LINES})")
-        return "\n".join(parts) if parts else "code_explore: no results"
+        return _trim_output(parts, max_chars) if parts else "code_explore: no results"
     finally:
         indexer.close()
 
