@@ -292,10 +292,6 @@ class PlanetMixin:
         return cursor.rowcount > 0
 
     def compact_planet(self, _folder_name: str, topic: str, _agent_id: str = "default") -> _PlanetProxy:
-        import contextlib
-
-        from .tasks import _get_tasks
-
         topic_slug = self.normalize_topic(topic)
         row = _get_planet_row(self.storage.connection, topic_slug)
         if not row:
@@ -311,15 +307,11 @@ class PlanetMixin:
         ).fetchall()
 
         ids_to_keep = set(summary_ids) | {r["id"] for r in pinned}
-
-        task_notes = set()
-        for t in _get_tasks(cursor.connection, topic_slug):
-            if t.get("status") and t["status"] != "done":
-                nids = json.loads(t.get("notes", "[]"))
-                for nid in nids:
-                    with contextlib.suppress(ValueError, TypeError):
-                        task_notes.add(int(nid))
-        ids_to_keep.update(task_notes)
+        durable = cursor.execute(
+            "SELECT id FROM notes WHERE topic = ? AND (COALESCE(importance, 0) >= 0.7 OR UPPER(kind) IN ('history','decision','constraint','architecture','convention') OR COALESCE(provenance, '') NOT IN ('', '{}'))",
+            (topic_slug,),
+        ).fetchall()
+        ids_to_keep.update(r["id"] for r in durable)
 
         recent = cursor.execute(
             "SELECT id FROM notes WHERE topic = ? AND kind != 'summary' ORDER BY created_at DESC LIMIT 30",
@@ -427,8 +419,6 @@ class PlanetMixin:
         lines = [f"ctx: {topic_slug}"]
         q = query.strip().lower()
 
-        from .tasks import _get_tasks
-
         row = _get_planet_row(conn, topic_slug)
         if row:
             if row.get("current_state"):
@@ -445,16 +435,6 @@ class PlanetMixin:
             if topics:
                 names = ", ".join(r[0] for r in topics)
                 lines.append(f"  (did you mean: {names})")
-
-        tasks = _get_tasks(conn, topic_slug)
-        open_tasks = [t for t in tasks if t.get("status") and t["status"] != "done"]
-        if open_tasks:
-            lines.append("")
-            lines.append(f"  tasks ({len(open_tasks)} open):")
-            for t in open_tasks[:5]:
-                lines.append(f"    task-{t['id']} [{t['status']}/{t['priority']}] {t['title']}")
-            if len(open_tasks) > 5:
-                lines.append(f"    ... and {len(open_tasks) - 5} more")
 
         session_lines = self._render_sessions_block(topic_slug)
         if session_lines:

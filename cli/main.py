@@ -15,7 +15,6 @@ from .edge import edge
 from .note import note
 from .planet import planet
 from .session import session
-from .task import task
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
@@ -66,7 +65,6 @@ def cli(ctx, db):
 cli.add_command(session)
 cli.add_command(planet)
 cli.add_command(note)
-cli.add_command(task)
 cli.add_command(edge)
 cli.add_command(code)
 
@@ -466,8 +464,13 @@ def migrate():
     import os
 
     db_path = os.environ.get("BASEMEM_DB_PATH") or str(Path.home() / ".basemem" / "basemem.db")
-    _ensure_schema(StorageManager(db_path).connection)
-    click.echo("Schema up-to-date.")
+    storage = StorageManager(db_path)
+    from storage.migrations import prepare_backup, run_migrations
+    backup = prepare_backup(storage.connection, db_path)
+    _ensure_schema(storage.connection)
+    report = run_migrations(storage.connection, db_path)
+    report["backup_path"] = report["backup_path"] or backup
+    click.echo(f"Schema up-to-date. applied={report['applied']} skipped={report['skipped']} archived_tasks={report['task_rows']} backup={report['backup_path'] or 'none'}")
 
 
 @cli.command(name="prompt-context")
@@ -626,7 +629,7 @@ def doctor():
         cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
         tables = {row[0] for row in cursor.fetchall()}
         conn.close()
-        expected = {'planets', 'notes', 'note_links', 'planet_links', 'sessions', 'tasks'}
+        expected = {'planets', 'notes', 'note_links', 'planet_links', 'sessions'}
         missing = expected - tables
         if missing:
             checks.append(('Database schema', f'fail: missing tables {missing}'))
