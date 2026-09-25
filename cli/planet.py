@@ -1,11 +1,11 @@
-"""Planet CLI: manage shared task planets."""
+"""Planet CLI: manage shared project context."""
 
 import click
 
 
 @click.group()
 def planet():
-    """Manage shared task planets."""
+    """Manage shared project context."""
     pass
 
 
@@ -20,7 +20,7 @@ def planet_create(ctx, topic, goal, status, current_state):
     root_name = _get_project_root()
     from storage.sessions import SessionManager
     manager = SessionManager(ctx.obj['storage'])
-    node = manager.get_or_create_task_planet(root_name, topic)
+    node = manager.get_or_create_planet(root_name, topic)
     node = manager.update_planet(root_name, topic, status=status, goal=goal, current_state=current_state)
     click.echo(f"[ok] Planet ready: {node.title} ({node.id})")
 

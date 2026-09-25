@@ -1,6 +1,6 @@
 # BaseMem: Memory System
 
-Planets hold your task context, notes persist your decisions, and linked edges form a learnable graph.
+Planets hold your project context, notes persist your decisions, and linked edges form a learnable graph.
 
 ## Quick Reference
 
@@ -92,9 +92,9 @@ Enable them for curation, debugging, or project discovery; omit them for a leane
 | Tool | Parameters | Description |
 |------|-----------|-------------|
 | `session_start` | `topic`, `title`, `agent_id` | Start a new session (returns session_id) |
-| `session_end` | `session_id`, `summary` (optional), `hard` (default=false) | Close a session. When `hard=true`, also unpins all stamped notes and detaches stamped tasks |
+| `session_end` | `session_id`, `summary` (optional) | Close a session and optionally record a durable summary note |
 | `session_resume` | `session_id`, `agent_id` | Resume a paused session |
-| `session_read` | `session_id` | Full session details with expanded notes and tasks |
+| `session_read` | `session_id` | Full session details with expanded notes |
 | `session_list` | `topic` (optional), `status` (optional) | List sessions, optionally filtered |
 
 ## CLI Commands
@@ -146,7 +146,6 @@ mem export / mem import
     "summary": "str",            # closing summary (null if active)
     "agent_id": "str",           # agent that started/resumed the session
     "note_ids": "list[int]",     # JSON array of note IDs stamped during session
-    "task_ids": "list[int]",     # JSON array of task IDs stamped during session
 }
 ```
 
@@ -206,7 +205,7 @@ When `add_note` is called, the new note is automatically linked to existing note
 
 ## Sessions
 
-Sessions group related notes and tasks under a named work interval. When a note is added or a task is created/updated while a session is **active** on that planet, the note or task is automatically stamped with the session id.
+Sessions group related notes under a named work interval. When a note is added while a session is **active** on that planet, the note is automatically stamped with the session id.
 
 ### Auto-Recovery
 
@@ -215,7 +214,6 @@ Sessions group related notes and tasks under a named work interval. When a note 
 ### Stamping
 
 - **Notes**: `add_note` calls `get_active_session(topic, agent_id)` — the active session with a matching agent_id is selected. If found, the note is stamped.
-- **Tasks**: `create_task` and `update_task` call `list_sessions(topic, status='active')` — the most recently active session on the planet is selected. Tasks don't carry an `agent_id`, so agent-scoped filtering is not applied.
 
 ### Context Block
 

@@ -65,7 +65,7 @@ class NoteMixin:
     normalize_topic: Any
     _now: Any
     _trim_text: Any
-    get_or_create_task_planet: Any
+    get_or_create_planet: Any
 
     SUMMARIZE_THRESHOLD = 50
 
@@ -157,7 +157,7 @@ class NoteMixin:
         topic_slug = self.normalize_topic(topic)
         row = _get_planet_row(self.storage.connection, topic_slug)
         if not row:
-            self.get_or_create_task_planet(topic, topic)
+            self.get_or_create_planet(topic, topic)
 
         kind = kind.lower().strip() or "fact"
         now = self._now()
@@ -214,7 +214,7 @@ class NoteMixin:
         topic_slug = self.normalize_topic(topic)
         row = _get_planet_row(self.storage.connection, topic_slug)
         if not row:
-            self.get_or_create_task_planet(topic, topic)
+            self.get_or_create_planet(topic, topic)
         now = self._now()
         exec_stmt(
             self.storage.connection,

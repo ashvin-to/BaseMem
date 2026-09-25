@@ -1,4 +1,4 @@
-"""Tests for all 35 core MCP tools (memory + graph + code + sessions + tasks smoke tests)."""
+"""Tests for memory, graph, code, and session MCP tools."""
 
 import json
 import os
@@ -144,18 +144,6 @@ class TestNoteTools:
         from mcp_server.server import logInteraction
         r = logInteraction(topic="log-test")
         assert "no-op" in r
-
-    def test_task_update_many(self, temp_db):
-        from mcp_server.server import task_update_many
-        _db_path, _storage, manager = temp_db
-        first = manager.create_task("test", "First")["id"]
-        second = manager.create_task("test", "Second")["id"]
-        result = task_update_many([
-            {"task_id": first, "status": "done"},
-            {"task_id": second, "priority": "high"},
-        ])
-        assert "updated=2 errors=0" in result
-        assert manager.get_task_summary("test")["counts"]["done"] == 1
 
     def test_session_recap(self, temp_db):
         from mcp_server.server import session_recap

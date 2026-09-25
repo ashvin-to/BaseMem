@@ -1,4 +1,4 @@
-"""Planet operations — shared task/topic context stored in planets table."""
+"""Planet operations — shared project context stored in planets table."""
 
 from __future__ import annotations
 
@@ -150,7 +150,7 @@ class _PlanetProxy:
             "aliases": aliases,
             "notes": note_list,
             "recent_activity": activity,
-            "is_task_planet": True,
+            "is_planet": True,
             "scope": "planet",
             "updated_at": row.get("updated_at", ""),
             "created_at": row.get("created_at", ""),
@@ -168,7 +168,7 @@ class PlanetMixin:
     normalize_topic: Any
     _now: Any
 
-    def get_or_create_task_planet(self, _folder_name: str, topic: str) -> _PlanetProxy:
+    def get_or_create_planet(self, _folder_name: str, topic: str) -> _PlanetProxy:
         topic_slug = self.normalize_topic(topic)
         row = _get_planet_row(self.storage.connection, topic_slug)
 
@@ -185,7 +185,7 @@ class PlanetMixin:
                 self.storage.connection,
                 "INSERT INTO planets (topic, display_topic, aliases, current_state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
                 (topic_slug, topic, json.dumps(sorted({topic, topic_slug})),
-                 f"Unified task context for: {topic}", self._now(), self._now()),
+                  f"Unified project context for: {topic}", self._now(), self._now()),
             )
 
         result = _get_planet(self.storage.connection, topic_slug)
@@ -207,10 +207,10 @@ class PlanetMixin:
         topic_slug = self.normalize_topic(topic)
         row = _get_planet_row(self.storage.connection, topic_slug)
         if not row:
-            self.get_or_create_task_planet(topic, topic)
+            self.get_or_create_planet(topic, topic)
             row = _get_planet_row(self.storage.connection, topic_slug)
 
-        assert row is not None  # guaranteed by get_or_create_task_planet
+        assert row is not None
 
         updates = []
         params: list = []
@@ -295,7 +295,7 @@ class PlanetMixin:
         topic_slug = self.normalize_topic(topic)
         row = _get_planet_row(self.storage.connection, topic_slug)
         if not row:
-            self.get_or_create_task_planet(topic, topic)
+            self.get_or_create_planet(topic, topic)
 
         cursor = self.storage.connection.cursor()
         summary_ids = {r["id"] for r in cursor.execute(

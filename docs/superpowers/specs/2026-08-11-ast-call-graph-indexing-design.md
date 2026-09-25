@@ -8,7 +8,7 @@
 
 ## 1. Overview & Goals
 
-BaseMem currently stores high-level project memory (notes, decisions, tasks) in `.basemem.db` and low-level code symbols and call graph relationships in `.basemem.code.db`.
+BaseMem stores high-level project memory (notes and decisions) in `.basemem.db` and low-level code symbols and call graph relationships in `.basemem.code.db`.
 
 This feature integrates AST symbol & dependency call-graphs directly into BaseMem's Graph Engine as **On-Demand Virtual Graph Nodes**. Users and agents can view, query, and traverse memory notes alongside real AST code symbols (`functions`, `methods`, `classes`, `modules`) and edges (`calls`, `called_by`, `imports`, `declared_in`) without duplicating data or bloating SQLite storage.
 

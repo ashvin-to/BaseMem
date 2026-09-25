@@ -1,5 +1,4 @@
-"""Tests for session CRUD, auto-recovery, note/task stamping,
-context block rendering, and MCP tool end-to-end."""
+"""Tests for session CRUD, note stamping, auto-recovery, and context rendering."""
 
 import json
 import os
@@ -42,7 +41,6 @@ class TestSessionCRUD:
         assert s["ended_at"] is None
         assert s["summary"] is None
         assert json.loads(s["note_ids"]) == []
-        assert json.loads(s["task_ids"]) == []
 
     def test_get_session_nonexistent(self, temp_db):
         _, storage, manager = temp_db
@@ -117,7 +115,7 @@ class TestSessionCRUD:
         assert manager.list_sessions("ghost") == []
 
 
-class TestNoteTaskStamping:
+class TestNoteStamping:
     def test_stamp_note_appends_and_is_idempotent(self, temp_db):
         _, storage, manager = temp_db
         manager.update_planet("test", "p", current_state="ok")
@@ -132,17 +130,6 @@ class TestNoteTaskStamping:
         manager.stamp_note(sid, nid)
         s = manager.get_session(sid)
         assert json.loads(s["note_ids"]) == [nid]
-
-    def test_stamp_task_appends(self, temp_db):
-        _, storage, manager = temp_db
-        manager.update_planet("test", "p", current_state="ok")
-        sid = manager.create_session("p", "Sprint", agent_id="default")
-        t = manager.create_task("p", "do something")
-        tid = t["id"]
-
-        manager.stamp_task(sid, tid)
-        s = manager.get_session(sid)
-        assert json.loads(s["task_ids"]) == [tid]
 
     def test_add_note_stamps_session_id_when_active_session_exists(self, temp_db):
         _, storage, manager = temp_db
@@ -173,23 +160,6 @@ class TestNoteTaskStamping:
         nid = int(n["id"].replace("note-", ""))
         cursor = storage.connection.cursor()
         row = cursor.execute("SELECT session_id FROM notes WHERE id=?", (nid,)).fetchone()
-        assert row["session_id"] is None
-
-    def test_create_task_stamps_session_id_when_active(self, temp_db):
-        _, storage, manager = temp_db
-        manager.update_planet("test", "p", current_state="ok")
-        sid = manager.create_session("p", "Sprint", agent_id="default")
-        t = manager.create_task("p", "task with session")
-        cursor = storage.connection.cursor()
-        row = cursor.execute("SELECT session_id FROM tasks WHERE id=?", (t["id"],)).fetchone()
-        assert row["session_id"] == sid
-
-    def test_create_task_no_stamp_when_no_active_session(self, temp_db):
-        _, storage, manager = temp_db
-        manager.update_planet("test", "p", current_state="ok")
-        t = manager.create_task("p", "task without session")
-        cursor = storage.connection.cursor()
-        row = cursor.execute("SELECT session_id FROM tasks WHERE id=?", (t["id"],)).fetchone()
         assert row["session_id"] is None
 
     def test_parallel_agent_sessions_dont_interfere(self, temp_db):

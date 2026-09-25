@@ -49,7 +49,7 @@ def context(ctx):
     rows = cursor.execute(
         "SELECT topic, display_topic, status, goal, current_state, next_steps, updated_at FROM planets ORDER BY updated_at DESC"
     ).fetchall()
-    click.echo("\n[PLANETS] ACTIVE PLANETS (TASKS):")
+    click.echo("\n[PLANETS] ACTIVE PLANETS:")
     if rows:
         for row in rows:
             topic = row["display_topic"] or row["topic"]
@@ -62,7 +62,7 @@ def context(ctx):
             if next_steps:
                 click.echo(f"  Next: {next_steps[-1]}")
     else:
-        click.echo("  No active tasks.")
+        click.echo("  No active planets.")
 
 
 @session.command()

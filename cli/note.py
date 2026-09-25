@@ -11,7 +11,7 @@ def note():
 
 @note.command("add")
 @click.argument('topic')
-@click.option('--type', 'kind', default='fact', help='decision, fact, task, issue, question, concept, example')
+@click.option('--type', 'kind', default='fact', help='decision, fact, issue, question, concept, example')
 @click.option('--message', '-m', required=True)
 @click.option('--title')
 @click.option('--status', default='open')
@@ -32,7 +32,7 @@ def note_add(ctx, topic, kind, message, title, status, agent_id):
 @note.command("list")
 @click.argument('topic', required=False)
 @click.option('--recent', 'limit', default=10, type=int, help='How many notes to show (default: 10)')
-@click.option('--type', 'kind', help='Filter by kind: decision, fact, summary, task, issue, question, concept, example')
+@click.option('--type', 'kind', help='Filter by kind: decision, fact, summary, issue, question, concept, example')
 @click.option('--pinned', is_flag=True, help='Only pinned notes')
 @click.option('--json', 'as_json', is_flag=True, help='Output as JSON')
 @click.pass_context

@@ -124,7 +124,7 @@ class SessionManagerBase:
 
 class SessionManager(PlanetMixin, NoteMixin, GraphMixin, SessionManagerBase):
 
-    # ── Session CRUD ──
+    # Session CRUD
 
     def create_session(self, topic: str, title: str, agent_id: str, resume_id: int | None = None) -> int:
         if resume_id is not None and resume_id > 0:
@@ -431,14 +431,6 @@ def stamp_note(session_id: int, note_id: int) -> bool:
     manager = _get_default_manager()
     try:
         return manager.stamp_note(session_id, note_id)
-    finally:
-        manager.storage.close()
-
-
-def stamp_task(session_id: int, task_id: int) -> bool:
-    manager = _get_default_manager()
-    try:
-        return manager.stamp_task(session_id, task_id)
     finally:
         manager.storage.close()
 

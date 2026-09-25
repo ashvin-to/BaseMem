@@ -1,6 +1,6 @@
 ---
 name: using-basemem
-description: "BaseMem memory + code intelligence protocol. Triggers on: recall context, log decision, session lifecycle, code search, review blast radius, task management, planet memories, zero-RAM code graph."
+description: "BaseMem memory + code intelligence protocol. Triggers on: recall context, log decision, session lifecycle, code search, review blast radius, project memory, zero-RAM code graph."
 ---
 
 # BaseMem — Memory + Code Intelligence Protocol
@@ -19,7 +19,6 @@ BaseMem provides persistent cross-session memory (planets, notes, decisions) and
 | Code review blast-radius | `get_review_context(files=["a.py"])` |
 | Evidence gate | `verify_change(projectRoot="...", files=[...], artifact_paths=[...], test_command="...")` |
 | Log key decision / architectural fact | `logInteraction(topic="...", decision="...")` |
-| Create / list task items | `task_create(...)` / `task_list(...)` |
 | End session & save summary | `logInteraction(topic="...", summary="...", activity="done")` |
 
 ## Workflow
@@ -44,4 +43,3 @@ BaseMem provides persistent cross-session memory (planets, notes, decisions) and
 
 1. Avoid full-file reads unless strictly necessary — use `code_find` and `code_read` line slicing.
 2. Always pass the exact `topic` (repository folder name) when logging decisions.
-3. Keep `task_create` descriptions to single concise sentences ($\le 20$ words).
