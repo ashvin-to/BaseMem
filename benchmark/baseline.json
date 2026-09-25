@@ -1,0 +1,237 @@
+{
+  "command": "uv run python -m benchmarks.memory_benchmark --output benchmark/baseline.json --repeats 3",
+  "dataset_sha256": "7cf59f4a2719557b545d8c44126b08fadc91d0094b3bec6f527d56151badd1c7",
+  "environment": {
+    "cwd": "/tmp/opencode/basemem-benchmark",
+    "platform": "Linux-7.2.6-arch2-1-x86_64-with-glibc2.44",
+    "python": "3.14.0",
+    "sqlite": "3.50.4"
+  },
+  "metrics": {
+    "irrelevant_result_rate": 0.6081632653061224,
+    "latency_ms": {
+      "max": 0.293714,
+      "mean": 0.113641,
+      "p50": 0.096242
+    },
+    "mrr": 1.0,
+    "precision": 0.39183673469387753,
+    "queries": 7,
+    "recall@1": 1.0,
+    "recall@10": 1.0,
+    "recall@5": 1.0,
+    "repeats": 3,
+    "token_count": {
+      "mean_per_query": 71.57142857142857,
+      "total": 501
+    }
+  },
+  "results": [
+    {
+      "first_relevant_rank": 1,
+      "id": "sqlite-choice",
+      "irrelevant_results": 9,
+      "latency_ms": [
+        0.293714,
+        0.146527,
+        0.13294
+      ],
+      "precision": {
+        "1": 1.0,
+        "10": 0.1,
+        "5": 0.2
+      },
+      "query": "Which database did the project choose for local durable storage?",
+      "ranked_ids": [
+        1,
+        5,
+        18,
+        17,
+        13,
+        15,
+        6,
+        12,
+        14,
+        3
+      ],
+      "recall": {
+        "1": 1,
+        "10": 1,
+        "5": 1
+      },
+      "relevant_id": 1,
+      "token_count": 150
+    },
+    {
+      "first_relevant_rank": 1,
+      "id": "auth",
+      "irrelevant_results": 1,
+      "latency_ms": [
+        0.09554,
+        0.096242,
+        0.088697
+      ],
+      "precision": {
+        "1": 1.0,
+        "10": 0.5,
+        "5": 0.5
+      },
+      "query": "How are access tokens and API authorization handled?",
+      "ranked_ids": [
+        2,
+        8
+      ],
+      "recall": {
+        "1": 1,
+        "10": 1,
+        "5": 1
+      },
+      "relevant_id": 2,
+      "token_count": 39
+    },
+    {
+      "first_relevant_rank": 1,
+      "id": "redis-dev",
+      "irrelevant_results": 3,
+      "latency_ms": [
+        0.096903,
+        0.288143,
+        0.105479
+      ],
+      "precision": {
+        "1": 1.0,
+        "10": 0.25,
+        "5": 0.25
+      },
+      "query": "Is Redis required for local development work?",
+      "ranked_ids": [
+        3,
+        14,
+        1,
+        5
+      ],
+      "recall": {
+        "1": 1,
+        "10": 1,
+        "5": 1
+      },
+      "relevant_id": 3,
+      "token_count": 65
+    },
+    {
+      "first_relevant_rank": 1,
+      "id": "flaky-test",
+      "irrelevant_results": 1,
+      "latency_ms": [
+        0.07472,
+        0.071324,
+        0.078277
+      ],
+      "precision": {
+        "1": 1.0,
+        "10": 0.5,
+        "5": 0.5
+      },
+      "query": "What should I try when a test is flaky?",
+      "ranked_ids": [
+        4,
+        19
+      ],
+      "recall": {
+        "1": 1,
+        "10": 1,
+        "5": 1
+      },
+      "relevant_id": 4,
+      "token_count": 41
+    },
+    {
+      "first_relevant_rank": 1,
+      "id": "previous-db",
+      "irrelevant_results": 6,
+      "latency_ms": [
+        0.108435,
+        0.112112,
+        0.110999
+      ],
+      "precision": {
+        "1": 1.0,
+        "10": 0.14285714285714285,
+        "5": 0.2
+      },
+      "query": "Which database did the project use before the current release?",
+      "ranked_ids": [
+        5,
+        19,
+        17,
+        13,
+        18,
+        7,
+        1
+      ],
+      "recall": {
+        "1": 1,
+        "10": 1,
+        "5": 1
+      },
+      "relevant_id": 5,
+      "token_count": 118
+    },
+    {
+      "first_relevant_rank": 1,
+      "id": "module-architecture",
+      "irrelevant_results": 0,
+      "latency_ms": [
+        0.068499,
+        0.065734,
+        0.064602
+      ],
+      "precision": {
+        "1": 1.0,
+        "10": 1.0,
+        "5": 1.0
+      },
+      "query": "What are the main modules in the codebase?",
+      "ranked_ids": [
+        6
+      ],
+      "recall": {
+        "1": 1,
+        "10": 1,
+        "5": 1
+      },
+      "relevant_id": 6,
+      "token_count": 22
+    },
+    {
+      "first_relevant_rank": 1,
+      "id": "deployment",
+      "irrelevant_results": 3,
+      "latency_ms": [
+        0.099869,
+        0.094098,
+        0.093607
+      ],
+      "precision": {
+        "1": 1.0,
+        "10": 0.25,
+        "5": 0.25
+      },
+      "query": "Where does the project discover deployment targets and images?",
+      "ranked_ids": [
+        7,
+        13,
+        18,
+        1
+      ],
+      "recall": {
+        "1": 1,
+        "10": 1,
+        "5": 1
+      },
+      "relevant_id": 7,
+      "token_count": 66
+    }
+  ],
+  "topic": "memory-benchmark"
+}
