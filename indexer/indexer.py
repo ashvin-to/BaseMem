@@ -107,7 +107,7 @@ class CodeIndexer:
             return 0
         self.conn.create_function("is_generated", 1, is_generated)
 
-        self._ignore_patterns = []
+        self._ignore_patterns: list[str] = []
         self._load_ignore_files()
 
         ensure_code_schema(self.conn)

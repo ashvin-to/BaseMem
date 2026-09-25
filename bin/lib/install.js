@@ -852,6 +852,20 @@ function installSkills(agentName, customDestDir) {
           fs.copyFileSync(sFull, path.join(targetSkillDir, sf));
         }
       }
+      const skillReadme = path.join(skillsSrc, 'README.md');
+      if (fs.existsSync(skillReadme)) {
+        fs.copyFileSync(skillReadme, path.join(targetSkillDir, 'README.md'));
+      }
+      if (entry !== 'using-basemem') {
+        const nestedSkillDir = path.join(destDir, 'using-basemem', entry);
+        fs.mkdirSync(nestedSkillDir, { recursive: true });
+        for (const sf of fs.readdirSync(full)) {
+          const sFull = path.join(full, sf);
+          if (fs.statSync(sFull).isFile()) {
+            fs.copyFileSync(sFull, path.join(nestedSkillDir, sf));
+          }
+        }
+      }
     }
   }
 

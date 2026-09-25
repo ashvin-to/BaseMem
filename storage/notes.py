@@ -62,6 +62,8 @@ class NoteMixin:
     """Mixin providing note CRUD and linking methods. Requires self.storage (StorageManager)."""
 
     storage: StorageManager
+    stamp_note: Any
+    _render_sessions_block: Any
     normalize_topic: Any
     _now: Any
     _trim_text: Any

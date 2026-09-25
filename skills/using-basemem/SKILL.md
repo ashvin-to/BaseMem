@@ -21,7 +21,7 @@ BaseMem provides persistent cross-session memory (planets, notes, decisions) and
 | Create / list task items | `task_create(...)` / `task_list(...)` |
 | End session & save summary | `logInteraction(topic="...", summary="...", activity="done")` |
 
-## Memory & Context Workflow
+## Workflow
 
 1. **Session Start**: Context is auto-injected — do NOT call `getContext`. Only call it mid-session to refresh or switch topics.
 2. **Code task? Call `code_find` FIRST, before any Read/Grep/Glob.** Then `code_read` (limit<=50) for windows, `code_explore` for callers, `code_files` for listing. If `code_find` returns empty, call `code_init(projectRoot)` once and retry. Never start with a full-file read.

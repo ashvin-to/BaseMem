@@ -139,7 +139,7 @@ class SessionManager(PlanetMixin, NoteMixin, TaskMixin, SessionManagerBase):
             (topic_slug, title, agent_id, now, now),
         )
         self.storage.connection.commit()
-        return cursor.lastrowid
+        return cursor.lastrowid or 0
 
     def get_session(self, session_id: int) -> dict | None:
         cursor = self.storage.connection.cursor()

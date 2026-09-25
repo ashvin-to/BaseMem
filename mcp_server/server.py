@@ -50,12 +50,14 @@ def _env_path() -> "str | None":
     return None
 
 
+import contextlib
 import json
 import os
 import sqlite3
-from functools import wraps
+from collections.abc import Callable
 
 from mcp.server.fastmcp import FastMCP
+
 
 def _get_initial_instructions() -> "str | None":
     return (
@@ -102,6 +104,47 @@ def code_init(projectRoot: str) -> str:
         )
     finally:
         indexer.close()
+
+
+@server.tool(
+    description=(
+        "Return a bounded, grounded hierarchical code understanding for a task. "
+        "Uses existing code FTS, calls edges, and cached derived artifacts."
+    )
+)
+def code_understand(query: str, projectRoot: str = "", depth: int = 2, budget: int = 7000, maxMs: int = 500) -> str:
+    import json
+    import os
+
+    root = os.path.abspath(projectRoot or _detect_project_root())
+    if not os.path.isdir(root):
+        return json.dumps({"error": f"Directory not found: {root}"})
+    try:
+        from indexer import CODE_DB_FILENAME, CodeIndexer
+        from indexer.understanding import Budget, CodeUnderstanding
+        if not os.path.isfile(os.path.join(root, CODE_DB_FILENAME)):
+            return json.dumps({"error": "Code index not initialized; call code_init first."})
+        indexer = CodeIndexer(root)
+        try:
+            def memory_search(text: str, limit: int):
+                db_path = get_db_path()
+                if not os.path.isfile(db_path):
+                    return []
+                from storage.db import StorageManager
+                from storage.sessions import SessionManager
+                storage = StorageManager(db_path)
+                manager = SessionManager(storage)
+                try:
+                    return manager.search_notes_fts("", text, limit=limit) or []
+                except Exception:
+                    return []
+
+            artifact = CodeUnderstanding(indexer, memory_search).understand(query, depth, Budget.bounded(max_chars=budget, max_ms=maxMs))
+            return json.dumps(artifact, separators=(",", ":"))
+        finally:
+            indexer.close()
+    except Exception as exc:
+        return json.dumps({"error": f"code_understanding unavailable: {exc}", "fallback": "use code_find and prompt_context"})
 
 
 def _detect_project_root() -> str:
@@ -260,7 +303,7 @@ def code_find(
                         for line in rg_lines:
                             parts.append(f"  {line}")
                         if len(rg_lines) >= limit:
-                            parts.append(f"  ... and more")
+                            parts.append("  ... and more")
                         return "\n".join(parts)
                 except FileNotFoundError:
                     pass
@@ -434,10 +477,7 @@ def code_trace(
     if not os.path.isdir(projectRoot):
         return f"No code index at {projectRoot}."
     db_path = os.path.join(projectRoot, CODE_DB_FILENAME)
-    if not os.path.exists(db_path):
-        indexer = _ensure_code_index(projectRoot)
-    else:
-        indexer = CodeIndexer(projectRoot)
+    indexer = _ensure_code_index(projectRoot) if not os.path.exists(db_path) else CodeIndexer(projectRoot)
     try:
         lines = []
         seen = set()
@@ -676,12 +716,11 @@ def code_impact(symbolName: str, projectRoot: str = "", depth: int = 2, limit: i
     from indexer import CODE_DB_FILENAME, CodeIndexer
     if not projectRoot:
         projectRoot = _detect_project_root()
+    if not os.path.isdir(projectRoot):
+        return f"No code index at {projectRoot}."
     db_path = os.path.join(projectRoot, CODE_DB_FILENAME)
     limit = _bounded_limit(limit)
-    if not os.path.exists(db_path):
-        indexer = _ensure_code_index(projectRoot)
-    else:
-        indexer = CodeIndexer(projectRoot)
+    indexer = _ensure_code_index(projectRoot) if not os.path.exists(db_path) else CodeIndexer(projectRoot)
     try:
         results = indexer.get_impact(symbolName, depth=depth, limit=limit)
         if not results:
@@ -724,10 +763,8 @@ def get_review_context(
         for f in files:
             nf = f.replace("\\", "/")
             if os.path.isabs(nf):
-                try:
+                with contextlib.suppress(ValueError):
                     nf = os.path.relpath(nf, projectRoot).replace("\\", "/")
-                except ValueError:
-                    pass
             elif nf.startswith("./"):
                 nf = nf[2:]
             norm_files.append(nf)
@@ -1134,19 +1171,22 @@ def prompt_context(query: str, topic: str = "", projectRoot: str = "", limit: in
     .basemem.code.db code_symbols_fts index. Returns a compact block or ''.
     """
     import os as _os
+
     from storage.db import StorageManager
     from storage.sessions import SessionManager
+    _tok_func: Callable[[str], list[str]] | None
     try:
-        from storage.notes import tokenize_query as _tok
+        from storage.notes import tokenize_query
+        _tok_func = tokenize_query
     except Exception:
-        _tok = None
+        _tok_func = None
 
     text = (query or "").strip()
     if len(text) < 8:
         return ""
     if len(text) > 2000:
         text = text[:2000]
-    tokens = _tok(text) if _tok else []
+    tokens = _tok_func(text) if _tok_func else []
     if not tokens:
         return ""
 
@@ -1182,15 +1222,38 @@ def prompt_context(query: str, topic: str = "", projectRoot: str = "", limit: in
             try:
                 code_hits = indexer.search_symbols(" ".join(tokens[:8]), limit=limit) or []
             finally:
-                try:
+                with contextlib.suppress(Exception):
                     indexer.close()
-                except Exception:
-                    pass
     except Exception:
         code_hits = []
+    understanding = None
+    if code_hits:
+        try:
+            from indexer.understanding import Budget, CodeUnderstanding
+            indexer = CodeIndexer(found or _os.getcwd())
+            try:
+                understanding = CodeUnderstanding(indexer).understand(
+                    text,
+                    depth=1,
+                    budget=Budget.bounded(max_nodes=max(24, limit * 8), max_chars=1800, max_ms=250),
+                )
+            finally:
+                indexer.close()
+        except Exception:
+            understanding = None
     if not mem_hits and not code_hits:
         return ""
     lines: list[str] = []
+    if understanding and understanding.get("evidence"):
+        lines.append("[Task context]")
+        for component in understanding.get("subsystems", [])[:4]:
+            names = ", ".join(item.get("symbol_name", "") for item in component.get("symbols", [])[:5])
+            lines.append(f"- {component.get('name')}: {names}")
+        flows = understanding.get("flows", [])[:4]
+        for flow in flows:
+            lines.append(f"- flow: {flow.get('from')} -> {', '.join(flow.get('to', []))}")
+        for item in understanding.get("evidence", [])[:limit]:
+            lines.append(f"- evidence: {item.get('symbol')} ({item.get('file')}:{item.get('line')})")
     if mem_hits:
         lines.append("[Relevant memory]")
         for n in mem_hits[:limit]:
@@ -1198,7 +1261,7 @@ def prompt_context(query: str, topic: str = "", projectRoot: str = "", limit: in
             title = (n.get("title") or "")[:100]
             content = " ".join((n.get("content") or "").split())[:300]
             lines.append(f"- ({kind}) {title}: {content}" if title else f"- ({kind}) {content}")
-    if code_hits:
+    if code_hits and not understanding:
         lines.append("[Relevant code]")
         for s in code_hits[:limit]:
             sig = " ".join((s.get("signature") or "").split())[:160]
@@ -1480,9 +1543,9 @@ def set_memory_state(topic: str, state: str) -> str:
 
 @server.tool(description="Get graph neighbors (depth=1), ranked list, or subgraph JSON (depth>1), optionally including virtual AST code nodes.")
 def get_graph(noteId: str | int, depth: int = 1, minWeight: float = 0.0, ranked: bool = False, includeCode: bool = False) -> str:
+    from graph.engine import GraphEngine
     from storage.db import StorageManager
     from storage.sessions import SessionManager
-    from graph.engine import GraphEngine
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
     nid = manager._parse_note_id(noteId)
@@ -1495,7 +1558,7 @@ def get_graph(noteId: str | int, depth: int = 1, minWeight: float = 0.0, ranked:
         if includeCode:
             ge = GraphEngine(storage)
             vgraph = ge.get_virtual_code_overlay(project_root=_detect_project_root())
-            for vnode_id, vnode in vgraph["nodes"].items():
+            for _vnode_id, vnode in vgraph["nodes"].items():
                 result.setdefault("nodes", []).append(vnode)
             for vedge in vgraph["edges"]:
                 result.setdefault("edges", []).append(vedge)
@@ -1508,7 +1571,7 @@ def get_graph(noteId: str | int, depth: int = 1, minWeight: float = 0.0, ranked:
         filtered = [r for r in ranked_list if r['weight'] >= minWeight]
         if not filtered:
             return "No neighbors found at this weight threshold."
-        lines = [f"Neighbors ranked by weight:\n"]
+        lines = ["Neighbors ranked by weight:\n"]
         for i, r in enumerate(filtered, 1):
             lines.append(f"  {i}. note-{r['id']} (w={r['weight']}, c={r.get('confidence','?')}) {r['title'] or r['content'][:60]}")
         return "\n".join(lines)
@@ -1565,6 +1628,7 @@ def compute_similarity(noteIdA: str, noteIdB: str) -> str:
 @server.tool(description="Automatically extract decisions & facts from text into structured memory notes.")
 def extract_memories(topic: str, text: str) -> str:
     import json
+
     from storage.db import StorageManager
     from storage.sessions import SessionManager
     storage = StorageManager(get_db_path())
@@ -1578,6 +1642,7 @@ def extract_memories(topic: str, text: str) -> str:
 @server.tool(description="Scan memory notes for a topic to detect and resolve contradictions automatically.")
 def resolve_contradictions(topic: str) -> str:
     import json
+
     from storage.db import StorageManager
     from storage.sessions import SessionManager
     storage = StorageManager(get_db_path())
@@ -1589,6 +1654,7 @@ def resolve_contradictions(topic: str) -> str:
 @server.tool(description="Multi-layer context re-ranking combining FTS similarity, graph distance, and recency.")
 def rank_context(topic: str, query: str = "", limit: int = 20) -> str:
     import json
+
     from storage.db import StorageManager
     from storage.sessions import SessionManager
     storage = StorageManager(get_db_path())
@@ -1674,15 +1740,18 @@ def session_end(session_id: int, pause: bool = False, summary: str = "") -> str:
     if not ok:
         return f"Session {session_id} not found."
     session = manager.get_session(session_id)
+    if not session:
+        return f"Session {session_id} not found."
     status = session.get("status", "?")
     s = session.get("summary", "")
     return f"Session {session_id} closed. Status: {status}. Summary: {s[:200]}" if s else f"Session {session_id} closed."
 @_optional_tool(description="Read a full session: metadata, stamped notes, and stamped tasks.")
 def session_read(session_id: int) -> str:
     """Return session metadata with expanded notes and tasks."""
+    import json as _json
+
     from storage.db import StorageManager
     from storage.sessions import SessionManager
-    import json as _json
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
     session = manager.get_session(session_id)
@@ -1727,6 +1796,7 @@ def session_read(session_id: int) -> str:
 @server.tool(description="Recap the previous session for a topic: summary, recent decisions/facts, state, next step, and active/closed sessions.")
 def session_recap(topic: str = "", limit: int = 3) -> str:
     import json
+
     from storage.db import StorageManager
     from storage.sessions import SessionManager
 
@@ -1903,6 +1973,7 @@ Indexes: code_symbols(file_path), code_symbols(symbol_name),
           code_symbols_fts(code_symbols_fts) [FTS5 virtual table]"""
 
     if uri.startswith("code/project/"):
+        from indexer import find_code_projects
         project_name = uri[len("code/project/"):]
         projects = find_code_projects()
         for p in projects:

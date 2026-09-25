@@ -164,6 +164,7 @@ class PlanetMixin:
     """Mixin providing planet CRUD methods. Requires self.storage (StorageManager)."""
 
     storage: StorageManager
+    _render_sessions_block: Any
     normalize_topic: Any
     _now: Any
 

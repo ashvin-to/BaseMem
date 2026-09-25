@@ -19,13 +19,13 @@ try:
     from tree_sitter import Language, Node, Parser, Query, QueryCursor
     from tree_sitter_language_pack import ProcessConfig, detect_language_from_extension, process
 except ImportError:  # tree-sitter not installed: indexing is unavailable, but DB reads still work
-    Language = Node = Parser = Query = QueryCursor = None  # type: ignore[assignment]
-    ProcessConfig = None  # type: ignore[assignment]
+    Language = Node = Parser = Query = QueryCursor = None  # type: ignore[misc,assignment]
+    ProcessConfig = None  # type: ignore[misc,assignment]
 
-    def detect_language_from_extension(*_args: object, **_kwargs: object) -> str | None:  # type: ignore[no-redef]
+    def detect_language_from_extension(*_args: object, **_kwargs: object) -> str | None:  # type: ignore[misc]
         return None
 
-    def process(*_args: object, **_kwargs: object):  # type: ignore[no-redef]
+    def process(*_args: object, **_kwargs: object):  # type: ignore[misc]
         raise RuntimeError("tree-sitter is not installed; code indexing is unavailable")
 
 # ── Language grammars ────────────────────────────────────────────────

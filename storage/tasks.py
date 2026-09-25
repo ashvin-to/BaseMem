@@ -25,6 +25,8 @@ class TaskMixin:
     """Mixin providing task CRUD methods. Requires self.storage (StorageManager)."""
 
     storage: StorageManager
+    list_sessions: Any
+    stamp_task: Any
     normalize_topic: Any
     _now: Any
     get_or_create_task_planet: Any
