@@ -91,6 +91,45 @@ class NoteMixin:
         words = re.findall(r"[a-zA-Z]{3,}", text.lower())
         return {w for w in words if w not in STOPWORDS}
 
+    NOTE_TYPES = frozenset({"FACT", "DECISION", "CONSTRAINT", "PREFERENCE", "DISCOVERY", "BUG", "WORKAROUND", "ARCHITECTURE", "CONVENTION", "HYPOTHESIS", "HISTORY", "SUMMARY", "TURN", "ISSUE", "QUESTION", "TASK_ARCHIVE"})
+    NOTE_RELATIONSHIPS = frozenset({"related", "contradicts", "supersedes", "superseded_by", "supports", "depends_on"})
+
+    def create_note(self, topic: str, kind: str, content: str, **metadata: Any) -> dict:
+        normalized = kind.upper().strip()
+        if normalized not in self.NOTE_TYPES:
+            raise ValueError(f"unsupported note type: {kind}")
+        return self.add_note("", topic, normalized, content, **{k: v for k, v in metadata.items() if k in {"agent_id", "title", "status", "source_path", "artifact_path", "observed_at", "verification_status", "evidence_summary", "importance", "confidence", "scope", "source", "provenance", "valid_from", "valid_until"}})
+
+    def list_notes(self, topic: str = "", kind: str = "", status: str | None = None, include_superseded: bool = False, limit: int = 100) -> list[dict]:
+        where, params = [], []
+        if topic: where.append("topic = ?"); params.append(self.normalize_topic(topic))
+        if kind: where.append("UPPER(kind) = ?"); params.append(kind.upper())
+        if status: where.append("status = ?"); params.append(status)
+        if not include_superseded: where.append("COALESCE(status, 'open') != 'superseded'")
+        sql = "SELECT * FROM notes" + (" WHERE " + " AND ".join(where) if where else "") + " ORDER BY importance DESC, updated_at DESC LIMIT ?"
+        return [dict(r) for r in self.storage.connection.execute(sql, (*params, limit)).fetchall()]
+
+    def update_note(self, note_id: int | str, **fields: Any) -> dict:
+        nid = self._parse_note_id(note_id)
+        if nid is None: raise ValueError("invalid note id")
+        allowed = {"content", "title", "kind", "status", "scope", "source", "importance", "confidence", "valid_from", "valid_until", "supersedes", "superseded_by", "updated_at"}
+        updates = {k: v for k, v in fields.items() if k in allowed}
+        if "kind" in updates: updates["kind"] = str(updates["kind"]).upper()
+        updates.setdefault("updated_at", self._now())
+        clause = ", ".join(f"{k}=?" for k in updates)
+        self.storage.connection.execute(f"UPDATE notes SET {clause} WHERE id=?", (*updates.values(), nid)); self.storage.connection.commit()
+        return dict(self.storage.connection.execute("SELECT * FROM notes WHERE id=?", (nid,)).fetchone())
+
+    def delete_note(self, note_id: int | str) -> bool:
+        nid = self._parse_note_id(note_id)
+        if nid is None: return False
+        self.storage.connection.execute("DELETE FROM notes WHERE id=?", (nid,)); self.storage.connection.commit(); return True
+
+    def get_note(self, note_id: int | str) -> dict | None:
+        nid = self._parse_note_id(note_id)
+        row = self.storage.connection.execute("SELECT * FROM notes WHERE id=?", (nid,)).fetchone() if nid is not None else None
+        return dict(row) if row else None
+
     def add_note(
         self,
         _folder_name: str,
@@ -105,6 +144,13 @@ class NoteMixin:
         observed_at: str = "",
         verification_status: str = "memory_only",
         evidence_summary: str = "",
+        importance: float = 0.5,
+        confidence: float = 0.5,
+        scope: str = "",
+        source: str = "",
+        provenance: dict | str = "",
+        valid_from: str = "",
+        valid_until: str = "",
     ) -> dict:
         from .planets import _get_planet_row
 
@@ -119,11 +165,13 @@ class NoteMixin:
             self.storage.connection,
             "INSERT INTO notes "
             "(topic, kind, content, title, agent_id, status, source_path, artifact_path, "
-            "observed_at, verification_status, evidence_summary, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "observed_at, verification_status, evidence_summary, importance, confidence, scope, source, provenance, valid_from, valid_until, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 topic_slug, kind, content, title or content[:80], agent_id, status,
-                source_path, artifact_path, observed_at, verification_status, evidence_summary, now, now,
+                source_path, artifact_path, observed_at, verification_status, evidence_summary,
+                max(0.0, min(1.0, float(importance))), max(0.0, min(1.0, float(confidence))), scope, source,
+                provenance if isinstance(provenance, str) else json.dumps(provenance), valid_from or now, valid_until or None, now, now,
             ),
         )
         exec_stmt(
@@ -189,7 +237,7 @@ class NoteMixin:
         return None
 
     def link_notes(
-        self, from_note_id: int | str, to_note_id: int | str, link_type: str = "related", weight: float = 1.0
+        self, from_note_id: int | str, to_note_id: int | str, link_type: str = "related", weight: float = 1.0, provenance: dict | str = ""
     ) -> tuple[bool, str]:
 
         from_id = self._parse_note_id(from_note_id)
@@ -201,8 +249,8 @@ class NoteMixin:
         from_id, to_id = sorted([from_id, to_id])
         exec_stmt(
             self.storage.connection,
-            "INSERT OR IGNORE INTO note_links (from_note_id, to_note_id, link_type, weight, confidence, source) VALUES (?, ?, ?, ?, 1.0, 'explicit')",
-            (from_id, to_id, link_type, weight),
+            "INSERT OR IGNORE INTO note_links (from_note_id, to_note_id, link_type, weight, confidence, source, provenance) VALUES (?, ?, ?, ?, 1.0, 'explicit', ?)",
+            (from_id, to_id, link_type, weight, provenance if isinstance(provenance, str) else json.dumps(provenance)),
         )
         return True, f"Linked note-{from_id} -> note-{to_id} ({link_type})"
 
@@ -214,7 +262,7 @@ class NoteMixin:
         if link_type:
             rows = cursor.execute(
                 """SELECT n.id, n.topic, n.kind, n.content, n.title,
-                          nl.link_type, nl.weight, nl.confidence, nl.source
+                          nl.link_type, nl.weight, nl.confidence, nl.source, nl.provenance
                    FROM notes n
                    JOIN note_links nl ON (nl.from_note_id = n.id OR nl.to_note_id = n.id)
                    WHERE (nl.from_note_id = ? OR nl.to_note_id = ?) AND n.id != ?
@@ -224,7 +272,7 @@ class NoteMixin:
         else:
             rows = cursor.execute(
                 """SELECT n.id, n.topic, n.kind, n.content, n.title,
-                          nl.link_type, nl.weight, nl.confidence, nl.source
+                          nl.link_type, nl.weight, nl.confidence, nl.source, nl.provenance
                    FROM notes n
                    JOIN note_links nl ON (nl.from_note_id = n.id OR nl.to_note_id = n.id)
                    WHERE (nl.from_note_id = ? OR nl.to_note_id = ?) AND n.id != ?""",
@@ -235,6 +283,23 @@ class NoteMixin:
             if nb.get("source") == "auto" and nb.get("link_type") == "auto":
                 self.reinforce_link(nid, nb["id"])
         return rows
+
+    @staticmethod
+    def classify_memory_metadata(text: str, agent_id: str = "default") -> dict:
+        import re
+        text = (text or "").strip()
+        modal = bool(re.search(r"\b(might|may|could|perhaps|possibly|likely|unlikely|probably|we think|i think)\b", text, re.I))
+        if modal:
+            kind, confidence, importance = "HYPOTHESIS", 0.45, 0.4
+        elif re.search(r"\b(decided|agreed|chose|selected|opted|adopt|will use|decision)\b", text, re.I):
+            kind, confidence, importance = "DECISION", 0.9, 0.85
+        elif re.search(r"\b(must|never|always|required|constraint|forbidden)\b", text, re.I):
+            kind, confidence, importance = "CONSTRAINT", 0.85, 0.8
+        elif re.search(r"\b(discovered|found|root cause|learned)\b", text, re.I):
+            kind, confidence, importance = "DISCOVERY", 0.75, 0.7
+        else:
+            kind, confidence, importance = "FACT", 0.6, 0.5
+        return {"kind": kind, "confidence": confidence, "importance": importance, "source": "heuristic", "provenance": {"method": "heuristic", "agent_id": agent_id, "signals": ["modal" if modal else "explicit"]}}
 
     def auto_extract_memories(self, topic: str, text: str, agent_id: str = "default") -> list[dict]:
         """Automatically parse text to extract decisions & facts, creating notes in storage."""
@@ -249,13 +314,17 @@ class NoteMixin:
             if not line_str or len(line_str) < 10:
                 continue
 
-            if re.search(
+            metadata = self.classify_memory_metadata(line_str, agent_id)
+            if metadata["kind"] == "HYPOTHESIS":
+                note = self.add_note(topic, topic_slug, "hypothesis", line_str, agent_id=agent_id, title=line_str[:80], importance=metadata["importance"], confidence=metadata["confidence"], source=metadata["source"], provenance=metadata["provenance"])
+                extracted.append({"type": "hypothesis", "note_id": note["id"], "content": line_str})
+            elif re.search(
                 r"\b(decided|decide|agreed|agree|chose|choose|selected|select|opted|opt|will use|we will|should|must|plan to|decision|decision is|arch)\b",
                 line_str,
                 re.IGNORECASE,
             ):
                 title = line_str[:80]
-                note = self.add_note(topic, topic_slug, "decision", line_str, agent_id=agent_id, title=title)
+                note = self.add_note(topic, topic_slug, "decision", line_str, agent_id=agent_id, title=title, importance=metadata["importance"], confidence=metadata["confidence"], source=metadata["source"], provenance=metadata["provenance"])
                 extracted.append({"type": "decision", "note_id": note["id"], "content": line_str})
             elif re.search(
                 r"\b(note|fact|key|config|setting|path|bug|error|issue|fail|failed|failure|broken|"
@@ -264,17 +333,29 @@ class NoteMixin:
                 re.IGNORECASE,
             ):
                 title = line_str[:80]
-                note = self.add_note(topic, topic_slug, "fact", line_str, agent_id=agent_id, title=title)
-                extracted.append({"type": "fact", "note_id": note["id"], "content": line_str})
+                note = self.add_note(topic, topic_slug, metadata["kind"], line_str, agent_id=agent_id, title=title, importance=metadata["importance"], confidence=metadata["confidence"], source=metadata["source"], provenance=metadata["provenance"])
+                extracted.append({"type": metadata["kind"].lower(), "note_id": note["id"], "content": line_str})
 
         return extracted
+
+    def find_contradiction_candidates(self, topic: str) -> list[dict]:
+        rows = self.storage.connection.execute("SELECT id, kind, title, content, scope, status FROM notes WHERE topic=? AND COALESCE(status,'open')!='superseded' ORDER BY id", (self.normalize_topic(topic),)).fetchall()
+        candidates = []
+        for i, left in enumerate(rows):
+            lt = self._tokenize(left['content'] + ' ' + left['title'])
+            for right in rows[i + 1:]:
+                rt = self._tokenize(right['content'] + ' ' + right['title'])
+                if len(lt & rt) < 2 or (left['scope'] and right['scope'] and left['scope'] != right['scope']): continue
+                if ('not' in left['content'].lower()) != ('not' in right['content'].lower()) or ('disable' in left['content'].lower()) != ('disable' in right['content'].lower()):
+                    candidates.append({"older_note_id": left['id'], "candidate_note_id": right['id'], "reason": "negation_or_enablement"})
+        return candidates
 
     def resolve_contradictions(self, topic: str) -> dict:
         """Scan notes in a topic for contradictions and mark older ones as superseded."""
         topic_slug = self.normalize_topic(topic)
         cursor = self.storage.connection.cursor()
         rows = cursor.execute(
-            "SELECT id, kind, title, content, created_at, status FROM notes WHERE topic = ? AND status != 'superseded' ORDER BY id ASC",
+            "SELECT id, kind, title, content, created_at, status, scope, valid_from, valid_until FROM notes WHERE topic = ? AND status != 'superseded' ORDER BY id ASC",
             (topic_slug,),
         ).fetchall()
         notes = [dict(r) for r in rows]
@@ -292,7 +373,7 @@ class NoteMixin:
                     continue
 
                 overlap = len(tokens1 & tokens2)
-                if overlap >= 2:
+                if overlap >= 2 and (not n1.get("scope") or not n2.get("scope") or n1.get("scope") == n2.get("scope")):
                     t1_text = (n1["title"] + " " + n1["content"]).lower()
                     t2_text = (n2["title"] + " " + n2["content"]).lower()
 
@@ -308,8 +389,8 @@ class NoteMixin:
                     if is_conflict:
                         exec_stmt(
                             self.storage.connection,
-                            "UPDATE notes SET status = 'superseded' WHERE id = ?",
-                            (n1["id"],),
+                            "UPDATE notes SET status = 'superseded', superseded_by = ? WHERE id = ?",
+                            (n2["id"], n1["id"]),
                         )
                         self.link_notes(n1["id"], n2["id"], link_type="contradicts", weight=1.0)
                         resolved.append({
@@ -514,6 +595,21 @@ class NoteMixin:
         except Exception:
             pass
 
+    def compile_context(self, topic: str, max_tokens: int = 1200, query: str = "") -> str:
+        sections = (("Relevant decisions", {"decision"}), ("Current facts", {"fact", "discovery"}), ("Constraints", {"constraint"}), ("Discoveries", {"discovery", "bug", "workaround"}), ("History", {"history", "summary"}))
+        rows = self.rank_memories(topic, query, limit=max(20, max_tokens * 2)) if query else [r for r in self.list_notes(topic, limit=100, include_superseded=True)]
+        used, output = 0, []
+        for heading, kinds in sections:
+            selected = [r for r in rows if r.get('kind') in kinds]
+            if not selected: continue
+            output.append(f"## {heading}")
+            for row in selected:
+                text = f"- {row.get('title') or row['content']}"
+                cost = max(1, len(text) // 4)
+                if used + cost > max_tokens: break
+                output.append(text); used += cost
+        return "\n".join(output)
+
     def build_agent_context(
         self, topic: str, query: str | None = None, result_limit: int = 5
     ) -> str:
@@ -650,9 +746,9 @@ class NoteMixin:
 
         return "\n".join(lines)
 
-    def get_note(self, note_id: int) -> dict | None:
-        cursor = self.storage.connection.cursor()
-        row = cursor.execute("SELECT * FROM notes WHERE id = ?", (note_id,)).fetchone()
+    def get_note(self, note_id: int | str) -> dict | None:
+        nid = self._parse_note_id(note_id)
+        row = self.storage.connection.cursor().execute("SELECT * FROM notes WHERE id = ?", (nid,)).fetchone() if nid is not None else None
         return dict(row) if row else None
 
     def search_notes_fts(
@@ -726,27 +822,41 @@ class NoteMixin:
         return out[:limit]
 
     def list_notes(
-        self, topic: str = "", kind: str = "", limit: int = 10, pinned_only: bool = False
+        self, topic: str = "", kind: str = "", limit: int = 10, pinned_only: bool = False,
+        status: str | None = None, include_superseded: bool = False
     ) -> list[dict]:
-        """List notes, newest first. Empty topic = all planets."""
-        cursor = self.storage.connection.cursor()
-        sql = "SELECT id, topic, kind, title, content, created_at, tags, pinned FROM notes"
-        cond: list[str] = []
-        params: list = []
-        if topic:
-            cond.append("topic = ?")
-            params.append(self.normalize_topic(topic))
-        if kind:
-            cond.append("kind = ?")
-            params.append(kind)
-        if pinned_only:
-            cond.append("pinned = 1")
-        if cond:
-            sql += " WHERE " + " AND ".join(cond)
-        sql += " ORDER BY pinned DESC, created_at DESC, id DESC LIMIT ?"
-        params.append(int(limit))
-        rows = cursor.execute(sql, params).fetchall()
-        return [dict(r) for r in rows]
+        cond, params = [], []
+        if topic: cond.append("topic = ?"); params.append(self.normalize_topic(topic))
+        if kind: cond.append("UPPER(kind) = ?"); params.append(kind.upper())
+        if status: cond.append("status = ?"); params.append(status)
+        if pinned_only: cond.append("pinned = 1")
+        if not include_superseded: cond.append("COALESCE(status, 'open') != 'superseded'")
+        sql = "SELECT * FROM notes" + (" WHERE " + " AND ".join(cond) if cond else "")
+        sql += " ORDER BY importance DESC, pinned DESC, created_at DESC, id DESC LIMIT ?"
+        return [dict(r) for r in self.storage.connection.execute(sql, (*params, int(limit))).fetchall()]
+
+    def rank_memories(self, topic: str, query: str, limit: int = 10, include_superseded: bool = False, historical: bool = False) -> list[dict]:
+        if historical: include_superseded = True
+        candidates = self.search_notes_fts(topic, query, limit=max(limit * 3, limit), exclude_ids=set())
+        seen, results = set(), []
+        for rank, row in enumerate(candidates):
+            if row['id'] in seen: continue
+            seen.add(row['id'])
+            full = self.get_note(row['id'])
+            if not full or (not include_superseded and full.get('status') == 'superseded'): continue
+            overlap = len(self._tokenize(query) & self._tokenize(full.get('content', '')))
+            fts_score = 1.0 / (1.0 + rank)
+            importance = float(full.get('importance') or 0.0)
+            confidence = float(full.get('confidence') or 0.0)
+            graph_score = min(1.0, len(self.get_note_neighbors(full['id'])) / 10.0)
+            temporal_score = 1.0 if not full.get('valid_until') else 0.2
+            supersession_score = 0.1 if full.get('status') == 'superseded' else 1.0
+            components = {"fts": round(fts_score, 4), "metadata": round(0.5 * importance + 0.3 * confidence + 0.2 * min(1.0, overlap / 5), 4), "graph": round(graph_score, 4), "temporal": temporal_score, "supersession": supersession_score}
+            score = 0.5 * fts_score + 0.2 * components["metadata"] + 0.1 * graph_score + 0.1 * temporal_score + 0.1 * supersession_score
+            results.append({**full, "score": round(score, 4), "score_components": components})
+            self.storage.connection.execute("INSERT INTO memory_access_log(topic,note_id,query,outcome) VALUES(?,?,?,'retrieved')", (self.normalize_topic(topic), full['id'], query))
+        self.storage.connection.commit()
+        return sorted(results, key=lambda r: r['score'], reverse=True)[:limit]
 
     def search_notes(
         self, topic: str, kind: str = "", query: str = "", tags: str = "", limit: int = 10
