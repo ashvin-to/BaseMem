@@ -18,9 +18,31 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-CORS(app, resources={r"/api/*": {"origins": "*"}})
+
+_configured_origins = [
+    origin.strip()
+    for origin in os.environ.get("BASEMEM_CORS_ORIGINS", "").split(",")
+    if origin.strip()
+]
+if _configured_origins:
+    CORS(app, resources={r"/api/*": {"origins": _configured_origins}})
 
 _storage = None
+
+
+def _workspace_root():
+    configured = os.environ.get("BASEMEM_CODE_WORKSPACE", os.getcwd())
+    return os.path.realpath(os.path.expanduser(configured))
+
+
+def _confined_project_root(value):
+    root = os.path.realpath(os.path.expanduser(value or ""))
+    workspace = _workspace_root()
+    if root != workspace and not root.startswith(workspace + os.sep):
+        return None
+    if not os.path.isdir(root):
+        return None
+    return root
 
 
 def _db_path():
@@ -482,7 +504,8 @@ def code_init():
     """Index a project's source code into a per-project .basemem.code.db."""
     data = request.get_json(silent=True) or {}
     root = data.get("root_path", "")
-    if not root or not os.path.isdir(root):
+    root = _confined_project_root(root)
+    if not root:
         return jsonify({"error": "Invalid root_path"}), 400
     from indexer import CodeIndexer
     indexer = CodeIndexer(root)
@@ -498,7 +521,8 @@ def code_search():
     """Search code symbols in a project's .basemem.code.db."""
     root = request.args.get("root", "")
     query = request.args.get("q", "")
-    if not root or not os.path.isdir(root):
+    root = _confined_project_root(root)
+    if not root:
         return jsonify({"error": "Missing or invalid root param"}), 400
     if not query:
         return jsonify({"error": "Missing query"}), 400
@@ -521,7 +545,8 @@ def code_search():
 def code_symbol(symbol_id: int):
     """Get a code symbol by ID from a project's .basemem.code.db."""
     root = request.args.get("root", "")
-    if not root or not os.path.isdir(root):
+    root = _confined_project_root(root)
+    if not root:
         return jsonify({"error": "Missing or invalid root param"}), 400
     from indexer import CodeIndexer
     from indexer.indexer import CODE_DB_FILENAME
@@ -544,7 +569,8 @@ def code_symbol(symbol_id: int):
 def code_status():
     """Code graph indexing status for a project."""
     root = request.args.get("root", "")
-    if not root or not os.path.isdir(root):
+    root = _confined_project_root(root)
+    if not root:
         return jsonify({"error": "Missing or invalid root param"}), 400
     from indexer import CodeIndexer
     from indexer.indexer import CODE_DB_FILENAME
@@ -568,7 +594,7 @@ def _resolve_project_root(project_id: str):
     if not topic:
         return None
     from indexer.indexer import find_code_projects
-    search_root = os.environ.get('BASEMEM_CODE_WORKSPACE', '/mnt/Storage')
+    search_root = _workspace_root()
     try:
         projects = find_code_projects(search_root)
     except Exception:
@@ -577,14 +603,16 @@ def _resolve_project_root(project_id: str):
         name = proj.get('name', '')
         root = proj.get('root', '')
         if name.lower() == topic.lower() or Path(root).name.lower() == topic.lower():
-            return root
+            confined = _confined_project_root(root)
+            if confined:
+                return confined
     # Fallback: look for an indexed repo directly under common locations.
     from indexer.indexer import CODE_DB_FILENAME
     for cand in [f'/mnt/Storage/{topic}', f'./{topic}',
                  os.path.join(os.path.expanduser('~'), 'Projects', topic),
                  os.path.join(os.getcwd(), topic)]:
-        cand = os.path.abspath(cand)
-        if os.path.isdir(cand) and os.path.exists(os.path.join(cand, CODE_DB_FILENAME)):
+        cand = _confined_project_root(cand)
+        if cand and os.path.exists(os.path.join(cand, CODE_DB_FILENAME)):
             return cand
     return None
 
@@ -603,7 +631,8 @@ def code_files():
     """List source files in a project's .basemem.code.db (relative paths)."""
     root = request.args.get("root", "")
     prefix = request.args.get("prefix", "")
-    if not root or not os.path.isdir(root):
+    root = _confined_project_root(root)
+    if not root:
         return jsonify({"error": "Missing or invalid root param"}), 400
     from indexer import CodeIndexer
     indexer = CodeIndexer(root)
@@ -620,12 +649,13 @@ def code_file_content():
     """Read a single source file within a project root (path-traversal safe)."""
     root = request.args.get("root", "")
     file_path = request.args.get("path", "")
-    if not root or not os.path.isdir(root):
+    root = _confined_project_root(root)
+    if not root:
         return jsonify({"error": "Missing or invalid root param"}), 400
     if not file_path:
         return jsonify({"error": "Missing path param"}), 400
     rroot = os.path.normpath(root)
-    full = os.path.normpath(os.path.join(rroot, file_path))
+    full = os.path.realpath(os.path.join(rroot, file_path))
     if full != rroot and not full.startswith(rroot + os.sep):
         return jsonify({"error": "Path outside project root"}), 400
     if not os.path.isfile(full):
@@ -642,7 +672,8 @@ def code_file_content():
 def code_graph_data():
     """Symbol call graph (code_symbols + code_edges) for a project."""
     root = request.args.get("root", "")
-    if not root or not os.path.isdir(root):
+    root = _confined_project_root(root)
+    if not root:
         return jsonify({"error": "Missing or invalid root param"}), 400
     from indexer import CodeIndexer
     indexer = CodeIndexer(root)
@@ -687,4 +718,6 @@ def code_graph_data():
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    host = os.environ.get("BASEMEM_HOST", "127.0.0.1")
+    port = int(os.environ.get("BASEMEM_PORT", "5000"))
+    app.run(host=host, port=port, debug=False)

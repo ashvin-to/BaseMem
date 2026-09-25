@@ -70,7 +70,7 @@ function _trackerNudge(promptText) {
   if (!text || text.length < 8) return TRACKER_NUDGE;
   const intent = classifyPrompt(text);
   const parts = [];
-  if (intent === 'code') parts.push('code task → known target: inspect exact file/nearby tests; unfamiliar or cross-file: code_find FIRST');
+  if (intent === 'code') parts.push('code task → known target: inspect exact file/nearby tests; unfamiliar or cross-file: code_find FIRST; trace callers/callees with code_explore');
   if (intent === 'decision') parts.push('decision/fix/fact → logInteraction(topic, decision="what+why") NOW');
   if (intent === 'session') parts.push('session ending → logInteraction(topic, summary=..., activity="done")');
   if (intent === 'memory') parts.push('memory/context request → use the injected prompt context when relevant');
