@@ -9,7 +9,7 @@ Skills are per-workflow markdown instruction guides (`SKILL.md`) that teach AI a
 - `session-start`: Initialize or resume an active session on a planet.
 - `explore-codebase`: Locate symbols and navigate call graphs without extraneous file reads.
 - `debug-issue`: Locate error sites, check blast radius, inspect source lines, and log fixes.
-- `task-workflow`: Manage task lifecycles (create, list, update, block).
+- `task-workflow`: **Legacy migration only; not installed by new releases.** Existing task data is not the BaseMem work-tracking interface.
 
 ## Installation
 
