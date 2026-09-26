@@ -13,10 +13,12 @@ const path = require('path');
 // for each trigger and keeps the forbidden tools as a trailing reminder, not the lead.
 // It MUST mention the code_* tools.
 const TRACKER_NUDGE =
-  '[BaseMem] Before answering: (1) code question/bug/explore → call code_find FIRST ' +
-  "(grep=True for text); empty → code_init once, then retry. Read via code_read(filePath, offset, limit<=50). " +
-  '(2) decision/fix/fact just made → call logInteraction(topic, decision="what+why") NOW. ' +
-  '(3) session ending → logInteraction(topic, summary=..., activity="done"). ' +
+  '[BaseMem] Before answering: (1) known target → inspect exact file and nearby tests/callers directly; unfamiliar or cross-file code → code_find FIRST. ' +
+  "(grep=True for literal flags, JSON keys, commands, docs, or config); empty → code_init once, then retry. Read via code_read(filePath, offset, limit<=50). " +
+  '(2) Keep small tasks bounded: one search, one read, one edit, one focused verification. ' +
+  '(3) Label conclusions memory/source/artifact/test/inference; memory is context, not current verification. ' +
+  '(4) decision/fix/fact just made → call logInteraction(topic, decision="what+why") NOW; skip routine observations. ' +
+  '(5) session ending → logInteraction(topic, summary=..., activity="done"). ' +
   'Use MCP code_* tools, not raw grep/glob/Read.';
 
 const STOP_NOTICE =
@@ -68,7 +70,7 @@ function _trackerNudge(promptText) {
   if (!text || text.length < 8) return TRACKER_NUDGE;
   const intent = classifyPrompt(text);
   const parts = [];
-  if (intent === 'code') parts.push('code task → code_explore FIRST, then code_read only if needed');
+  if (intent === 'code') parts.push('code task → known target: inspect exact file/nearby tests; unfamiliar or cross-file: code_find FIRST');
   if (intent === 'decision') parts.push('decision/fix/fact → logInteraction(topic, decision="what+why") NOW');
   if (intent === 'session') parts.push('session ending → logInteraction(topic, summary=..., activity="done")');
   if (intent === 'memory') parts.push('memory/context request → use the injected prompt context when relevant');

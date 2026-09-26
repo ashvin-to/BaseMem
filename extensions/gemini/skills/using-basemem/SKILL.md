@@ -18,9 +18,11 @@ If context was injected at session start, do not call getContext. Otherwise call
 | Task | Tool |
 |------|------|
 | Find | `code_find('sym')` |
-| Grep | `code_find('pattern', grep=True)` |
+| Literal/config search | `code_find('pattern', grep=True)` |
 | Read | `code_read(path, offset, limit)` |
 | Explore | `code_explore('sym')` |
 | Files | `code_files(pattern='**/*.json')` |
 
-Forbidden: `view_file`, `grep_search`, `list_dir`. Tools auto-index when needed.
+For a known target, inspect the exact file and nearby tests/callers before broad graph exploration. For unfamiliar or cross-file work, Call code_find FIRST (`code_find`). If it is empty, call `code_init(projectRoot)` once and retry; reindex after multiple symbol/signature changes or stale results.
+
+Keep small tasks to `code_find` → `code_init` if empty/stale → exact source read → artifact inspection → focused tests. Memory preserves why and durable constraints; source, artifacts, and tests establish current behavior. Memory is context, not verification. Label conclusions as memory, source, artifact, test, or inference. Log only meaningful decisions/corrections, not routine observations.

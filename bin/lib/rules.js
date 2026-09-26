@@ -4,7 +4,8 @@ const os = require('os');
 const { MARKER_START, MARKER_END } = require('./constants.js');
 
 const BASEMEM_RULES_BODY = `Topic = repo folder name; pass it to every memory tool call.
-Code question, bug, or explore? Call code_find FIRST — never grep/glob/Read first (grep=True for text search). Empty result → code_init(projectRoot) once, then retry. Read windows with code_read(filePath, offset, limit<=50); trace callers with code_explore; list files with code_files; review diffs with get_review_context(files).
+Code task? Choose the lightest path: for a known target, inspect the exact file and nearby tests/callers directly; for unfamiliar or cross-file work, Call code_find FIRST. Use code_find(grep=True) for literal flags, JSON keys, commands, docs, and config values. Empty result → code_init(projectRoot) once, then retry; reindex after multiple symbol/signature additions, renames, or stale results. Read windows with code_read(filePath, offset, limit<=50); trace callers with code_explore; list files with code_files; review diffs with get_review_context(files).
+Keep small tasks bounded: code_find → code_init if empty/stale → code_read exact source → inspect artifacts → run focused tests. Memory preserves why and durable constraints; source, artifacts, and tests establish current behavior. Memory is context, not verification. Label conclusions as memory, source, artifact, test, or inference. Log only meaningful decisions/corrections, not routine observations.
 Decision made, fix applied, or fact learned? Call logInteraction(topic, decision="what + why") NOW — never defer it to session end.
 Session ending? Call logInteraction(topic, summary="...", activity="done").
 Check skills/ before multi-step tasks.`;

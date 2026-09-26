@@ -1483,6 +1483,33 @@ if (require.main === module || process.argv[2]) {
     process.exit(0);
   }
 
+  if (cmd === 'verify') {
+    const required = [
+      'code_find first',
+      'code_init',
+      'source, artifacts, and tests establish current behavior',
+      'memory is context, not verification',
+      'label conclusions as memory, source, artifact, test, or inference',
+    ];
+    const files = [
+      ['rules', path.join(BASEMEM_ROOT, 'bin', 'lib', 'rules.js')],
+      ['using-basemem', path.join(BASEMEM_ROOT, 'skills', 'using-basemem', 'SKILL.md')],
+      ['gemini-skill', path.join(BASEMEM_ROOT, 'extensions', 'gemini', 'skills', 'using-basemem', 'SKILL.md')],
+    ];
+    let failed = false;
+    for (const [name, file] of files) {
+      const content = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
+      const missing = required.filter(phrase => !content.toLowerCase().includes(phrase));
+      if (missing.length) {
+        failed = true;
+        console.log(`${name}: FAIL (${missing.join(', ')})`);
+      } else {
+        console.log(`${name}: OK`);
+      }
+    }
+    process.exit(failed ? 1 : 0);
+  }
+
   if (cmd === 'install') {
     const agentName = process.argv[3];
     if (!agentName) { console.error('usage: install <agent>'); process.exit(1); }

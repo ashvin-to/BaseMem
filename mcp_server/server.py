@@ -66,6 +66,7 @@ def _get_initial_instructions() -> "str | None":
         "(grep=True for text search; empty result means call code_init(projectRoot) once, then retry). "
         "Read code with code_read(filePath, offset, limit<=50); trace callers with code_explore; "
         "list files with code_files; review diffs with get_review_context(files). "
+        "Use verify_change(projectRoot, files, test_command, artifact_paths) for explicit source/artifact/test evidence; memory is context, not verification. "
         "Context is auto-injected at session start — do NOT call getContext then; call it only to refresh or switch topics. "
         "When you make a decision, fix, or learn a fact: call logInteraction(topic, decision=...) immediately. "
         "End sessions with logInteraction(topic, summary=..., activity=\"done\"). Topic = repo folder name."
@@ -878,6 +879,7 @@ def get_review_context(
         # 6. TEST GAPS
         all_indexed_files = {f["file_path"] for f in indexer.list_files(limit=0)}
         test_gap_items = []
+        test_command_items = []
         for br_file in blast_files:
             base = os.path.basename(br_file)
             name_no_ext, ext = os.path.splitext(base)
@@ -893,15 +895,27 @@ def get_review_context(
                 os.path.join(dir_name, f"{name_no_ext}.spec{ext}"),
             ]
             has_test = False
+            matched_tests = []
             for cand in candidates:
                 cand_norm = cand.replace("\\", "/")
                 if cand_norm in all_indexed_files or os.path.exists(os.path.join(projectRoot, cand_norm)):
                     has_test = True
+                    matched_tests.append(cand_norm)
                     break
             if not has_test:
                 test_gap_items.append(f"{br_file} has no test coverage")
+                test_command_items.append("uv run pytest -q")
+            else:
+                test_command_items.extend(
+                    f"uv run pytest -q {test_path}" for test_path in matched_tests
+                )
 
         test_gap_line = f"TEST GAPS: {'; '.join(test_gap_items)}" if test_gap_items else ""
+        test_command_line = (
+            f"TEST COMMANDS: {'; '.join(dict.fromkeys(test_command_items))}"
+            if test_command_items
+            else ""
+        )
 
         # Add query info if provided
         query_line = f"FILTERED BY: {query}" if query else ""
@@ -914,6 +928,7 @@ def get_review_context(
             key_risk_line,
             caller_line,
             test_gap_line,
+            test_command_line,
             query_line,
         ]
 
@@ -923,6 +938,9 @@ def get_review_context(
 
         if len(result) > max_chars and test_gap_line in active:
             active.remove(test_gap_line)
+            result = "\n".join(active)
+        if len(result) > max_chars and test_command_line in active:
+            active.remove(test_command_line)
             result = "\n".join(active)
 
         if len(result) > max_chars and caller_line in active:
@@ -936,6 +954,77 @@ def get_review_context(
         return result
     finally:
         indexer.close()
+
+
+@server.tool(description="Route a change through explicit evidence: source files, artifact paths, and an optional focused test command. Reports unverified claims without treating memory as verification.")
+def verify_change(
+    projectRoot: str,
+    files: list[str],
+    test_command: str = "",
+    artifact_paths: list[str] | None = None,
+    timeout: int = 120,
+) -> str:
+    import json
+    import os
+    import shlex
+    import subprocess
+
+    root = os.path.abspath(projectRoot or _detect_project_root())
+    sources = []
+    for file_path in files:
+        normalized = os.path.normpath(file_path)
+        if not os.path.isabs(normalized):
+            normalized = os.path.join(root, normalized)
+        exists = os.path.isfile(normalized)
+        source = {"path": os.path.relpath(normalized, root), "exists": exists, "lines": 0}
+        if exists:
+            with open(normalized, errors="replace") as handle:
+                source["lines"] = sum(1 for _ in handle)
+        sources.append(source)
+
+    artifacts = []
+    for file_path in artifact_paths or []:
+        normalized = os.path.normpath(file_path)
+        if not os.path.isabs(normalized):
+            normalized = os.path.join(root, normalized)
+        artifacts.append({"path": os.path.relpath(normalized, root), "exists": os.path.isfile(normalized)})
+
+    test: dict[str, object] = {
+        "command": test_command,
+        "status": "not_requested",
+        "exit_code": None,
+        "output": "",
+    }
+    if test_command:
+        try:
+            result = subprocess.run(
+                shlex.split(test_command),
+                cwd=root,
+                capture_output=True,
+                text=True,
+                timeout=max(1, min(int(timeout), 600)),
+                check=False,
+            )
+            test.update(
+                status="passed" if result.returncode == 0 else "failed",
+                exit_code=result.returncode,
+                output=(result.stdout or result.stderr)[-1200:],
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            test.update(status="error", output=str(exc)[:1200])
+
+    verified = any(item["exists"] for item in sources) or any(item["exists"] for item in artifacts) or test["status"] == "passed"
+    return json.dumps(
+        {
+            "kind": "verification_evidence",
+            "source": sources,
+            "artifacts": artifacts,
+            "test": test,
+            "verified": verified,
+            "unverified": [] if verified else ["No current source, artifact, or passing test evidence was found."],
+        },
+        separators=(",", ":"),
+    )
 
 
 # ── End Code Graph Tools ──────────────────────────────────────────

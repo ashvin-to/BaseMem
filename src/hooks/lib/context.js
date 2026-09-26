@@ -121,8 +121,9 @@ function fetchContext(options) {
     if (!cs.error && cs.status === 0 && (cs.stdout || '').trim()) {
       codeStats =
         cs.stdout.trim() +
-        '\nCode navigation: use code_find(\'sym\'), code_read(filePath=, offset=, limit=), ' +
-        'code_explore(\'sym\'), code_files(pattern=) — not grep/glob/read.';
+        '\nCode navigation: use code_find(\'sym\'), code_find(pattern, grep=True) for literals/config, ' +
+        'code_read(filePath=, offset=, limit=), code_explore(\'sym\'), code_files(pattern=). ' +
+        'Known targets: inspect the exact file and nearby tests/callers first; reindex after structural churn.';
     } else {
       codeStats =
         'Code intelligence not initialized — call code_init(projectRoot) to index, ' +
