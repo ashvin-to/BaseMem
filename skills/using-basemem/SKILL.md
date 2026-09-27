@@ -28,7 +28,7 @@ BaseMem provides persistent cross-session memory (planets, notes, decisions) and
 2. **Choose the lightest path**: For a known target, inspect the exact file and nearby tests/callers directly. For unfamiliar or cross-file work, Call code_find FIRST (`code_find`).
 3. **Literal values**: Use `code_find(query="...", grep=True)` for CLI flags, JSON keys, shell commands, documentation, and config values. The code graph is for symbols and relationships, not universal text search.
 4. **Reindex when needed**: If `code_find` is empty, call `code_init(projectRoot)` once and retry. Reindex after multiple symbol/signature additions, renames, or stale results.
-5. **Keep the loop short**: For ordinary small tasks, use `code_find` → `code_init` if empty/stale → `code_read` exact source → inspect artifacts → run focused tests. Trace callers or review impact only when behavior depends on them.
+5. **Keep the loop short**: For ordinary small tasks, use `code_find` → `code_init` if empty/stale → `code_read` exact source → inspect artifacts → run focused tests; use `verify_change` for an explicit evidence bundle. Trace callers or review impact only when behavior depends on them.
 6. **Separate evidence**: Memory preserves why and durable constraints; source, artifacts, and tests establish current behavior. Memory is context, not verification. Label conclusions as memory, source, artifact, test, or inference.
 7. **Log selectively**: Call `logInteraction(topic, decision="...")` immediately for meaningful decisions, fixes, and corrections. Do not log routine observations.
 8. **Session End**: Call `logInteraction(topic="...", summary="...", activity="done")` when finishing work.

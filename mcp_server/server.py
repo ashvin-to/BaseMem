@@ -964,67 +964,106 @@ def verify_change(
     artifact_paths: list[str] | None = None,
     timeout: int = 120,
 ) -> str:
+    import hashlib
     import json
+    import mimetypes
     import os
     import shlex
     import subprocess
+    import time
+    from pathlib import Path
 
-    root = os.path.abspath(projectRoot or _detect_project_root())
-    sources = []
-    for file_path in files:
-        normalized = os.path.normpath(file_path)
-        if not os.path.isabs(normalized):
-            normalized = os.path.join(root, normalized)
-        exists = os.path.isfile(normalized)
-        source = {"path": os.path.relpath(normalized, root), "exists": exists, "lines": 0}
-        if exists:
-            with open(normalized, errors="replace") as handle:
-                source["lines"] = sum(1 for _ in handle)
-        sources.append(source)
+    errors: list[str] = []
 
-    artifacts = []
-    for file_path in artifact_paths or []:
-        normalized = os.path.normpath(file_path)
-        if not os.path.isabs(normalized):
-            normalized = os.path.join(root, normalized)
-        artifacts.append({"path": os.path.relpath(normalized, root), "exists": os.path.isfile(normalized)})
+    def result(verified: bool = False, sources: list | None = None, artifacts: list | None = None, test: dict | None = None) -> str:
+        if test is None:
+            test = {"command": test_command, "status": "invalid_input" if errors else "not_requested", "exit_code": None, "output": "", "duration_ms": 0}
+        invalid = bool(errors)
+        return json.dumps(
+            {
+                "kind": "verification_evidence",
+                "verified": bool(verified and not invalid),
+                "sources": sources or [],
+                "artifacts": artifacts or [],
+                "test": test,
+                "unverified": errors or ([] if verified else ["No inspected source, artifact, or passing test evidence was found."]),
+            },
+            separators=(",", ":"),
+        )
 
-    test: dict[str, object] = {
-        "command": test_command,
-        "status": "not_requested",
-        "exit_code": None,
-        "output": "",
-    }
-    if test_command:
+    if not isinstance(projectRoot, str) or not projectRoot:
+        errors.append("projectRoot must be a non-empty string")
+        return result()
+    root = Path(projectRoot).expanduser().resolve()
+    if not root.is_dir():
+        errors.append(f"projectRoot is not a directory: {root}")
+        return result()
+    if not isinstance(files, list) or any(not isinstance(item, str) for item in files):
+        errors.append("files must be a list of strings")
+        return result()
+    if artifact_paths is not None and (not isinstance(artifact_paths, list) or any(not isinstance(item, str) for item in artifact_paths)):
+        errors.append("artifact_paths must be a list of strings")
+        return result()
+    if not isinstance(test_command, str):
+        errors.append("test_command must be a string")
+        return result()
+    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not 1 <= timeout <= 600:
+        errors.append("timeout must be a number from 1 to 600 seconds")
+        return result()
+
+    def safe_path(value: str, label: str) -> Path | None:
+        candidate = (root / value).resolve() if not os.path.isabs(value) else Path(value).resolve()
         try:
-            result = subprocess.run(
-                shlex.split(test_command),
-                cwd=root,
-                capture_output=True,
-                text=True,
-                timeout=max(1, min(int(timeout), 600)),
-                check=False,
-            )
-            test.update(
-                status="passed" if result.returncode == 0 else "failed",
-                exit_code=result.returncode,
-                output=(result.stdout or result.stderr)[-1200:],
-            )
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            test.update(status="error", output=str(exc)[:1200])
+            candidate.relative_to(root)
+        except ValueError:
+            errors.append(f"{label} escapes projectRoot: {value}")
+            return None
+        return candidate
 
-    verified = any(item["exists"] for item in sources) or any(item["exists"] for item in artifacts) or test["status"] == "passed"
-    return json.dumps(
-        {
-            "kind": "verification_evidence",
-            "source": sources,
-            "artifacts": artifacts,
-            "test": test,
-            "verified": verified,
-            "unverified": [] if verified else ["No current source, artifact, or passing test evidence was found."],
-        },
-        separators=(",", ":"),
-    )
+    def inspect(path: Path, artifact: bool) -> dict:
+        result: dict = {"path": str(path.relative_to(root)), "exists": path.is_file(), "file_type": mimetypes.guess_type(str(path))[0] or "unknown"}
+        if not result["exists"]:
+            return result
+        try:
+            data = path.read_bytes()
+            result["size"] = len(data)
+            result["sha256"] = hashlib.sha256(data).hexdigest()
+            text = data[:4096].decode("utf-8", errors="replace")
+            result["excerpt"] = text[:1200]
+            result["lines"] = text.count("\n") + (1 if text else 0)
+            if artifact and result["file_type"] in ("application/json", "text/json") or artifact and path.suffix == ".json":
+                try:
+                    parsed = json.loads(data)
+                    result["summary"] = json.dumps(parsed, separators=(",", ":"))[:1200]
+                except (ValueError, TypeError):
+                    result["summary"] = text[:1200]
+            result["inspected"] = True
+        except (OSError, UnicodeError) as exc:
+            result["inspected"] = False
+            result["error"] = str(exc)[:300]
+        return result
+
+    sources = [inspect(path, False) for path in (safe_path(item, "source") for item in files) if path is not None]
+    artifacts = [inspect(path, True) for path in (safe_path(item, "artifact") for item in (artifact_paths or [])) if path is not None]
+    if errors:
+        return result(sources=sources, artifacts=artifacts, test={"command": test_command, "status": "invalid_input", "exit_code": None, "output": "", "duration_ms": 0})
+
+    test: dict = {"command": test_command, "status": "not_requested", "exit_code": None, "output": "", "duration_ms": 0}
+    if test_command:
+        started = time.monotonic()
+        try:
+            command = shlex.split(test_command)
+            if not command:
+                errors.append("test_command is empty")
+            else:
+                completed = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=float(timeout), check=False)
+                test.update(status="passed" if completed.returncode == 0 else "failed", exit_code=completed.returncode, output=(completed.stdout or completed.stderr)[-1200:])
+        except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+            test.update(status="error", output=str(exc)[:1200])
+        test["duration_ms"] = round((time.monotonic() - started) * 1000)
+
+    verified = any(item.get("inspected") for item in sources + artifacts) or test["status"] == "passed"
+    return result(verified, sources, artifacts, test)
 
 
 # ── End Code Graph Tools ──────────────────────────────────────────
@@ -1142,6 +1181,11 @@ def logInteraction(
     nextStep: str = "",
     activity: str = "",
     planet: str = "",
+    source_path: str = "",
+    artifact_path: str = "",
+    observed_at: str = "",
+    verification_status: str = "memory_only",
+    evidence_summary: str = "",
 ) -> str:
     from storage.db import StorageManager
     from storage.sessions import SessionManager
@@ -1161,7 +1205,17 @@ def logInteraction(
 
     for kind, val in [("decision", decision), ("fact", fact), ("summary", summary)]:
         if val:
-            manager.add_note(topic, topic, kind, val)
+            manager.add_note(
+                topic,
+                topic,
+                kind,
+                val,
+                source_path=source_path,
+                artifact_path=artifact_path,
+                observed_at=observed_at,
+                verification_status=verification_status,
+                evidence_summary=evidence_summary,
+            )
             parts.append(f"note({kind})")
 
     if currentState or nextStep:

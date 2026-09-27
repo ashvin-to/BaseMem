@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import difflib
 import json
 import logging
 import os
-import sqlite3
 import uuid
 from typing import TYPE_CHECKING, Any
 
@@ -102,6 +100,11 @@ class NoteMixin:
         agent_id: str = "default",
         title: str | None = None,
         status: str = "open",
+        source_path: str = "",
+        artifact_path: str = "",
+        observed_at: str = "",
+        verification_status: str = "memory_only",
+        evidence_summary: str = "",
     ) -> dict:
         from .planets import _get_planet_row
 
@@ -114,8 +117,14 @@ class NoteMixin:
         now = self._now()
         exec_stmt(
             self.storage.connection,
-            "INSERT INTO notes (topic, kind, content, title, agent_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (topic_slug, kind, content, title or content[:80], agent_id, status, now, now),
+            "INSERT INTO notes "
+            "(topic, kind, content, title, agent_id, status, source_path, artifact_path, "
+            "observed_at, verification_status, evidence_summary, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                topic_slug, kind, content, title or content[:80], agent_id, status,
+                source_path, artifact_path, observed_at, verification_status, evidence_summary, now, now,
+            ),
         )
         exec_stmt(
             self.storage.connection,
@@ -249,7 +258,8 @@ class NoteMixin:
                 note = self.add_note(topic, topic_slug, "decision", line_str, agent_id=agent_id, title=title)
                 extracted.append({"type": "decision", "note_id": note["id"], "content": line_str})
             elif re.search(
-                r"\b(note|fact|key|config|setting|path|bug|error|issue|fail|failed|failure|broken|crash|regression|root cause|unexpected|doesn.t work|not working)\b",
+                r"\b(note|fact|key|config|setting|path|bug|error|issue|fail|failed|failure|broken|"
+                r"crash|regression|root cause|unexpected|doesn.t work|not working)\b",
                 line_str,
                 re.IGNORECASE,
             ):
@@ -287,7 +297,12 @@ class NoteMixin:
                     t2_text = (n2["title"] + " " + n2["content"]).lower()
 
                     is_conflict = False
-                    if ("not" in t1_text and "not" not in t2_text) or ("disable" in t1_text and "enable" in t2_text) or ("false" in t1_text and "true" in t2_text) or ("deprecated" in t2_text or "superseded" in t2_text or "instead of" in t2_text):
+                    if (
+                        ("not" in t1_text and "not" not in t2_text)
+                        or ("disable" in t1_text and "enable" in t2_text)
+                        or ("false" in t1_text and "true" in t2_text)
+                        or ("deprecated" in t2_text or "superseded" in t2_text or "instead of" in t2_text)
+                    ):
                         is_conflict = True
 
                     if is_conflict:
@@ -423,9 +438,9 @@ class NoteMixin:
             keywords = [t for t in terms if t.lower() not in stop_words]
             if not keywords:
                 keywords = terms
-            
+
             fts_query = " OR ".join(f'"{kw}"*' for kw in keywords) if keywords else ""
-            
+
             if fts_query:
                 # First attempt FTS5 search
                 try:
@@ -442,7 +457,7 @@ class NoteMixin:
                     key_notes = [dict(r) for r in fts_rows]
                 except Exception:
                     key_notes = []
-            
+
             if len(key_notes) < 4:
                 exclude_ids = [n["id"] for n in key_notes]
                 needed = 4 - len(key_notes)

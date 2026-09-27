@@ -12,7 +12,6 @@ from models import Node, NodeType
 from .config import get_session_timeout_hours
 from .db import StorageManager
 from .notes import NoteMixin
-from storage.db import exec_stmt
 from .planets import PlanetMixin
 from .tasks import TaskMixin
 
@@ -343,7 +342,15 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
     for col, dtype in [("memory_state", "TEXT DEFAULT 'hot'")]:
         with contextlib.suppress(Exception):
             conn.execute(f"ALTER TABLE planets ADD COLUMN {col} {dtype}")
-    for col, dtype in [("tags", "TEXT DEFAULT '[]'"), ("pinned", "INTEGER DEFAULT 0")]:
+    for col, dtype in [
+        ("tags", "TEXT DEFAULT '[]'"),
+        ("pinned", "INTEGER DEFAULT 0"),
+        ("source_path", "TEXT DEFAULT ''"),
+        ("artifact_path", "TEXT DEFAULT ''"),
+        ("observed_at", "TEXT DEFAULT ''"),
+        ("verification_status", "TEXT DEFAULT 'memory_only'"),
+        ("evidence_summary", "TEXT DEFAULT ''"),
+    ]:
         with contextlib.suppress(Exception):
             conn.execute(f"ALTER TABLE notes ADD COLUMN {col} {dtype}")
 
@@ -368,7 +375,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE notes ADD COLUMN {col} {dtype}")
         with contextlib.suppress(Exception):
             conn.execute(f"ALTER TABLE tasks ADD COLUMN {col} {dtype}")
-    
+
     # Ensure notes_fts virtual table and sync triggers exist
     conn.executescript("""
         CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(
@@ -391,14 +398,12 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             VALUES (new.id, new.id, new.topic, new.kind, new.content, new.title, new.status);
         END;
     """)
-    try:
+    with contextlib.suppress(Exception):
         conn.execute("""
             INSERT OR IGNORE INTO notes_fts(rowid, id, topic, kind, content, title, status)
             SELECT id, id, topic, kind, content, title, status FROM notes
         """)
-    except Exception:
-        pass
-    
+
     conn.commit()
 
 

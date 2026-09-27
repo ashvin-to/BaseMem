@@ -226,7 +226,7 @@ class PlanetMixin:
         if next_step is not None:
             updates.append("next_step = ?")
             params.append(next_step)
-            
+
             raw = row.get("next_steps")
             try:
                 steps = json.loads(raw) if raw and raw.strip() else []
@@ -465,10 +465,18 @@ class PlanetMixin:
         pinned = [n for n in notes if n.get("pinned")]
         for n in pinned:
             lines.append(f"  pin: {n['content'][:300]}")
+        evidence_notes = [
+            n for n in notes
+            if n.get("source_path") or n.get("artifact_path")
+        ]
+        if evidence_notes:
+            lines.append("  evidence: historical references detected; re-read current source/artifacts before relying on them")
         for n in notes:
             if n.get("kind") in ("decision", "issue", "fact", "summary") and (not q or q in (n.get("content") or "").lower()):
                 tag = {"decision": "dec", "issue": "iss", "fact": "fact", "summary": "sum"}.get(n["kind"], "note")
                 lines.append(f"  {tag}: {n['content'][:300]}")
+                if n.get("source_path") or n.get("artifact_path"):
+                    lines.append(f"    evidence: {n.get('verification_status') or 'memory_only'} ({n.get('source_path') or n.get('artifact_path')})")
 
         return "\n".join(lines)
 

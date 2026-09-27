@@ -1487,6 +1487,7 @@ if (require.main === module || process.argv[2]) {
     const required = [
       'code_find first',
       'code_init',
+      'verify_change',
       'source, artifacts, and tests establish current behavior',
       'memory is context, not verification',
       'label conclusions as memory, source, artifact, test, or inference',
@@ -1496,16 +1497,34 @@ if (require.main === module || process.argv[2]) {
       ['using-basemem', path.join(BASEMEM_ROOT, 'skills', 'using-basemem', 'SKILL.md')],
       ['gemini-skill', path.join(BASEMEM_ROOT, 'extensions', 'gemini', 'skills', 'using-basemem', 'SKILL.md')],
     ];
+    const json = process.argv.includes('--json');
+    const sourceResults = [];
     let failed = false;
     for (const [name, file] of files) {
       const content = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
       const missing = required.filter(phrase => !content.toLowerCase().includes(phrase));
-      if (missing.length) {
-        failed = true;
-        console.log(`${name}: FAIL (${missing.join(', ')})`);
-      } else {
-        console.log(`${name}: OK`);
-      }
+      const status = missing.length ? 'FAIL' : 'PASS';
+      if (missing.length) failed = true;
+      sourceResults.push({ name, path: file, status, missing });
+    }
+    const agentPaths = getAgentPaths();
+    const clientResults = [];
+    for (const agent of AGENTS) {
+      if (!agent.capabilities.includes('rules') || agent.skipRules) continue;
+      const paths = agentPaths[agent.name];
+      if (!paths || !fs.existsSync(paths.detect)) continue;
+      const file = agent.name === 'claude' ? path.join(getClaudeDir(), 'basemem.md') : paths.install;
+      const content = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
+      const missing = required.filter(phrase => !content.toLowerCase().includes(phrase));
+      const status = !fs.existsSync(file) ? 'MISSING' : missing.length ? 'FAIL' : 'PASS';
+      if (status !== 'PASS') failed = true;
+      clientResults.push({ name: agent.name, path: file, status, missing });
+    }
+    if (json) {
+      console.log(JSON.stringify({ sources: sourceResults, clients: clientResults, ok: !failed }));
+    } else {
+      for (const result of sourceResults) console.log(`${result.name}: ${result.status}${result.missing.length ? ` (${result.missing.join(', ')})` : ''}`);
+      for (const result of clientResults) console.log(`${result.name}: ${result.status}${result.missing.length ? ` (${result.missing.join(', ')})` : ''}`);
     }
     process.exit(failed ? 1 : 0);
   }
