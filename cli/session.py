@@ -49,7 +49,7 @@ def context(ctx):
     rows = cursor.execute(
         "SELECT topic, display_topic, status, goal, current_state, next_steps, updated_at FROM planets ORDER BY updated_at DESC"
     ).fetchall()
-    click.echo("\n[PLANETS] ACTIVE PLANETS (TASKS):")
+    click.echo("\n[PLANETS] ACTIVE PLANETS:")
     if rows:
         for row in rows:
             topic = row["display_topic"] or row["topic"]
@@ -62,7 +62,7 @@ def context(ctx):
             if next_steps:
                 click.echo(f"  Next: {next_steps[-1]}")
     else:
-        click.echo("  No active tasks.")
+        click.echo("  No active planets.")
 
 
 @session.command()
@@ -164,8 +164,9 @@ def read(ctx, node_id, topic):
 
     If node_id is a number, reads a session. If --topic is set, reads a planet.
     Otherwise reads a node by its id string."""
-    from storage.sessions import SessionManager
     import json as _json
+
+    from storage.sessions import SessionManager
     manager = SessionManager(ctx.obj['storage'])
     if topic:
         node = manager.get_planet(topic)
@@ -200,16 +201,7 @@ def read(ctx, node_id, topic):
             ):
                 t = r["title"] or r["content"][:80]
                 click.echo(f"    note-{r['id']} [{r['kind']}] {t[:200]}")
-        task_ids = _json.loads(session.get("task_ids", "[]"))
-        if task_ids:
-            click.echo(f"  tasks ({len(task_ids)}):")
-            ph = ",".join("?" for _ in task_ids)
-            cursor = ctx.obj['storage'].connection.cursor()
-            for r in cursor.execute(
-                f"SELECT id, status, priority, title FROM tasks WHERE id IN ({ph}) ORDER BY id ASC",
-                task_ids,
-            ):
-                click.echo(f"    task-{r['id']} [{r['status']}/{r['priority']}] {r['title']}")
+
     else:
         node = ctx.obj['storage'].get_node(node_id) if node_id else None
         if node:

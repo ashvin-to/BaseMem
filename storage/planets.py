@@ -1,4 +1,4 @@
-"""Planet operations — shared task/topic context stored in planets table."""
+"""Planet operations — shared project context stored in planets table."""
 
 from __future__ import annotations
 
@@ -150,7 +150,7 @@ class _PlanetProxy:
             "aliases": aliases,
             "notes": note_list,
             "recent_activity": activity,
-            "is_task_planet": True,
+            "is_planet": True,
             "scope": "planet",
             "updated_at": row.get("updated_at", ""),
             "created_at": row.get("created_at", ""),
@@ -168,7 +168,7 @@ class PlanetMixin:
     normalize_topic: Any
     _now: Any
 
-    def get_or_create_task_planet(self, _folder_name: str, topic: str) -> _PlanetProxy:
+    def get_or_create_planet(self, _folder_name: str, topic: str) -> _PlanetProxy:
         topic_slug = self.normalize_topic(topic)
         row = _get_planet_row(self.storage.connection, topic_slug)
 
@@ -185,7 +185,7 @@ class PlanetMixin:
                 self.storage.connection,
                 "INSERT INTO planets (topic, display_topic, aliases, current_state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
                 (topic_slug, topic, json.dumps(sorted({topic, topic_slug})),
-                 f"Unified task context for: {topic}", self._now(), self._now()),
+                  f"Unified project context for: {topic}", self._now(), self._now()),
             )
 
         result = _get_planet(self.storage.connection, topic_slug)
@@ -207,10 +207,10 @@ class PlanetMixin:
         topic_slug = self.normalize_topic(topic)
         row = _get_planet_row(self.storage.connection, topic_slug)
         if not row:
-            self.get_or_create_task_planet(topic, topic)
+            self.get_or_create_planet(topic, topic)
             row = _get_planet_row(self.storage.connection, topic_slug)
 
-        assert row is not None  # guaranteed by get_or_create_task_planet
+        assert row is not None
 
         updates = []
         params: list = []
@@ -292,14 +292,10 @@ class PlanetMixin:
         return cursor.rowcount > 0
 
     def compact_planet(self, _folder_name: str, topic: str, _agent_id: str = "default") -> _PlanetProxy:
-        import contextlib
-
-        from .tasks import _get_tasks
-
         topic_slug = self.normalize_topic(topic)
         row = _get_planet_row(self.storage.connection, topic_slug)
         if not row:
-            self.get_or_create_task_planet(topic, topic)
+            self.get_or_create_planet(topic, topic)
 
         cursor = self.storage.connection.cursor()
         summary_ids = {r["id"] for r in cursor.execute(
@@ -311,30 +307,22 @@ class PlanetMixin:
         ).fetchall()
 
         ids_to_keep = set(summary_ids) | {r["id"] for r in pinned}
-
-        task_notes = set()
-        for t in _get_tasks(cursor.connection, topic_slug):
-            if t.get("status") and t["status"] != "done":
-                nids = json.loads(t.get("notes", "[]"))
-                for nid in nids:
-                    with contextlib.suppress(ValueError, TypeError):
-                        task_notes.add(int(nid))
-        ids_to_keep.update(task_notes)
+        durable = cursor.execute(
+            """SELECT id FROM notes
+               WHERE topic = ? AND (
+                   COALESCE(importance, 0) >= 0.7
+                   OR UPPER(kind) IN ('history', 'decision', 'constraint', 'architecture', 'convention')
+                   OR COALESCE(provenance, '') NOT IN ('', '{}')
+               )""",
+            (topic_slug,),
+        ).fetchall()
+        ids_to_keep.update(r["id"] for r in durable)
 
         recent = cursor.execute(
             "SELECT id FROM notes WHERE topic = ? AND kind != 'summary' ORDER BY created_at DESC LIMIT 30",
             (topic_slug,),
         ).fetchall()
         ids_to_keep.update(r["id"] for r in recent)
-
-        if ids_to_keep:
-            placeholders = ",".join("?" for _ in ids_to_keep)
-            cursor.execute(
-                f"DELETE FROM notes WHERE topic = ? AND id NOT IN ({placeholders})",
-                (topic_slug, *ids_to_keep),
-            )
-        else:
-            cursor.execute("DELETE FROM notes WHERE topic = ?", (topic_slug,))
 
         exec_stmt(
             self.storage.connection,
@@ -427,8 +415,6 @@ class PlanetMixin:
         lines = [f"ctx: {topic_slug}"]
         q = query.strip().lower()
 
-        from .tasks import _get_tasks
-
         row = _get_planet_row(conn, topic_slug)
         if row:
             if row.get("current_state"):
@@ -445,16 +431,6 @@ class PlanetMixin:
             if topics:
                 names = ", ".join(r[0] for r in topics)
                 lines.append(f"  (did you mean: {names})")
-
-        tasks = _get_tasks(conn, topic_slug)
-        open_tasks = [t for t in tasks if t.get("status") and t["status"] != "done"]
-        if open_tasks:
-            lines.append("")
-            lines.append(f"  tasks ({len(open_tasks)} open):")
-            for t in open_tasks[:5]:
-                lines.append(f"    task-{t['id']} [{t['status']}/{t['priority']}] {t['title']}")
-            if len(open_tasks) > 5:
-                lines.append(f"    ... and {len(open_tasks) - 5} more")
 
         session_lines = self._render_sessions_block(topic_slug)
         if session_lines:

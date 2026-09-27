@@ -28,10 +28,10 @@ CREATE TABLE IF NOT EXISTS code_understanding_cache (
 class Budget:
     max_nodes: int = 80
     max_chars: int = 7000
-    max_ms: int = 500
+    max_ms: int = 1000
 
     @classmethod
-    def bounded(cls, max_nodes: int = 80, max_chars: int = 7000, max_ms: int = 500) -> Budget:
+    def bounded(cls, max_nodes: int = 80, max_chars: int = 7000, max_ms: int = 1000) -> Budget:
         return cls(
             max(8, min(int(max_nodes), 200)),
             max(500, min(int(max_chars), 20000)),
@@ -55,7 +55,14 @@ class CodeUnderstanding:
             return "root"
         if len(parts) == 1:
             return parts[0].rsplit(".", 1)[0]
-        return "/".join(parts[:2])
+
+        # Strip common top-level noise to group by actual feature/domain
+        noise_dirs = {"src", "lib", "app", "tests", "test", "packages", "apps"}
+        meaningful_parts = [p for p in parts if p.lower() not in noise_dirs]
+
+        if len(meaningful_parts) >= 2:
+            return "/".join(meaningful_parts[:2])
+        return "/".join(meaningful_parts) if meaningful_parts else "root"
 
     @staticmethod
     def _tokens(query: str) -> list[str]:
@@ -118,10 +125,30 @@ class CodeUnderstanding:
         memory = []
         if self.memory_search:
             try:
-                memory = self.memory_search(query, min(8, budget.max_nodes // 4))
+                # Search with raw query, plus extracted tokens, plus component names
+                search_terms = [query] + self._tokens(query) + list(components.keys())
+                unique_terms = list(dict.fromkeys(search_terms))  # dedupe while preserving order
+
+                # Try up to 3 variations to maximize recall without blowing the budget
+                for term in unique_terms[:3]:
+                    mem_results = self.memory_search(term, min(4, budget.max_nodes // 8))
+                    if mem_results:
+                        memory.extend(mem_results)
+                        if len(memory) >= 8:
+                            break
+
+                # Deduplicate memory by note ID
+                seen_ids = set()
+                deduped_memory = []
+                for item in memory:
+                    if item.get("id") not in seen_ids:
+                        seen_ids.add(item.get("id"))
+                        deduped_memory.append(item)
+                memory = deduped_memory[:8]
             except Exception:
                 memory = []
         ranked = sorted(symbols.values(), key=lambda item: (item["file_path"], item["start_line"]))
+        entry_point_keywords = {"route", "handler", "controller", "api", "main", "endpoint", "view"}
         evidence = [
             {
                 "id": item["id"],
@@ -129,6 +156,10 @@ class CodeUnderstanding:
                 "file": item["file_path"],
                 "line": item["start_line"],
                 "type": item["symbol_type"],
+                "is_likely_entry_point": any(
+                    keyword in item["file_path"].lower() or keyword in item["symbol_name"].lower()
+                    for keyword in entry_point_keywords
+                ),
             }
             for item in ranked[: budget.max_nodes]
         ]
@@ -156,20 +187,47 @@ class CodeUnderstanding:
 
     def _flows(self, evidence: list[dict]) -> list[dict]:
         ids = {item["id"] for item in evidence}
-        names = {item["id"]: item["symbol"] for item in evidence}
+        if not ids:
+            return []
+
+        placeholders = ",".join("?" for _ in ids)
+
+        # Get both inbound (who calls us) and outbound (who we call)
         cur = self.indexer.conn.execute(
-            "SELECT from_symbol_id, to_name FROM code_edges "
-            "WHERE project_id = ? AND edge_type = 'calls' "
-            "AND from_symbol_id IN ({}) LIMIT 200".format(",".join("?" for _ in ids)),
-            (self.indexer.project_id, *ids),
+            f"""
+            SELECT 'inbound' as direction, from_name as source, to_name as target
+            FROM code_edges WHERE project_id = ? AND to_symbol_id IN ({placeholders}) AND edge_type IN ('calls', 'references')
+            UNION ALL
+            SELECT 'outbound' as direction, from_name as source, to_name as target
+            FROM code_edges WHERE project_id = ? AND from_symbol_id IN ({placeholders}) AND edge_type IN ('calls', 'imports', 'references')
+            LIMIT 300
+            """,
+            (self.indexer.project_id, *ids, self.indexer.project_id, *ids),
         )
-        flows = defaultdict(list)
+
+        flows: defaultdict[str, dict[str, list[str]]] = defaultdict(
+            lambda: {"inbound": [], "outbound": []}
+        )
         for row in cur.fetchall():
-            if row["from_symbol_id"] in ids:
-                flows[names[row["from_symbol_id"]]].append(row["to_name"])
+            direction = row["direction"]
+            source = row["source"] or "unknown"
+            target = row["target"] or "unknown"
+            if direction == "inbound":
+                flows[target]["inbound"].append(source)
+            else:
+                flows[source]["outbound"].append(target)
+
         return [
-            {"from": source, "to": targets[:8], "confidence": "derived from calls edges"}
-            for source, targets in flows.items()
+            {
+                "symbol": symbol,
+                "inbound_callers": list(set(callers))[:8],
+                "outbound_callees": list(set(callees))[:8],
+                "confidence": "derived from code_edges",
+            }
+            for symbol, edges in flows.items()
+            for callers in [edges["inbound"]]
+            for callees in [edges["outbound"]]
+            if callers or callees
         ]
 
     def understand(

@@ -1,6 +1,6 @@
 {
   "code_version": "d4c33501748757c2415b13311ce189355797d524",
-  "command": "uv run python -m benchmarks.memory_benchmark --output benchmark/baseline.json --repeats 3",
+  "command": "uv run python -m benchmarks.memory_benchmark --output benchmark/after.json --repeats 3",
   "config": {
     "gold_grades": [
       "irrelevant",
@@ -49,59 +49,57 @@
   },
   "metrics": {
     "answerable_queries": 108,
-    "contradiction_accuracy": 0.6666666666666666,
+    "contradiction_accuracy": 1.0,
     "failure_classification_counts": {
       "confidence": 9,
       "graph": 9,
       "importance": 9,
-      "lexical": 72,
-      "noise": 13,
-      "ranking": 39,
+      "lexical": 24,
+      "noise": 7,
+      "ranking": 32,
       "scope": 12,
       "supersession": 6,
       "temporal": 12,
-      "type": 12
+      "type": 0
     },
-    "historical_accuracy": 0.0,
-    "irrelevant_rate": 0.7692307692307693,
+    "historical_accuracy": 1.0,
+    "irrelevant_rate": 0.15306122448979592,
     "latency_ms": {
-      "mean": 3.3170860055555553,
-      "p95": 4.83246955
+      "mean": 4.110660452777778,
+      "p95": 5.173868000000001
     },
-    "mrr": 0.35648148148148145,
-    "ndcg": 0.34017100018738716,
+    "mrr": 0.7592592592592593,
+    "ndcg": 0.733947684432111,
     "no_answer_false_positive_rate": 0.0,
     "no_answer_queries": 12,
     "precision": {
-      "1": 0.31666666666666665,
-      "10": 0.03333333333333333,
-      "3": 0.10555555555555556,
-      "5": 0.06666666666666667
+      "1": 0.6416666666666667,
+      "10": 0.08000000000000002,
+      "3": 0.26666666666666666,
+      "5": 0.16000000000000003
     },
     "queries": 120,
     "recall": {
-      "1": 0.3271604938271605,
-      "10": 0.34567901234567905,
-      "3": 0.3271604938271605,
-      "5": 0.34567901234567905
+      "1": 0.6481481481481481,
+      "10": 0.7962962962962963,
+      "3": 0.7962962962962963,
+      "5": 0.7962962962962963
     },
     "repeats": 3,
     "superseded_retrieval_rate": 0.0,
     "tokens": {
-      "mean": 19.308333333333334,
-      "p95": 42.39999999999998,
-      "total": 2317
+      "mean": 27.425,
+      "p95": 43.05,
+      "total": 3291
     }
   },
   "results": [
     {
       "category": "DIRECT_FACT",
-      "dcg": 1.2920296742201793,
-      "failure_classification": [
-        "ranking"
-      ],
+      "dcg": 3.0,
+      "failure_classification": [],
       "false_positive": true,
-      "first_relevant_rank": 4,
+      "first_relevant_rank": 1,
       "gold_relevance": {
         "atlas.ambiguous": "irrelevant",
         "atlas.architecture": "irrelevant",
@@ -127,36 +125,36 @@
       "id": "atlas.q001",
       "irrelevant_retrieved": false,
       "latency_ms": [
-        5.168105,
-        4.196731,
-        4.113065
+        6.942629,
+        4.67173,
+        4.323837
       ],
-      "ndcg": 0.4306765580733931,
+      "ndcg": 1.0,
       "no_answer": false,
       "precision": {
-        "1": 0.0,
+        "1": 1.0,
         "10": 0.1,
-        "3": 0.0,
+        "3": 0.3333333333333333,
         "5": 0.2
       },
       "project": "atlas",
       "query": "What is stored in the Atlas Ledger journal?",
       "ranked_ids": [
+        1,
         51,
         11,
-        5,
-        1
+        5
       ],
       "ranked_labels": [
+        "atlas.direct_fact",
         "atlas.graph",
         "atlas.historical",
-        "atlas.architecture",
-        "atlas.direct_fact"
+        "atlas.architecture"
       ],
       "recall": {
-        "1": 0.0,
+        "1": 1.0,
         "10": 1.0,
-        "3": 0.0,
+        "3": 1.0,
         "5": 1.0
       },
       "tokens": 50
@@ -192,9 +190,9 @@
       "id": "atlas.q002",
       "irrelevant_retrieved": false,
       "latency_ms": [
-        4.310942,
-        3.856648,
-        4.691039
+        4.307716,
+        4.746104,
+        4.205158
       ],
       "ndcg": 1.0,
       "no_answer": false,
@@ -207,10 +205,12 @@
       "project": "atlas",
       "query": "Which technology did the Atlas Ledger team choose?",
       "ranked_ids": [
-        2
+        2,
+        3
       ],
       "ranked_labels": [
-        "atlas.decision"
+        "atlas.decision",
+        "atlas.why_question"
       ],
       "recall": {
         "1": 1.0,
@@ -218,17 +218,14 @@
         "3": 1.0,
         "5": 1.0
       },
-      "tokens": 21
+      "tokens": 34
     },
     {
       "category": "WHY_QUESTION",
-      "dcg": 0.0,
-      "failure_classification": [
-        "lexical",
-        "ranking"
-      ],
-      "false_positive": false,
-      "first_relevant_rank": null,
+      "dcg": 3.0,
+      "failure_classification": [],
+      "false_positive": true,
+      "first_relevant_rank": 1,
       "gold_relevance": {
         "atlas.ambiguous": "irrelevant",
         "atlas.architecture": "irrelevant",
@@ -252,45 +249,46 @@
         "atlas.workaround": "irrelevant"
       },
       "id": "atlas.q003",
-      "irrelevant_retrieved": true,
+      "irrelevant_retrieved": false,
       "latency_ms": [
-        4.102936,
-        5.204523,
-        4.817574
+        5.275437,
+        4.712058,
+        4.726385
       ],
-      "ndcg": 0.0,
+      "ndcg": 1.0,
       "no_answer": false,
       "precision": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 0.1,
+        "3": 0.3333333333333333,
+        "5": 0.2
       },
       "project": "atlas",
       "query": "Why did the Atlas Ledger team make its durable storage choice?",
       "ranked_ids": [
+        3,
         2
       ],
       "ranked_labels": [
+        "atlas.why_question",
         "atlas.decision"
       ],
       "recall": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 1.0,
+        "3": 1.0,
+        "5": 1.0
       },
-      "tokens": 24
+      "tokens": 37
     },
     {
       "category": "CONSTRAINT",
-      "dcg": 0,
+      "dcg": 3.0,
       "failure_classification": [
-        "lexical",
         "scope"
       ],
-      "false_positive": false,
-      "first_relevant_rank": null,
+      "false_positive": true,
+      "first_relevant_rank": 1,
       "gold_relevance": {
         "atlas.ambiguous": "irrelevant",
         "atlas.architecture": "irrelevant",
@@ -314,31 +312,35 @@
         "atlas.workaround": "irrelevant"
       },
       "id": "atlas.q004",
-      "irrelevant_retrieved": true,
+      "irrelevant_retrieved": false,
       "latency_ms": [
-        2.161618,
-        1.989979,
-        1.968529
+        4.140753,
+        4.447828,
+        4.287377
       ],
-      "ndcg": 0.0,
+      "ndcg": 1.0,
       "no_answer": false,
       "precision": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 0.1,
+        "3": 0.3333333333333333,
+        "5": 0.2
       },
       "project": "atlas",
       "query": "What hard requirement governs Atlas Ledger payloads and retention?",
-      "ranked_ids": [],
-      "ranked_labels": [],
+      "ranked_ids": [
+        4
+      ],
+      "ranked_labels": [
+        "atlas.constraint"
+      ],
       "recall": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 1.0,
+        "3": 1.0,
+        "5": 1.0
       },
-      "tokens": 9
+      "tokens": 19
     },
     {
       "category": "ARCHITECTURE",
@@ -373,9 +375,9 @@
       "id": "atlas.q005",
       "irrelevant_retrieved": false,
       "latency_ms": [
-        3.538157,
-        3.811524,
-        3.914375
+        4.324309,
+        4.08213,
+        4.261187
       ],
       "ndcg": 1.0,
       "no_answer": false,
@@ -388,10 +390,12 @@
       "project": "atlas",
       "query": "Which components define the Atlas Ledger architecture?",
       "ranked_ids": [
-        5
+        5,
+        51
       ],
       "ranked_labels": [
-        "atlas.architecture"
+        "atlas.architecture",
+        "atlas.graph"
       ],
       "recall": {
         "1": 1.0,
@@ -399,7 +403,7 @@
         "3": 1.0,
         "5": 1.0
       },
-      "tokens": 16
+      "tokens": 27
     },
     {
       "category": "BUG",
@@ -432,9 +436,9 @@
       "id": "atlas.q006",
       "irrelevant_retrieved": false,
       "latency_ms": [
-        3.726246,
-        3.807827,
-        3.778122
+        4.652132,
+        4.317686,
+        5.082223
       ],
       "ndcg": 1.0,
       "no_answer": false,
@@ -462,13 +466,10 @@
     },
     {
       "category": "WORKAROUND",
-      "dcg": 0,
-      "failure_classification": [
-        "lexical",
-        "ranking"
-      ],
-      "false_positive": false,
-      "first_relevant_rank": null,
+      "dcg": 15.0,
+      "failure_classification": [],
+      "false_positive": true,
+      "first_relevant_rank": 1,
       "gold_relevance": {
         "atlas.ambiguous": "irrelevant",
         "atlas.architecture": "irrelevant",
@@ -492,41 +493,44 @@
         "atlas.workaround": "highly_relevant"
       },
       "id": "atlas.q007",
-      "irrelevant_retrieved": true,
+      "irrelevant_retrieved": false,
       "latency_ms": [
-        1.95861,
-        1.880555,
-        1.862602
+        4.412569,
+        4.071951,
+        4.141114
       ],
-      "ndcg": 0.0,
+      "ndcg": 1.0,
       "no_answer": false,
       "precision": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 0.1,
+        "3": 0.3333333333333333,
+        "5": 0.2
       },
       "project": "atlas",
       "query": "What is the documented workaround for the Atlas Ledger failure?",
-      "ranked_ids": [],
-      "ranked_labels": [],
+      "ranked_ids": [
+        7
+      ],
+      "ranked_labels": [
+        "atlas.workaround"
+      ],
       "recall": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 1.0,
+        "3": 1.0,
+        "5": 1.0
       },
-      "tokens": 10
+      "tokens": 26
     },
     {
       "category": "DISCOVERY",
-      "dcg": 0,
+      "dcg": 3.0,
       "failure_classification": [
-        "confidence",
-        "lexical"
+        "confidence"
       ],
-      "false_positive": false,
-      "first_relevant_rank": null,
+      "false_positive": true,
+      "first_relevant_rank": 1,
       "gold_relevance": {
         "atlas.ambiguous": "irrelevant",
         "atlas.architecture": "irrelevant",
@@ -550,31 +554,37 @@
         "atlas.workaround": "irrelevant"
       },
       "id": "atlas.q008",
-      "irrelevant_retrieved": true,
+      "irrelevant_retrieved": false,
       "latency_ms": [
-        1.896104,
-        1.863594,
-        1.872299
+        4.490108,
+        4.086639,
+        4.188165
       ],
-      "ndcg": 0.0,
+      "ndcg": 1.0,
       "no_answer": false,
       "precision": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 0.1,
+        "3": 0.3333333333333333,
+        "5": 0.2
       },
       "project": "atlas",
       "query": "What did the Atlas Ledger load test actually discover?",
-      "ranked_ids": [],
-      "ranked_labels": [],
+      "ranked_ids": [
+        8,
+        50
+      ],
+      "ranked_labels": [
+        "atlas.discovery",
+        "atlas.low_confidence"
+      ],
       "recall": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 1.0,
+        "3": 1.0,
+        "5": 1.0
       },
-      "tokens": 9
+      "tokens": 30
     },
     {
       "category": "PREFERENCE",
@@ -611,9 +621,9 @@
       "id": "atlas.q009",
       "irrelevant_retrieved": true,
       "latency_ms": [
-        4.791225,
-        4.584591,
-        3.971802
+        4.084966,
+        4.827781,
+        5.01833
       ],
       "ndcg": 0.0,
       "no_answer": false,
@@ -626,10 +636,12 @@
       "project": "atlas",
       "query": "What implementation preference does the Atlas Ledger team follow?",
       "ranked_ids": [
-        2
+        2,
+        10
       ],
       "ranked_labels": [
-        "atlas.decision"
+        "atlas.decision",
+        "atlas.code_related"
       ],
       "recall": {
         "1": 0.0,
@@ -637,7 +649,7 @@
         "3": 0.0,
         "5": 0.0
       },
-      "tokens": 22
+      "tokens": 32
     },
     {
       "category": "CODE_RELATED",
@@ -670,9 +682,9 @@
       "id": "atlas.q010",
       "irrelevant_retrieved": false,
       "latency_ms": [
-        3.730564,
-        4.948517,
-        5.023317
+        4.028517,
+        4.021984,
+        4.932735
       ],
       "ndcg": 1.0,
       "no_answer": false,
@@ -700,14 +712,13 @@
     },
     {
       "category": "HISTORICAL",
-      "dcg": 0.0,
+      "dcg": 0.5,
       "failure_classification": [
-        "lexical",
         "ranking",
         "temporal"
       ],
-      "false_positive": false,
-      "first_relevant_rank": null,
+      "false_positive": true,
+      "first_relevant_rank": 3,
       "gold_relevance": {
         "atlas.ambiguous": "irrelevant",
         "atlas.architecture": "irrelevant",
@@ -731,45 +742,49 @@
         "atlas.workaround": "irrelevant"
       },
       "id": "atlas.q011",
-      "irrelevant_retrieved": true,
+      "irrelevant_retrieved": false,
       "latency_ms": [
-        3.951966,
-        3.565407,
-        4.355626
+        5.40115,
+        4.375697,
+        4.023848
       ],
-      "ndcg": 0.0,
+      "ndcg": 0.5,
       "no_answer": false,
       "precision": {
         "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "10": 0.1,
+        "3": 0.3333333333333333,
+        "5": 0.2
       },
       "project": "atlas",
       "query": "What did Atlas Ledger do before the current architecture?",
       "ranked_ids": [
-        5
+        12,
+        2,
+        11
       ],
       "ranked_labels": [
-        "atlas.architecture"
+        "atlas.supersession",
+        "atlas.decision",
+        "atlas.historical"
       ],
       "recall": {
         "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "10": 1.0,
+        "3": 1.0,
+        "5": 1.0
       },
-      "tokens": 18
+      "tokens": 42
     },
     {
       "category": "SUPERSESSION",
-      "dcg": 0,
+      "dcg": 12.463946303571863,
       "failure_classification": [
-        "lexical",
+        "ranking",
         "supersession"
       ],
-      "false_positive": false,
-      "first_relevant_rank": null,
+      "false_positive": true,
+      "first_relevant_rank": 1,
       "gold_relevance": {
         "atlas.ambiguous": "irrelevant",
         "atlas.architecture": "irrelevant",
@@ -793,31 +808,39 @@
         "atlas.workaround": "irrelevant"
       },
       "id": "atlas.q012",
-      "irrelevant_retrieved": true,
+      "irrelevant_retrieved": false,
       "latency_ms": [
-        2.088672,
-        1.961696,
-        1.916802
+        4.511119,
+        4.409864,
+        4.206942
       ],
-      "ndcg": 0.0,
+      "ndcg": 0.7378264247076021,
       "no_answer": false,
       "precision": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 0.2,
+        "3": 0.6666666666666666,
+        "5": 0.4
       },
       "project": "atlas",
       "query": "What superseded Atlas Ledger policy should be recognized as old?",
-      "ranked_ids": [],
-      "ranked_labels": [],
+      "ranked_ids": [
+        12,
+        2,
+        11
+      ],
+      "ranked_labels": [
+        "atlas.supersession",
+        "atlas.decision",
+        "atlas.historical"
+      ],
       "recall": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 0.5,
+        "10": 1.0,
+        "3": 1.0,
+        "5": 1.0
       },
-      "tokens": 10
+      "tokens": 43
     },
     {
       "category": "CONTRADICTION",
@@ -853,9 +876,9 @@
       "id": "atlas.q013",
       "irrelevant_retrieved": false,
       "latency_ms": [
-        3.567701,
-        3.680551,
-        5.482771
+        4.240276,
+        4.255105,
+        3.992487
       ],
       "ndcg": 0.4692787260227565,
       "no_answer": false,
@@ -883,12 +906,13 @@
     },
     {
       "category": "SCOPE",
-      "dcg": 3.0,
+      "dcg": 1.8927892607143724,
       "failure_classification": [
+        "ranking",
         "scope"
       ],
       "false_positive": true,
-      "first_relevant_rank": 1,
+      "first_relevant_rank": 2,
       "gold_relevance": {
         "atlas.ambiguous": "irrelevant",
         "atlas.architecture": "irrelevant",
@@ -914,14 +938,14 @@
       "id": "atlas.q014",
       "irrelevant_retrieved": false,
       "latency_ms": [
-        5.052721,
-        3.999584,
-        4.018929
+        4.142798,
+        4.234094,
+        4.680908
       ],
-      "ndcg": 1.0,
+      "ndcg": 0.6309297535714574,
       "no_answer": false,
       "precision": {
-        "1": 1.0,
+        "1": 0.0,
         "10": 0.1,
         "3": 0.3333333333333333,
         "5": 0.2
@@ -929,28 +953,29 @@
       "project": "atlas",
       "query": "Which component is excluded from the Atlas Ledger constrained release?",
       "ranked_ids": [
-        14
+        51,
+        14,
+        5
       ],
       "ranked_labels": [
-        "atlas.scope"
+        "atlas.graph",
+        "atlas.scope",
+        "atlas.architecture"
       ],
       "recall": {
-        "1": 1.0,
+        "1": 0.0,
         "10": 1.0,
         "3": 1.0,
         "5": 1.0
       },
-      "tokens": 20
+      "tokens": 40
     },
     {
       "category": "AMBIGUOUS",
-      "dcg": 0,
-      "failure_classification": [
-        "lexical",
-        "noise"
-      ],
-      "false_positive": false,
-      "first_relevant_rank": null,
+      "dcg": 1.0,
+      "failure_classification": [],
+      "false_positive": true,
+      "first_relevant_rank": 1,
       "gold_relevance": {
         "atlas.ambiguous": "historical_only",
         "atlas.architecture": "irrelevant",
@@ -974,31 +999,35 @@
         "atlas.workaround": "irrelevant"
       },
       "id": "atlas.q015",
-      "irrelevant_retrieved": true,
+      "irrelevant_retrieved": false,
       "latency_ms": [
-        2.104441,
-        1.919488,
-        1.849077
+        4.264643,
+        3.761742,
+        3.829923
       ],
-      "ndcg": 0.0,
+      "ndcg": 1.0,
       "no_answer": false,
       "precision": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 0.1,
+        "3": 0.3333333333333333,
+        "5": 0.2
       },
       "project": "atlas",
       "query": "What ambiguous Atlas Ledger symptom is documented?",
-      "ranked_ids": [],
-      "ranked_labels": [],
+      "ranked_ids": [
+        15
+      ],
+      "ranked_labels": [
+        "atlas.ambiguous"
+      ],
       "recall": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 1.0,
+        "3": 1.0,
+        "5": 1.0
       },
-      "tokens": 7
+      "tokens": 20
     },
     {
       "category": "IRRELEVANT",
@@ -1035,9 +1064,9 @@
       "id": "atlas.q016",
       "irrelevant_retrieved": true,
       "latency_ms": [
-        3.659481,
-        3.785977,
-        3.922781
+        4.337865,
+        4.003939,
+        3.758104
       ],
       "ndcg": 0.0,
       "no_answer": false,
@@ -1065,12 +1094,10 @@
     },
     {
       "category": "DIRECT_FACT",
-      "dcg": 1.2920296742201793,
-      "failure_classification": [
-        "ranking"
-      ],
+      "dcg": 3.0,
+      "failure_classification": [],
       "false_positive": true,
-      "first_relevant_rank": 4,
+      "first_relevant_rank": 1,
       "gold_relevance": {
         "atlas.ambiguous": "irrelevant",
         "atlas.architecture": "irrelevant",
@@ -1096,36 +1123,36 @@
       "id": "atlas.q017",
       "irrelevant_retrieved": false,
       "latency_ms": [
-        4.28851,
-        4.111582,
-        4.07814
+        4.275725,
+        4.309169,
+        5.172798
       ],
-      "ndcg": 0.4306765580733931,
+      "ndcg": 1.0,
       "no_answer": false,
       "precision": {
-        "1": 0.0,
+        "1": 1.0,
         "10": 0.1,
-        "3": 0.0,
+        "3": 0.3333333333333333,
         "5": 0.2
       },
       "project": "atlas",
       "query": "Please answer: What is stored in the Atlas Ledger journal?",
       "ranked_ids": [
+        1,
         51,
         11,
-        5,
-        1
+        5
       ],
       "ranked_labels": [
+        "atlas.direct_fact",
         "atlas.graph",
         "atlas.historical",
-        "atlas.architecture",
-        "atlas.direct_fact"
+        "atlas.architecture"
       ],
       "recall": {
-        "1": 0.0,
+        "1": 1.0,
         "10": 1.0,
-        "3": 0.0,
+        "3": 1.0,
         "5": 1.0
       },
       "tokens": 52
@@ -1161,9 +1188,9 @@
       "id": "atlas.q018",
       "irrelevant_retrieved": false,
       "latency_ms": [
-        4.456343,
-        3.878068,
-        4.200698
+        4.015191,
+        3.917452,
+        5.394087
       ],
       "ndcg": 1.0,
       "no_answer": false,
@@ -1176,10 +1203,12 @@
       "project": "atlas",
       "query": "Please answer: Which technology did the Atlas Ledger team choose?",
       "ranked_ids": [
-        2
+        2,
+        3
       ],
       "ranked_labels": [
-        "atlas.decision"
+        "atlas.decision",
+        "atlas.why_question"
       ],
       "recall": {
         "1": 1.0,
@@ -1187,17 +1216,14 @@
         "3": 1.0,
         "5": 1.0
       },
-      "tokens": 23
+      "tokens": 36
     },
     {
       "category": "WHY_QUESTION",
-      "dcg": 0.0,
-      "failure_classification": [
-        "lexical",
-        "ranking"
-      ],
-      "false_positive": false,
-      "first_relevant_rank": null,
+      "dcg": 3.0,
+      "failure_classification": [],
+      "false_positive": true,
+      "first_relevant_rank": 1,
       "gold_relevance": {
         "atlas.ambiguous": "irrelevant",
         "atlas.architecture": "irrelevant",
@@ -1221,45 +1247,46 @@
         "atlas.workaround": "irrelevant"
       },
       "id": "atlas.q019",
-      "irrelevant_retrieved": true,
+      "irrelevant_retrieved": false,
       "latency_ms": [
-        3.945493,
-        4.141909,
-        4.024791
+        4.831278,
+        4.559312,
+        4.476242
       ],
-      "ndcg": 0.0,
+      "ndcg": 1.0,
       "no_answer": false,
       "precision": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 0.1,
+        "3": 0.3333333333333333,
+        "5": 0.2
       },
       "project": "atlas",
       "query": "Please answer: Why did the Atlas Ledger team make its durable storage choice?",
       "ranked_ids": [
+        3,
         2
       ],
       "ranked_labels": [
+        "atlas.why_question",
         "atlas.decision"
       ],
       "recall": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 1.0,
+        "3": 1.0,
+        "5": 1.0
       },
-      "tokens": 26
+      "tokens": 39
     },
     {
       "category": "CONSTRAINT",
-      "dcg": 0,
+      "dcg": 3.0,
       "failure_classification": [
-        "lexical",
         "scope"
       ],
-      "false_positive": false,
-      "first_relevant_rank": null,
+      "false_positive": true,
+      "first_relevant_rank": 1,
       "gold_relevance": {
         "atlas.ambiguous": "irrelevant",
         "atlas.architecture": "irrelevant",
@@ -1283,31 +1310,35 @@
         "atlas.workaround": "irrelevant"
       },
       "id": "atlas.q020",
-      "irrelevant_retrieved": true,
+      "irrelevant_retrieved": false,
       "latency_ms": [
-        2.202874,
-        2.134607,
-        2.097579
+        4.430945,
+        4.306744,
+        4.172134
       ],
-      "ndcg": 0.0,
+      "ndcg": 1.0,
       "no_answer": false,
       "precision": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 0.1,
+        "3": 0.3333333333333333,
+        "5": 0.2
       },
       "project": "atlas",
       "query": "Please answer: What hard requirement governs Atlas Ledger payloads and retention?",
-      "ranked_ids": [],
-      "ranked_labels": [],
+      "ranked_ids": [
+        4
+      ],
+      "ranked_labels": [
+        "atlas.constraint"
+      ],
       "recall": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 1.0,
+        "3": 1.0,
+        "5": 1.0
       },
-      "tokens": 11
+      "tokens": 21
     },
     {
       "category": "ARCHITECTURE",
@@ -1342,9 +1373,9 @@
       "id": "atlas.q021",
       "irrelevant_retrieved": false,
       "latency_ms": [
-        3.889369,
-        4.098337,
-        3.848694
+        4.900692,
+        4.585944,
+        4.876746
       ],
       "ndcg": 1.0,
       "no_answer": false,
@@ -1357,10 +1388,12 @@
       "project": "atlas",
       "query": "Please answer: Which components define the Atlas Ledger architecture?",
       "ranked_ids": [
-        5
+        5,
+        51
       ],
       "ranked_labels": [
-        "atlas.architecture"
+        "atlas.architecture",
+        "atlas.graph"
       ],
       "recall": {
         "1": 1.0,
@@ -1368,7 +1401,7 @@
         "3": 1.0,
         "5": 1.0
       },
-      "tokens": 18
+      "tokens": 29
     },
     {
       "category": "BUG",
@@ -1401,9 +1434,9 @@
       "id": "atlas.q022",
       "irrelevant_retrieved": false,
       "latency_ms": [
-        3.788261,
-        3.912823,
-        4.281497
+        4.108522,
+        4.656701,
+        4.886154
       ],
       "ndcg": 1.0,
       "no_answer": false,
@@ -1431,13 +1464,10 @@
     },
     {
       "category": "WORKAROUND",
-      "dcg": 0,
-      "failure_classification": [
-        "lexical",
-        "ranking"
-      ],
-      "false_positive": false,
-      "first_relevant_rank": null,
+      "dcg": 15.0,
+      "failure_classification": [],
+      "false_positive": true,
+      "first_relevant_rank": 1,
       "gold_relevance": {
         "atlas.ambiguous": "irrelevant",
         "atlas.architecture": "irrelevant",
@@ -1461,41 +1491,44 @@
         "atlas.workaround": "highly_relevant"
       },
       "id": "atlas.q023",
-      "irrelevant_retrieved": true,
+      "irrelevant_retrieved": false,
       "latency_ms": [
-        2.480991,
-        2.229584,
-        1.994407
+        4.110475,
+        4.020061,
+        4.179979
       ],
-      "ndcg": 0.0,
+      "ndcg": 1.0,
       "no_answer": false,
       "precision": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 0.1,
+        "3": 0.3333333333333333,
+        "5": 0.2
       },
       "project": "atlas",
       "query": "Please answer: What is the documented workaround for the Atlas Ledger failure?",
-      "ranked_ids": [],
-      "ranked_labels": [],
+      "ranked_ids": [
+        7
+      ],
+      "ranked_labels": [
+        "atlas.workaround"
+      ],
       "recall": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 1.0,
+        "3": 1.0,
+        "5": 1.0
       },
-      "tokens": 12
+      "tokens": 28
     },
     {
       "category": "DISCOVERY",
-      "dcg": 0,
+      "dcg": 3.0,
       "failure_classification": [
-        "confidence",
-        "lexical"
+        "confidence"
       ],
-      "false_positive": false,
-      "first_relevant_rank": null,
+      "false_positive": true,
+      "first_relevant_rank": 1,
       "gold_relevance": {
         "atlas.ambiguous": "irrelevant",
         "atlas.architecture": "irrelevant",
@@ -1519,31 +1552,37 @@
         "atlas.workaround": "irrelevant"
       },
       "id": "atlas.q024",
-      "irrelevant_retrieved": true,
+      "irrelevant_retrieved": false,
       "latency_ms": [
-        2.066711,
-        2.021007,
-        2.013944
+        4.148739,
+        4.241619,
+        4.18574
       ],
-      "ndcg": 0.0,
+      "ndcg": 1.0,
       "no_answer": false,
       "precision": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 0.1,
+        "3": 0.3333333333333333,
+        "5": 0.2
       },
       "project": "atlas",
       "query": "Please answer: What did the Atlas Ledger load test actually discover?",
-      "ranked_ids": [],
-      "ranked_labels": [],
+      "ranked_ids": [
+        8,
+        50
+      ],
+      "ranked_labels": [
+        "atlas.discovery",
+        "atlas.low_confidence"
+      ],
       "recall": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 1.0,
+        "3": 1.0,
+        "5": 1.0
       },
-      "tokens": 11
+      "tokens": 32
     },
     {
       "category": "PREFERENCE",
@@ -1580,9 +1619,9 @@
       "id": "atlas.q025",
       "irrelevant_retrieved": true,
       "latency_ms": [
-        4.109548,
-        3.984486,
-        3.99752
+        4.2425,
+        4.207753,
+        4.286015
       ],
       "ndcg": 0.0,
       "no_answer": false,
@@ -1595,10 +1634,12 @@
       "project": "atlas",
       "query": "Please answer: What implementation preference does the Atlas Ledger team follow?",
       "ranked_ids": [
-        2
+        2,
+        10
       ],
       "ranked_labels": [
-        "atlas.decision"
+        "atlas.decision",
+        "atlas.code_related"
       ],
       "recall": {
         "1": 0.0,
@@ -1606,7 +1647,7 @@
         "3": 0.0,
         "5": 0.0
       },
-      "tokens": 24
+      "tokens": 34
     },
     {
       "category": "CODE_RELATED",
@@ -1639,9 +1680,9 @@
       "id": "atlas.q026",
       "irrelevant_retrieved": false,
       "latency_ms": [
-        3.978996,
-        4.0569,
-        4.164009
+        4.14427,
+        4.463147,
+        4.412409
       ],
       "ndcg": 1.0,
       "no_answer": false,
@@ -1669,14 +1710,13 @@
     },
     {
       "category": "HISTORICAL",
-      "dcg": 0.0,
+      "dcg": 0.5,
       "failure_classification": [
-        "lexical",
         "ranking",
         "temporal"
       ],
-      "false_positive": false,
-      "first_relevant_rank": null,
+      "false_positive": true,
+      "first_relevant_rank": 3,
       "gold_relevance": {
         "atlas.ambiguous": "irrelevant",
         "atlas.architecture": "irrelevant",
@@ -1700,45 +1740,49 @@
         "atlas.workaround": "irrelevant"
       },
       "id": "atlas.q027",
-      "irrelevant_retrieved": true,
+      "irrelevant_retrieved": false,
       "latency_ms": [
-        4.28252,
-        4.414865,
-        3.937779
+        4.710545,
+        4.400426,
+        4.87337
       ],
-      "ndcg": 0.0,
+      "ndcg": 0.5,
       "no_answer": false,
       "precision": {
         "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "10": 0.1,
+        "3": 0.3333333333333333,
+        "5": 0.2
       },
       "project": "atlas",
       "query": "Please answer: What did Atlas Ledger do before the current architecture?",
       "ranked_ids": [
-        5
+        12,
+        2,
+        11
       ],
       "ranked_labels": [
-        "atlas.architecture"
+        "atlas.supersession",
+        "atlas.decision",
+        "atlas.historical"
       ],
       "recall": {
         "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "10": 1.0,
+        "3": 1.0,
+        "5": 1.0
       },
-      "tokens": 20
+      "tokens": 44
     },
     {
       "category": "SUPERSESSION",
-      "dcg": 0,
+      "dcg": 12.463946303571863,
       "failure_classification": [
-        "lexical",
+        "ranking",
         "supersession"
       ],
-      "false_positive": false,
-      "first_relevant_rank": null,
+      "false_positive": true,
+      "first_relevant_rank": 1,
       "gold_relevance": {
         "atlas.ambiguous": "irrelevant",
         "atlas.architecture": "irrelevant",
@@ -1762,31 +1806,39 @@
         "atlas.workaround": "irrelevant"
       },
       "id": "atlas.q028",
-      "irrelevant_retrieved": true,
+      "irrelevant_retrieved": false,
       "latency_ms": [
-        2.422473,
-        2.2491,
-        2.17405
+        5.228746,
+        4.412419,
+        4.427768
       ],
-      "ndcg": 0.0,
+      "ndcg": 0.7378264247076021,
       "no_answer": false,
       "precision": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 0.2,
+        "3": 0.6666666666666666,
+        "5": 0.4
       },
       "project": "atlas",
       "query": "Please answer: What superseded Atlas Ledger policy should be recognized as old?",
-      "ranked_ids": [],
-      "ranked_labels": [],
+      "ranked_ids": [
+        12,
+        2,
+        11
+      ],
+      "ranked_labels": [
+        "atlas.supersession",
+        "atlas.decision",
+        "atlas.historical"
+      ],
       "recall": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 0.5,
+        "10": 1.0,
+        "3": 1.0,
+        "5": 1.0
       },
-      "tokens": 12
+      "tokens": 45
     },
     {
       "category": "CONTRADICTION",
@@ -1822,9 +1874,9 @@
       "id": "atlas.q029",
       "irrelevant_retrieved": false,
       "latency_ms": [
-        3.879039,
-        3.869922,
-        3.910238
+        4.357703,
+        3.999731,
+        3.951517
       ],
       "ndcg": 0.4692787260227565,
       "no_answer": false,
@@ -1852,12 +1904,13 @@
     },
     {
       "category": "SCOPE",
-      "dcg": 3.0,
+      "dcg": 1.5,
       "failure_classification": [
+        "ranking",
         "scope"
       ],
       "false_positive": true,
-      "first_relevant_rank": 1,
+      "first_relevant_rank": 3,
       "gold_relevance": {
         "atlas.ambiguous": "irrelevant",
         "atlas.architecture": "irrelevant",
@@ -1883,14 +1936,14 @@
       "id": "atlas.q030",
       "irrelevant_retrieved": false,
       "latency_ms": [
-        4.410468,
-        4.006246,
-        3.807166
+        4.559363,
+        6.328522,
+        4.630711
       ],
-      "ndcg": 1.0,
+      "ndcg": 0.5,
       "no_answer": false,
       "precision": {
-        "1": 1.0,
+        "1": 0.0,
         "10": 0.1,
         "3": 0.3333333333333333,
         "5": 0.2
@@ -1898,28 +1951,29 @@
       "project": "atlas",
       "query": "Please answer: Which component is excluded from the Atlas Ledger constrained release?",
       "ranked_ids": [
+        51,
+        5,
         14
       ],
       "ranked_labels": [
+        "atlas.graph",
+        "atlas.architecture",
         "atlas.scope"
       ],
       "recall": {
-        "1": 1.0,
+        "1": 0.0,
         "10": 1.0,
         "3": 1.0,
         "5": 1.0
       },
-      "tokens": 22
+      "tokens": 42
     },
     {
       "category": "AMBIGUOUS",
-      "dcg": 0,
-      "failure_classification": [
-        "lexical",
-        "noise"
-      ],
-      "false_positive": false,
-      "first_relevant_rank": null,
+      "dcg": 1.0,
+      "failure_classification": [],
+      "false_positive": true,
+      "first_relevant_rank": 1,
       "gold_relevance": {
         "atlas.ambiguous": "historical_only",
         "atlas.architecture": "irrelevant",
@@ -1943,31 +1997,35 @@
         "atlas.workaround": "irrelevant"
       },
       "id": "atlas.q031",
-      "irrelevant_retrieved": true,
+      "irrelevant_retrieved": false,
       "latency_ms": [
-        2.117606,
-        1.993355,
-        2.193758
+        4.049086,
+        4.343355,
+        4.760352
       ],
-      "ndcg": 0.0,
+      "ndcg": 1.0,
       "no_answer": false,
       "precision": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 0.1,
+        "3": 0.3333333333333333,
+        "5": 0.2
       },
       "project": "atlas",
       "query": "Please answer: What ambiguous Atlas Ledger symptom is documented?",
-      "ranked_ids": [],
-      "ranked_labels": [],
+      "ranked_ids": [
+        15
+      ],
+      "ranked_labels": [
+        "atlas.ambiguous"
+      ],
       "recall": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 1.0,
+        "3": 1.0,
+        "5": 1.0
       },
-      "tokens": 9
+      "tokens": 22
     },
     {
       "category": "IRRELEVANT",
@@ -2004,9 +2062,9 @@
       "id": "atlas.q032",
       "irrelevant_retrieved": true,
       "latency_ms": [
-        4.548785,
-        3.968165,
-        3.898987
+        4.030982,
+        4.130153,
+        4.669345
       ],
       "ndcg": 0.0,
       "no_answer": false,
@@ -2065,9 +2123,9 @@
       "id": "atlas.q033",
       "irrelevant_retrieved": false,
       "latency_ms": [
-        4.113616,
-        3.907062,
-        3.7771
+        4.041142,
+        3.765458,
+        4.262579
       ],
       "ndcg": 1.0,
       "no_answer": false,
@@ -2127,9 +2185,9 @@
       "id": "atlas.q034",
       "irrelevant_retrieved": true,
       "latency_ms": [
-        2.011599,
-        1.901785,
-        1.883712
+        2.096072,
+        2.356024,
+        2.135818
       ],
       "ndcg": 0.0,
       "no_answer": false,
@@ -2184,9 +2242,9 @@
       "id": "atlas.q035",
       "irrelevant_retrieved": false,
       "latency_ms": [
-        4.096945,
-        4.348653,
-        4.260609
+        4.613408,
+        4.735303,
+        4.09226
       ],
       "ndcg": 1.0,
       "no_answer": false,
@@ -2247,9 +2305,9 @@
       "id": "atlas.q036",
       "irrelevant_retrieved": true,
       "latency_ms": [
-        3.925886,
-        3.973395,
-        4.588158
+        3.996635,
+        4.333026,
+        4.278811
       ],
       "ndcg": 0.0,
       "no_answer": false,
@@ -2308,9 +2366,9 @@
       "id": "atlas.q037",
       "irrelevant_retrieved": true,
       "latency_ms": [
-        2.20042,
-        2.615932,
-        2.181615
+        2.325165,
+        2.236062,
+        2.288563
       ],
       "ndcg": 1.0,
       "no_answer": true,
@@ -2363,9 +2421,9 @@
       "id": "atlas.q038",
       "irrelevant_retrieved": true,
       "latency_ms": [
-        2.063545,
-        2.040042,
-        2.013573
+        2.29693,
+        2.236332,
+        2.235231
       ],
       "ndcg": 1.0,
       "no_answer": true,
@@ -2418,9 +2476,9 @@
       "id": "atlas.q039",
       "irrelevant_retrieved": true,
       "latency_ms": [
-        2.039381,
-        2.021648,
-        2.024142
+        2.151118,
+        2.150587,
+        2.207497
       ],
       "ndcg": 1.0,
       "no_answer": true,
@@ -2473,9 +2531,9 @@
       "id": "atlas.q040",
       "irrelevant_retrieved": true,
       "latency_ms": [
-        2.134538,
-        2.037747,
-        2.011619
+        2.915295,
+        2.330505,
+        2.660793
       ],
       "ndcg": 1.0,
       "no_answer": true,
@@ -2499,13 +2557,10 @@
     },
     {
       "category": "DIRECT_FACT",
-      "dcg": 0,
-      "failure_classification": [
-        "lexical",
-        "type"
-      ],
-      "false_positive": false,
-      "first_relevant_rank": null,
+      "dcg": 3.0,
+      "failure_classification": [],
+      "false_positive": true,
+      "first_relevant_rank": 1,
       "gold_relevance": {
         "beacon.ambiguous": "irrelevant",
         "beacon.architecture": "irrelevant",
@@ -2529,31 +2584,35 @@
         "beacon.workaround": "irrelevant"
       },
       "id": "beacon.q041",
-      "irrelevant_retrieved": true,
+      "irrelevant_retrieved": false,
       "latency_ms": [
-        1.818069,
-        1.762566,
-        1.785689
+        3.85395,
+        3.994231,
+        4.075528
       ],
-      "ndcg": 0.0,
+      "ndcg": 1.0,
       "no_answer": false,
       "precision": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 0.1,
+        "3": 0.3333333333333333,
+        "5": 0.2
       },
       "project": "beacon",
       "query": "What is stored in the Beacon Router journal?",
-      "ranked_ids": [],
-      "ranked_labels": [],
+      "ranked_ids": [
+        17
+      ],
+      "ranked_labels": [
+        "beacon.direct_fact"
+      ],
       "recall": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 1.0,
+        "3": 1.0,
+        "5": 1.0
       },
-      "tokens": 8
+      "tokens": 18
     },
     {
       "category": "DECISION",
@@ -2586,9 +2645,9 @@
       "id": "beacon.q042",
       "irrelevant_retrieved": false,
       "latency_ms": [
-        3.854373,
-        4.155584,
-        3.979095
+        4.331071,
+        4.303959,
+        4.216329
       ],
       "ndcg": 1.0,
       "no_answer": false,
@@ -2618,13 +2677,10 @@
     },
     {
       "category": "WHY_QUESTION",
-      "dcg": 0.0,
-      "failure_classification": [
-        "lexical",
-        "ranking"
-      ],
-      "false_positive": false,
-      "first_relevant_rank": null,
+      "dcg": 3.0,
+      "failure_classification": [],
+      "false_positive": true,
+      "first_relevant_rank": 1,
       "gold_relevance": {
         "beacon.ambiguous": "irrelevant",
         "beacon.architecture": "irrelevant",
@@ -2648,46 +2704,46 @@
         "beacon.workaround": "irrelevant"
       },
       "id": "beacon.q043",
-      "irrelevant_retrieved": true,
+      "irrelevant_retrieved": false,
       "latency_ms": [
-        4.026163,
-        4.873178,
-        4.109117
+        4.280975,
+        4.29937,
+        4.901103
       ],
-      "ndcg": 0.0,
+      "ndcg": 1.0,
       "no_answer": false,
       "precision": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 0.1,
+        "3": 0.3333333333333333,
+        "5": 0.2
       },
       "project": "beacon",
       "query": "Why did the Beacon Router team make its durable storage choice?",
       "ranked_ids": [
+        19,
         18
       ],
       "ranked_labels": [
+        "beacon.why_question",
         "beacon.decision"
       ],
       "recall": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 1.0,
+        "3": 1.0,
+        "5": 1.0
       },
-      "tokens": 23
+      "tokens": 33
     },
     {
       "category": "CONSTRAINT",
-      "dcg": 0.0,
+      "dcg": 3.0,
       "failure_classification": [
-        "lexical",
-        "ranking",
         "scope"
       ],
-      "false_positive": false,
-      "first_relevant_rank": null,
+      "false_positive": true,
+      "first_relevant_rank": 1,
       "gold_relevance": {
         "beacon.ambiguous": "irrelevant",
         "beacon.architecture": "irrelevant",
@@ -2711,35 +2767,37 @@
         "beacon.workaround": "irrelevant"
       },
       "id": "beacon.q044",
-      "irrelevant_retrieved": true,
+      "irrelevant_retrieved": false,
       "latency_ms": [
-        3.877377,
-        7.014898,
-        4.811002
+        4.810208,
+        4.210218,
+        4.101417
       ],
-      "ndcg": 0.0,
+      "ndcg": 1.0,
       "no_answer": false,
       "precision": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 0.1,
+        "3": 0.3333333333333333,
+        "5": 0.2
       },
       "project": "beacon",
       "query": "What hard requirement governs Beacon Router payloads and retention?",
       "ranked_ids": [
+        20,
         18
       ],
       "ranked_labels": [
+        "beacon.constraint",
         "beacon.decision"
       ],
       "recall": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 1.0,
+        "3": 1.0,
+        "5": 1.0
       },
-      "tokens": 21
+      "tokens": 29
     },
     {
       "category": "ARCHITECTURE",
@@ -2774,9 +2832,9 @@
       "id": "beacon.q045",
       "irrelevant_retrieved": false,
       "latency_ms": [
-        4.170692,
-        3.818838,
-        3.672516
+        4.336783,
+        4.327374,
+        4.210338
       ],
       "ndcg": 1.0,
       "no_answer": false,
@@ -2789,10 +2847,12 @@
       "project": "beacon",
       "query": "Which components define the Beacon Router architecture?",
       "ranked_ids": [
-        21
+        21,
+        55
       ],
       "ranked_labels": [
-        "beacon.architecture"
+        "beacon.architecture",
+        "beacon.graph"
       ],
       "recall": {
         "1": 1.0,
@@ -2800,18 +2860,16 @@
         "3": 1.0,
         "5": 1.0
       },
-      "tokens": 17
+      "tokens": 28
     },
     {
       "category": "BUG",
-      "dcg": 0.0,
+      "dcg": 1.8927892607143724,
       "failure_classification": [
-        "lexical",
-        "ranking",
-        "type"
+        "ranking"
       ],
-      "false_positive": false,
-      "first_relevant_rank": null,
+      "false_positive": true,
+      "first_relevant_rank": 2,
       "gold_relevance": {
         "beacon.ambiguous": "irrelevant",
         "beacon.architecture": "irrelevant",
@@ -2835,45 +2893,44 @@
         "beacon.workaround": "irrelevant"
       },
       "id": "beacon.q046",
-      "irrelevant_retrieved": true,
+      "irrelevant_retrieved": false,
       "latency_ms": [
-        3.939803,
-        3.704625,
-        3.918302
+        4.155923,
+        4.026302,
+        4.275724
       ],
-      "ndcg": 0.0,
+      "ndcg": 0.6309297535714574,
       "no_answer": false,
       "precision": {
         "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "10": 0.1,
+        "3": 0.3333333333333333,
+        "5": 0.2
       },
       "project": "beacon",
       "query": "Which failure affected the Beacon Router production system?",
       "ranked_ids": [
-        53
+        53,
+        22
       ],
       "ranked_labels": [
-        "beacon.important"
+        "beacon.important",
+        "beacon.bug"
       ],
       "recall": {
         "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "10": 1.0,
+        "3": 1.0,
+        "5": 1.0
       },
-      "tokens": 18
+      "tokens": 28
     },
     {
       "category": "WORKAROUND",
-      "dcg": 0,
-      "failure_classification": [
-        "lexical",
-        "ranking"
-      ],
-      "false_positive": false,
-      "first_relevant_rank": null,
+      "dcg": 15.0,
+      "failure_classification": [],
+      "false_positive": true,
+      "first_relevant_rank": 1,
       "gold_relevance": {
         "beacon.ambiguous": "irrelevant",
         "beacon.architecture": "irrelevant",
@@ -2897,31 +2954,35 @@
         "beacon.workaround": "highly_relevant"
       },
       "id": "beacon.q047",
-      "irrelevant_retrieved": true,
+      "irrelevant_retrieved": false,
       "latency_ms": [
-        2.563986,
-        2.078263,
-        2.318259
+        3.94741,
+        4.688432,
+        4.424923
       ],
-      "ndcg": 0.0,
+      "ndcg": 1.0,
       "no_answer": false,
       "precision": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 0.1,
+        "3": 0.3333333333333333,
+        "5": 0.2
       },
       "project": "beacon",
       "query": "What is the documented workaround for the Beacon Router failure?",
-      "ranked_ids": [],
-      "ranked_labels": [],
+      "ranked_ids": [
+        23
+      ],
+      "ranked_labels": [
+        "beacon.workaround"
+      ],
       "recall": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 1.0,
+        "3": 1.0,
+        "5": 1.0
       },
-      "tokens": 10
+      "tokens": 23
     },
     {
       "category": "DISCOVERY",
@@ -2956,9 +3017,9 @@
       "id": "beacon.q048",
       "irrelevant_retrieved": false,
       "latency_ms": [
-        3.872828,
-        3.858833,
-        3.917441
+        4.533173,
+        4.884682,
+        4.150162
       ],
       "ndcg": 1.0,
       "no_answer": false,
@@ -2971,10 +3032,12 @@
       "project": "beacon",
       "query": "What did the Beacon Router load test actually discover?",
       "ranked_ids": [
-        24
+        24,
+        54
       ],
       "ranked_labels": [
-        "beacon.discovery"
+        "beacon.discovery",
+        "beacon.low_confidence"
       ],
       "recall": {
         "1": 1.0,
@@ -2982,7 +3045,7 @@
         "3": 1.0,
         "5": 1.0
       },
-      "tokens": 20
+      "tokens": 32
     },
     {
       "category": "PREFERENCE",
@@ -3019,9 +3082,9 @@
       "id": "beacon.q049",
       "irrelevant_retrieved": true,
       "latency_ms": [
-        3.804992,
-        3.934894,
-        3.793591
+        4.09206,
+        4.782003,
+        5.091241
       ],
       "ndcg": 0.0,
       "no_answer": false,
@@ -3034,10 +3097,12 @@
       "project": "beacon",
       "query": "What implementation preference does the Beacon Router team follow?",
       "ranked_ids": [
-        18
+        18,
+        26
       ],
       "ranked_labels": [
-        "beacon.decision"
+        "beacon.decision",
+        "beacon.code_related"
       ],
       "recall": {
         "1": 0.0,
@@ -3045,17 +3110,14 @@
         "3": 0.0,
         "5": 0.0
       },
-      "tokens": 21
+      "tokens": 29
     },
     {
       "category": "CODE_RELATED",
-      "dcg": 0,
-      "failure_classification": [
-        "lexical",
-        "type"
-      ],
-      "false_positive": false,
-      "first_relevant_rank": null,
+      "dcg": 3.0,
+      "failure_classification": [],
+      "false_positive": true,
+      "first_relevant_rank": 1,
       "gold_relevance": {
         "beacon.ambiguous": "irrelevant",
         "beacon.architecture": "irrelevant",
@@ -3079,42 +3141,45 @@
         "beacon.workaround": "irrelevant"
       },
       "id": "beacon.q050",
-      "irrelevant_retrieved": true,
+      "irrelevant_retrieved": false,
       "latency_ms": [
-        2.15232,
-        2.040833,
-        1.977626
+        5.68574,
+        4.385868,
+        4.387701
       ],
-      "ndcg": 0.0,
+      "ndcg": 1.0,
       "no_answer": false,
       "precision": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 0.1,
+        "3": 0.3333333333333333,
+        "5": 0.2
       },
       "project": "beacon",
       "query": "Which file implements the central Beacon Router processing path?",
-      "ranked_ids": [],
-      "ranked_labels": [],
+      "ranked_ids": [
+        26
+      ],
+      "ranked_labels": [
+        "beacon.code_related"
+      ],
       "recall": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 1.0,
+        "3": 1.0,
+        "5": 1.0
       },
-      "tokens": 9
+      "tokens": 17
     },
     {
       "category": "HISTORICAL",
-      "dcg": 0.0,
+      "dcg": 0.5,
       "failure_classification": [
-        "lexical",
         "ranking",
         "temporal"
       ],
-      "false_positive": false,
-      "first_relevant_rank": null,
+      "false_positive": true,
+      "first_relevant_rank": 3,
       "gold_relevance": {
         "beacon.ambiguous": "irrelevant",
         "beacon.architecture": "irrelevant",
@@ -3138,46 +3203,49 @@
         "beacon.workaround": "irrelevant"
       },
       "id": "beacon.q051",
-      "irrelevant_retrieved": true,
+      "irrelevant_retrieved": false,
       "latency_ms": [
-        3.683176,
-        3.708673,
-        3.64226
+        4.287076,
+        4.210789,
+        4.784378
       ],
-      "ndcg": 0.0,
+      "ndcg": 0.5,
       "no_answer": false,
       "precision": {
         "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "10": 0.1,
+        "3": 0.3333333333333333,
+        "5": 0.2
       },
       "project": "beacon",
       "query": "What did Beacon Router do before the current architecture?",
       "ranked_ids": [
-        21
+        28,
+        18,
+        27
       ],
       "ranked_labels": [
-        "beacon.architecture"
+        "beacon.supersession",
+        "beacon.decision",
+        "beacon.historical"
       ],
       "recall": {
         "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "10": 1.0,
+        "3": 1.0,
+        "5": 1.0
       },
-      "tokens": 19
+      "tokens": 38
     },
     {
       "category": "SUPERSESSION",
-      "dcg": 0.0,
+      "dcg": 12.463946303571863,
       "failure_classification": [
-        "lexical",
         "ranking",
         "supersession"
       ],
-      "false_positive": false,
-      "first_relevant_rank": null,
+      "false_positive": true,
+      "first_relevant_rank": 1,
       "gold_relevance": {
         "beacon.ambiguous": "irrelevant",
         "beacon.architecture": "irrelevant",
@@ -3201,41 +3269,39 @@
         "beacon.workaround": "irrelevant"
       },
       "id": "beacon.q052",
-      "irrelevant_retrieved": true,
+      "irrelevant_retrieved": false,
       "latency_ms": [
-        5.152206,
-        4.905187,
-        4.830327
+        4.749891,
+        5.096731,
+        5.033049
       ],
-      "ndcg": 0.0,
+      "ndcg": 0.7378264247076021,
       "no_answer": false,
       "precision": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 0.2,
+        "3": 0.6666666666666666,
+        "5": 0.4
       },
       "project": "beacon",
       "query": "What superseded Beacon Router policy should be recognized as old?",
       "ranked_ids": [
-        55,
-        26,
-        24,
-        21
+        28,
+        18,
+        27
       ],
       "ranked_labels": [
-        "beacon.graph",
-        "beacon.code_related",
-        "beacon.discovery",
-        "beacon.architecture"
+        "beacon.supersession",
+        "beacon.decision",
+        "beacon.historical"
       ],
       "recall": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 0.5,
+        "10": 1.0,
+        "3": 1.0,
+        "5": 1.0
       },
-      "tokens": 50
+      "tokens": 39
     },
     {
       "category": "CONTRADICTION",
@@ -3271,9 +3337,9 @@
       "id": "beacon.q053",
       "irrelevant_retrieved": false,
       "latency_ms": [
-        3.876495,
-        3.806885,
-        3.882395
+        4.182384,
+        4.015322,
+        4.135343
       ],
       "ndcg": 0.4692787260227565,
       "no_answer": false,
@@ -3303,9 +3369,10 @@
     },
     {
       "category": "SCOPE",
-      "dcg": 0,
+      "dcg": 0.0,
       "failure_classification": [
         "lexical",
+        "ranking",
         "scope"
       ],
       "false_positive": false,
@@ -3335,9 +3402,9 @@
       "id": "beacon.q054",
       "irrelevant_retrieved": true,
       "latency_ms": [
-        2.098921,
-        1.95298,
-        2.00161
+        4.267238,
+        4.391829,
+        5.244207
       ],
       "ndcg": 0.0,
       "no_answer": false,
@@ -3349,25 +3416,28 @@
       },
       "project": "beacon",
       "query": "Which component is excluded from the Beacon Router constrained release?",
-      "ranked_ids": [],
-      "ranked_labels": [],
+      "ranked_ids": [
+        55,
+        21
+      ],
+      "ranked_labels": [
+        "beacon.graph",
+        "beacon.architecture"
+      ],
       "recall": {
         "1": 0.0,
         "10": 0.0,
         "3": 0.0,
         "5": 0.0
       },
-      "tokens": 10
+      "tokens": 31
     },
     {
       "category": "AMBIGUOUS",
-      "dcg": 0,
-      "failure_classification": [
-        "lexical",
-        "noise"
-      ],
-      "false_positive": false,
-      "first_relevant_rank": null,
+      "dcg": 1.0,
+      "failure_classification": [],
+      "false_positive": true,
+      "first_relevant_rank": 1,
       "gold_relevance": {
         "beacon.ambiguous": "historical_only",
         "beacon.architecture": "irrelevant",
@@ -3391,31 +3461,35 @@
         "beacon.workaround": "irrelevant"
       },
       "id": "beacon.q055",
-      "irrelevant_retrieved": true,
+      "irrelevant_retrieved": false,
       "latency_ms": [
-        1.911262,
-        1.857673,
-        1.89384
+        4.700355,
+        4.545406,
+        4.16957
       ],
-      "ndcg": 0.0,
+      "ndcg": 1.0,
       "no_answer": false,
       "precision": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 0.1,
+        "3": 0.3333333333333333,
+        "5": 0.2
       },
       "project": "beacon",
       "query": "What ambiguous Beacon Router symptom is documented?",
-      "ranked_ids": [],
-      "ranked_labels": [],
+      "ranked_ids": [
+        31
+      ],
+      "ranked_labels": [
+        "beacon.ambiguous"
+      ],
       "recall": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 1.0,
+        "3": 1.0,
+        "5": 1.0
       },
-      "tokens": 7
+      "tokens": 18
     },
     {
       "category": "IRRELEVANT",
@@ -3451,9 +3525,9 @@
       "id": "beacon.q056",
       "irrelevant_retrieved": true,
       "latency_ms": [
-        2.006339,
-        1.901875,
-        1.908317
+        2.619423,
+        2.63815,
+        2.378197
       ],
       "ndcg": 0.0,
       "no_answer": false,
@@ -3477,13 +3551,10 @@
     },
     {
       "category": "DIRECT_FACT",
-      "dcg": 0,
-      "failure_classification": [
-        "lexical",
-        "type"
-      ],
-      "false_positive": false,
-      "first_relevant_rank": null,
+      "dcg": 3.0,
+      "failure_classification": [],
+      "false_positive": true,
+      "first_relevant_rank": 1,
       "gold_relevance": {
         "beacon.ambiguous": "irrelevant",
         "beacon.architecture": "irrelevant",
@@ -3507,31 +3578,35 @@
         "beacon.workaround": "irrelevant"
       },
       "id": "beacon.q057",
-      "irrelevant_retrieved": true,
+      "irrelevant_retrieved": false,
       "latency_ms": [
-        1.992373,
-        1.989769,
-        1.911413
+        4.064396,
+        4.09222,
+        4.239304
       ],
-      "ndcg": 0.0,
+      "ndcg": 1.0,
       "no_answer": false,
       "precision": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 0.1,
+        "3": 0.3333333333333333,
+        "5": 0.2
       },
       "project": "beacon",
       "query": "Please answer: What is stored in the Beacon Router journal?",
-      "ranked_ids": [],
-      "ranked_labels": [],
+      "ranked_ids": [
+        17
+      ],
+      "ranked_labels": [
+        "beacon.direct_fact"
+      ],
       "recall": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 1.0,
+        "3": 1.0,
+        "5": 1.0
       },
-      "tokens": 10
+      "tokens": 20
     },
     {
       "category": "DECISION",
@@ -3564,9 +3639,9 @@
       "id": "beacon.q058",
       "irrelevant_retrieved": false,
       "latency_ms": [
-        5.402501,
-        4.22882,
-        4.558563
+        4.25822,
+        4.379997,
+        8.42755
       ],
       "ndcg": 1.0,
       "no_answer": false,
@@ -3596,13 +3671,10 @@
     },
     {
       "category": "WHY_QUESTION",
-      "dcg": 0.0,
-      "failure_classification": [
-        "lexical",
-        "ranking"
-      ],
-      "false_positive": false,
-      "first_relevant_rank": null,
+      "dcg": 3.0,
+      "failure_classification": [],
+      "false_positive": true,
+      "first_relevant_rank": 1,
       "gold_relevance": {
         "beacon.ambiguous": "irrelevant",
         "beacon.architecture": "irrelevant",
@@ -3626,46 +3698,46 @@
         "beacon.workaround": "irrelevant"
       },
       "id": "beacon.q059",
-      "irrelevant_retrieved": true,
+      "irrelevant_retrieved": false,
       "latency_ms": [
-        3.964358,
-        3.787089,
-        4.042453
+        10.104671,
+        4.306154,
+        4.360499
       ],
-      "ndcg": 0.0,
+      "ndcg": 1.0,
       "no_answer": false,
       "precision": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 0.1,
+        "3": 0.3333333333333333,
+        "5": 0.2
       },
       "project": "beacon",
       "query": "Please answer: Why did the Beacon Router team make its durable storage choice?",
       "ranked_ids": [
+        19,
         18
       ],
       "ranked_labels": [
+        "beacon.why_question",
         "beacon.decision"
       ],
       "recall": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 1.0,
+        "3": 1.0,
+        "5": 1.0
       },
-      "tokens": 25
+      "tokens": 35
     },
     {
       "category": "CONSTRAINT",
-      "dcg": 0.0,
+      "dcg": 3.0,
       "failure_classification": [
-        "lexical",
-        "ranking",
         "scope"
       ],
-      "false_positive": false,
-      "first_relevant_rank": null,
+      "false_positive": true,
+      "first_relevant_rank": 1,
       "gold_relevance": {
         "beacon.ambiguous": "irrelevant",
         "beacon.architecture": "irrelevant",
@@ -3689,35 +3761,37 @@
         "beacon.workaround": "irrelevant"
       },
       "id": "beacon.q060",
-      "irrelevant_retrieved": true,
+      "irrelevant_retrieved": false,
       "latency_ms": [
-        4.283601,
-        4.49271,
-        4.768714
+        4.306244,
+        4.142187,
+        4.299731
       ],
-      "ndcg": 0.0,
+      "ndcg": 1.0,
       "no_answer": false,
       "precision": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 0.1,
+        "3": 0.3333333333333333,
+        "5": 0.2
       },
       "project": "beacon",
       "query": "Please answer: What hard requirement governs Beacon Router payloads and retention?",
       "ranked_ids": [
+        20,
         18
       ],
       "ranked_labels": [
+        "beacon.constraint",
         "beacon.decision"
       ],
       "recall": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 1.0,
+        "3": 1.0,
+        "5": 1.0
       },
-      "tokens": 23
+      "tokens": 31
     },
     {
       "category": "ARCHITECTURE",
@@ -3752,9 +3826,9 @@
       "id": "beacon.q061",
       "irrelevant_retrieved": false,
       "latency_ms": [
-        4.994754,
-        4.636758,
-        4.284584
+        4.145573,
+        4.216921,
+        4.209346
       ],
       "ndcg": 1.0,
       "no_answer": false,
@@ -3767,10 +3841,12 @@
       "project": "beacon",
       "query": "Please answer: Which components define the Beacon Router architecture?",
       "ranked_ids": [
-        21
+        21,
+        55
       ],
       "ranked_labels": [
-        "beacon.architecture"
+        "beacon.architecture",
+        "beacon.graph"
       ],
       "recall": {
         "1": 1.0,
@@ -3778,18 +3854,14 @@
         "3": 1.0,
         "5": 1.0
       },
-      "tokens": 19
+      "tokens": 30
     },
     {
       "category": "BUG",
-      "dcg": 0.0,
-      "failure_classification": [
-        "lexical",
-        "ranking",
-        "type"
-      ],
-      "false_positive": false,
-      "first_relevant_rank": null,
+      "dcg": 3.0,
+      "failure_classification": [],
+      "false_positive": true,
+      "first_relevant_rank": 1,
       "gold_relevance": {
         "beacon.ambiguous": "irrelevant",
         "beacon.architecture": "irrelevant",
@@ -3813,45 +3885,44 @@
         "beacon.workaround": "irrelevant"
       },
       "id": "beacon.q062",
-      "irrelevant_retrieved": true,
+      "irrelevant_retrieved": false,
       "latency_ms": [
-        4.400388,
-        4.509892,
-        4.695767
+        4.132398,
+        5.057946,
+        5.173079
       ],
-      "ndcg": 0.0,
+      "ndcg": 1.0,
       "no_answer": false,
       "precision": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 0.1,
+        "3": 0.3333333333333333,
+        "5": 0.2
       },
       "project": "beacon",
       "query": "Please answer: Which failure affected the Beacon Router production system?",
       "ranked_ids": [
+        22,
         53
       ],
       "ranked_labels": [
+        "beacon.bug",
         "beacon.important"
       ],
       "recall": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 1.0,
+        "3": 1.0,
+        "5": 1.0
       },
-      "tokens": 20
+      "tokens": 30
     },
     {
       "category": "WORKAROUND",
-      "dcg": 0,
-      "failure_classification": [
-        "lexical",
-        "ranking"
-      ],
-      "false_positive": false,
-      "first_relevant_rank": null,
+      "dcg": 15.0,
+      "failure_classification": [],
+      "false_positive": true,
+      "first_relevant_rank": 1,
       "gold_relevance": {
         "beacon.ambiguous": "irrelevant",
         "beacon.architecture": "irrelevant",
@@ -3875,31 +3946,35 @@
         "beacon.workaround": "highly_relevant"
       },
       "id": "beacon.q063",
-      "irrelevant_retrieved": true,
+      "irrelevant_retrieved": false,
       "latency_ms": [
-        2.242668,
-        2.154444,
-        2.075859
+        4.007777,
+        4.042644,
+        4.006795
       ],
-      "ndcg": 0.0,
+      "ndcg": 1.0,
       "no_answer": false,
       "precision": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 0.1,
+        "3": 0.3333333333333333,
+        "5": 0.2
       },
       "project": "beacon",
       "query": "Please answer: What is the documented workaround for the Beacon Router failure?",
-      "ranked_ids": [],
-      "ranked_labels": [],
+      "ranked_ids": [
+        23
+      ],
+      "ranked_labels": [
+        "beacon.workaround"
+      ],
       "recall": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 1.0,
+        "3": 1.0,
+        "5": 1.0
       },
-      "tokens": 12
+      "tokens": 25
     },
     {
       "category": "DISCOVERY",
@@ -3934,9 +4009,9 @@
       "id": "beacon.q064",
       "irrelevant_retrieved": false,
       "latency_ms": [
-        3.837612,
-        4.203252,
-        3.982412
+        4.148989,
+        4.312646,
+        4.170993
       ],
       "ndcg": 1.0,
       "no_answer": false,
@@ -3949,10 +4024,12 @@
       "project": "beacon",
       "query": "Please answer: What did the Beacon Router load test actually discover?",
       "ranked_ids": [
-        24
+        24,
+        54
       ],
       "ranked_labels": [
-        "beacon.discovery"
+        "beacon.discovery",
+        "beacon.low_confidence"
       ],
       "recall": {
         "1": 1.0,
@@ -3960,7 +4037,7 @@
         "3": 1.0,
         "5": 1.0
       },
-      "tokens": 22
+      "tokens": 34
     },
     {
       "category": "PREFERENCE",
@@ -3997,9 +4074,9 @@
       "id": "beacon.q065",
       "irrelevant_retrieved": true,
       "latency_ms": [
-        3.899147,
-        4.027666,
-        3.877617
+        4.265725,
+        4.453067,
+        4.338616
       ],
       "ndcg": 0.0,
       "no_answer": false,
@@ -4012,10 +4089,12 @@
       "project": "beacon",
       "query": "Please answer: What implementation preference does the Beacon Router team follow?",
       "ranked_ids": [
-        18
+        18,
+        26
       ],
       "ranked_labels": [
-        "beacon.decision"
+        "beacon.decision",
+        "beacon.code_related"
       ],
       "recall": {
         "1": 0.0,
@@ -4023,17 +4102,14 @@
         "3": 0.0,
         "5": 0.0
       },
-      "tokens": 23
+      "tokens": 31
     },
     {
       "category": "CODE_RELATED",
-      "dcg": 0,
-      "failure_classification": [
-        "lexical",
-        "type"
-      ],
-      "false_positive": false,
-      "first_relevant_rank": null,
+      "dcg": 3.0,
+      "failure_classification": [],
+      "false_positive": true,
+      "first_relevant_rank": 1,
       "gold_relevance": {
         "beacon.ambiguous": "irrelevant",
         "beacon.architecture": "irrelevant",
@@ -4057,42 +4133,45 @@
         "beacon.workaround": "irrelevant"
       },
       "id": "beacon.q066",
-      "irrelevant_retrieved": true,
+      "irrelevant_retrieved": false,
       "latency_ms": [
-        2.314632,
-        2.116263,
-        2.091017
+        4.824145,
+        5.708864,
+        4.412279
       ],
-      "ndcg": 0.0,
+      "ndcg": 1.0,
       "no_answer": false,
       "precision": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 0.1,
+        "3": 0.3333333333333333,
+        "5": 0.2
       },
       "project": "beacon",
       "query": "Please answer: Which file implements the central Beacon Router processing path?",
-      "ranked_ids": [],
-      "ranked_labels": [],
+      "ranked_ids": [
+        26
+      ],
+      "ranked_labels": [
+        "beacon.code_related"
+      ],
       "recall": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 1.0,
+        "3": 1.0,
+        "5": 1.0
       },
-      "tokens": 11
+      "tokens": 19
     },
     {
       "category": "HISTORICAL",
-      "dcg": 0.0,
+      "dcg": 0.5,
       "failure_classification": [
-        "lexical",
         "ranking",
         "temporal"
       ],
-      "false_positive": false,
-      "first_relevant_rank": null,
+      "false_positive": true,
+      "first_relevant_rank": 3,
       "gold_relevance": {
         "beacon.ambiguous": "irrelevant",
         "beacon.architecture": "irrelevant",
@@ -4116,46 +4195,49 @@
         "beacon.workaround": "irrelevant"
       },
       "id": "beacon.q067",
-      "irrelevant_retrieved": true,
+      "irrelevant_retrieved": false,
       "latency_ms": [
-        4.318516,
-        3.951695,
-        4.425455
+        4.20086,
+        4.197623,
+        4.060499
       ],
-      "ndcg": 0.0,
+      "ndcg": 0.5,
       "no_answer": false,
       "precision": {
         "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "10": 0.1,
+        "3": 0.3333333333333333,
+        "5": 0.2
       },
       "project": "beacon",
       "query": "Please answer: What did Beacon Router do before the current architecture?",
       "ranked_ids": [
-        21
+        28,
+        18,
+        27
       ],
       "ranked_labels": [
-        "beacon.architecture"
+        "beacon.supersession",
+        "beacon.decision",
+        "beacon.historical"
       ],
       "recall": {
         "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "10": 1.0,
+        "3": 1.0,
+        "5": 1.0
       },
-      "tokens": 21
+      "tokens": 40
     },
     {
       "category": "SUPERSESSION",
-      "dcg": 0.0,
+      "dcg": 12.463946303571863,
       "failure_classification": [
-        "lexical",
         "ranking",
         "supersession"
       ],
-      "false_positive": false,
-      "first_relevant_rank": null,
+      "false_positive": true,
+      "first_relevant_rank": 1,
       "gold_relevance": {
         "beacon.ambiguous": "irrelevant",
         "beacon.architecture": "irrelevant",
@@ -4179,41 +4261,39 @@
         "beacon.workaround": "irrelevant"
       },
       "id": "beacon.q068",
-      "irrelevant_retrieved": true,
+      "irrelevant_retrieved": false,
       "latency_ms": [
-        4.347781,
-        6.087936,
-        4.798799
+        4.356069,
+        4.230647,
+        4.13899
       ],
-      "ndcg": 0.0,
+      "ndcg": 0.7378264247076021,
       "no_answer": false,
       "precision": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 0.2,
+        "3": 0.6666666666666666,
+        "5": 0.4
       },
       "project": "beacon",
       "query": "Please answer: What superseded Beacon Router policy should be recognized as old?",
       "ranked_ids": [
-        55,
-        26,
-        24,
-        21
+        28,
+        18,
+        27
       ],
       "ranked_labels": [
-        "beacon.graph",
-        "beacon.code_related",
-        "beacon.discovery",
-        "beacon.architecture"
+        "beacon.supersession",
+        "beacon.decision",
+        "beacon.historical"
       ],
       "recall": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 0.5,
+        "10": 1.0,
+        "3": 1.0,
+        "5": 1.0
       },
-      "tokens": 52
+      "tokens": 41
     },
     {
       "category": "CONTRADICTION",
@@ -4249,9 +4329,9 @@
       "id": "beacon.q069",
       "irrelevant_retrieved": false,
       "latency_ms": [
-        3.956934,
-        4.001717,
-        4.1859
+        4.981939,
+        5.037757,
+        4.372581
       ],
       "ndcg": 0.4692787260227565,
       "no_answer": false,
@@ -4281,9 +4361,10 @@
     },
     {
       "category": "SCOPE",
-      "dcg": 0,
+      "dcg": 0.0,
       "failure_classification": [
         "lexical",
+        "ranking",
         "scope"
       ],
       "false_positive": false,
@@ -4313,9 +4394,9 @@
       "id": "beacon.q070",
       "irrelevant_retrieved": true,
       "latency_ms": [
-        2.251555,
-        2.127434,
-        2.177316
+        4.107519,
+        4.407438,
+        4.551717
       ],
       "ndcg": 0.0,
       "no_answer": false,
@@ -4327,25 +4408,28 @@
       },
       "project": "beacon",
       "query": "Please answer: Which component is excluded from the Beacon Router constrained release?",
-      "ranked_ids": [],
-      "ranked_labels": [],
+      "ranked_ids": [
+        55,
+        21
+      ],
+      "ranked_labels": [
+        "beacon.graph",
+        "beacon.architecture"
+      ],
       "recall": {
         "1": 0.0,
         "10": 0.0,
         "3": 0.0,
         "5": 0.0
       },
-      "tokens": 12
+      "tokens": 33
     },
     {
       "category": "AMBIGUOUS",
-      "dcg": 0,
-      "failure_classification": [
-        "lexical",
-        "noise"
-      ],
-      "false_positive": false,
-      "first_relevant_rank": null,
+      "dcg": 1.0,
+      "failure_classification": [],
+      "false_positive": true,
+      "first_relevant_rank": 1,
       "gold_relevance": {
         "beacon.ambiguous": "historical_only",
         "beacon.architecture": "irrelevant",
@@ -4369,31 +4453,35 @@
         "beacon.workaround": "irrelevant"
       },
       "id": "beacon.q071",
-      "irrelevant_retrieved": true,
+      "irrelevant_retrieved": false,
       "latency_ms": [
-        2.139958,
-        2.126692,
-        2.420399
+        4.174499,
+        4.205348,
+        4.187213
       ],
-      "ndcg": 0.0,
+      "ndcg": 1.0,
       "no_answer": false,
       "precision": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 0.1,
+        "3": 0.3333333333333333,
+        "5": 0.2
       },
       "project": "beacon",
       "query": "Please answer: What ambiguous Beacon Router symptom is documented?",
-      "ranked_ids": [],
-      "ranked_labels": [],
+      "ranked_ids": [
+        31
+      ],
+      "ranked_labels": [
+        "beacon.ambiguous"
+      ],
       "recall": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 1.0,
+        "3": 1.0,
+        "5": 1.0
       },
-      "tokens": 9
+      "tokens": 20
     },
     {
       "category": "IRRELEVANT",
@@ -4429,9 +4517,9 @@
       "id": "beacon.q072",
       "irrelevant_retrieved": true,
       "latency_ms": [
-        2.154755,
-        2.579334,
-        2.18986
+        3.231976,
+        2.299755,
+        2.205323
       ],
       "ndcg": 0.0,
       "no_answer": false,
@@ -4486,9 +4574,9 @@
       "id": "beacon.q073",
       "irrelevant_retrieved": false,
       "latency_ms": [
-        3.68581,
-        3.817586,
-        4.046631
+        3.894217,
+        4.653725,
+        4.403611
       ],
       "ndcg": 1.0,
       "no_answer": false,
@@ -4548,9 +4636,9 @@
       "id": "beacon.q074",
       "irrelevant_retrieved": true,
       "latency_ms": [
-        2.05019,
-        1.962838,
-        1.909669
+        2.181286,
+        1.985328,
+        1.959107
       ],
       "ndcg": 0.0,
       "no_answer": false,
@@ -4605,9 +4693,9 @@
       "id": "beacon.q075",
       "irrelevant_retrieved": false,
       "latency_ms": [
-        3.964739,
-        4.09994,
-        4.018659
+        4.014549,
+        4.43945,
+        4.234554
       ],
       "ndcg": 1.0,
       "no_answer": false,
@@ -4670,9 +4758,9 @@
       "id": "beacon.q076",
       "irrelevant_retrieved": true,
       "latency_ms": [
-        4.128914,
-        4.021805,
-        4.652817
+        4.036221,
+        3.879138,
+        3.919225
       ],
       "ndcg": 0.0,
       "no_answer": false,
@@ -4731,9 +4819,9 @@
       "id": "beacon.q077",
       "irrelevant_retrieved": true,
       "latency_ms": [
-        2.732469,
-        2.160545,
-        2.057394
+        2.225411,
+        2.156157,
+        2.202327
       ],
       "ndcg": 1.0,
       "no_answer": true,
@@ -4786,9 +4874,9 @@
       "id": "beacon.q078",
       "irrelevant_retrieved": true,
       "latency_ms": [
-        2.059829,
-        2.008312,
-        2.039561
+        2.11084,
+        2.056966,
+        2.069751
       ],
       "ndcg": 1.0,
       "no_answer": true,
@@ -4841,9 +4929,9 @@
       "id": "beacon.q079",
       "irrelevant_retrieved": true,
       "latency_ms": [
-        2.160686,
-        2.147061,
-        2.066862
+        2.422712,
+        2.14173,
+        2.032788
       ],
       "ndcg": 1.0,
       "no_answer": true,
@@ -4896,9 +4984,9 @@
       "id": "beacon.q080",
       "irrelevant_retrieved": true,
       "latency_ms": [
-        2.038659,
-        2.012019,
-        2.003273
+        3.028313,
+        2.531663,
+        2.199151
       ],
       "ndcg": 1.0,
       "no_answer": true,
@@ -4922,13 +5010,10 @@
     },
     {
       "category": "DIRECT_FACT",
-      "dcg": 0,
-      "failure_classification": [
-        "lexical",
-        "type"
-      ],
-      "false_positive": false,
-      "first_relevant_rank": null,
+      "dcg": 3.0,
+      "failure_classification": [],
+      "false_positive": true,
+      "first_relevant_rank": 1,
       "gold_relevance": {
         "cedar.ambiguous": "irrelevant",
         "cedar.architecture": "irrelevant",
@@ -4952,31 +5037,35 @@
         "cedar.workaround": "irrelevant"
       },
       "id": "cedar.q081",
-      "irrelevant_retrieved": true,
+      "irrelevant_retrieved": false,
       "latency_ms": [
-        1.804764,
-        1.941559,
-        1.858134
+        3.763164,
+        3.74607,
+        3.960785
       ],
-      "ndcg": 0.0,
+      "ndcg": 1.0,
       "no_answer": false,
       "precision": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 0.1,
+        "3": 0.3333333333333333,
+        "5": 0.2
       },
       "project": "cedar",
       "query": "What is stored in the Cedar Scheduler journal?",
-      "ranked_ids": [],
-      "ranked_labels": [],
+      "ranked_ids": [
+        33
+      ],
+      "ranked_labels": [
+        "cedar.direct_fact"
+      ],
       "recall": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 1.0,
+        "3": 1.0,
+        "5": 1.0
       },
-      "tokens": 8
+      "tokens": 18
     },
     {
       "category": "DECISION",
@@ -5009,9 +5098,9 @@
       "id": "cedar.q082",
       "irrelevant_retrieved": false,
       "latency_ms": [
-        3.784905,
-        3.866997,
-        3.730003
+        4.253832,
+        4.890242,
+        4.978923
       ],
       "ndcg": 1.0,
       "no_answer": false,
@@ -5024,10 +5113,12 @@
       "project": "cedar",
       "query": "Which technology did the Cedar Scheduler team choose?",
       "ranked_ids": [
-        34
+        34,
+        35
       ],
       "ranked_labels": [
-        "cedar.decision"
+        "cedar.decision",
+        "cedar.why_question"
       ],
       "recall": {
         "1": 1.0,
@@ -5035,17 +5126,14 @@
         "3": 1.0,
         "5": 1.0
       },
-      "tokens": 19
+      "tokens": 31
     },
     {
       "category": "WHY_QUESTION",
-      "dcg": 0.0,
-      "failure_classification": [
-        "lexical",
-        "ranking"
-      ],
-      "false_positive": false,
-      "first_relevant_rank": null,
+      "dcg": 3.0,
+      "failure_classification": [],
+      "false_positive": true,
+      "first_relevant_rank": 1,
       "gold_relevance": {
         "cedar.ambiguous": "irrelevant",
         "cedar.architecture": "irrelevant",
@@ -5069,43 +5157,45 @@
         "cedar.workaround": "irrelevant"
       },
       "id": "cedar.q083",
-      "irrelevant_retrieved": true,
+      "irrelevant_retrieved": false,
       "latency_ms": [
-        5.588327,
-        4.579211,
-        4.54065
+        5.632607,
+        11.406286,
+        4.849022
       ],
-      "ndcg": 0.0,
+      "ndcg": 1.0,
       "no_answer": false,
       "precision": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 0.1,
+        "3": 0.3333333333333333,
+        "5": 0.2
       },
       "project": "cedar",
       "query": "Why did the Cedar Scheduler team make its durable storage choice?",
       "ranked_ids": [
-        34,
+        35,
         40,
         33,
         37,
+        34,
         58
       ],
       "ranked_labels": [
-        "cedar.decision",
+        "cedar.why_question",
         "cedar.discovery",
         "cedar.direct_fact",
         "cedar.architecture",
+        "cedar.decision",
         "cedar.low_confidence"
       ],
       "recall": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 1.0,
+        "3": 1.0,
+        "5": 1.0
       },
-      "tokens": 62
+      "tokens": 74
     },
     {
       "category": "CONSTRAINT",
@@ -5140,9 +5230,9 @@
       "id": "cedar.q084",
       "irrelevant_retrieved": false,
       "latency_ms": [
-        4.141127,
-        4.137951,
-        3.995206
+        4.246608,
+        4.15973,
+        4.343656
       ],
       "ndcg": 1.0,
       "no_answer": false,
@@ -5201,9 +5291,9 @@
       "id": "cedar.q085",
       "irrelevant_retrieved": false,
       "latency_ms": [
-        3.923763,
-        3.73366,
-        3.865996
+        5.188859,
+        4.048425,
+        4.2891
       ],
       "ndcg": 1.0,
       "no_answer": false,
@@ -5216,10 +5306,12 @@
       "project": "cedar",
       "query": "Which components define the Cedar Scheduler architecture?",
       "ranked_ids": [
-        37
+        37,
+        59
       ],
       "ranked_labels": [
-        "cedar.architecture"
+        "cedar.architecture",
+        "cedar.graph"
       ],
       "recall": {
         "1": 1.0,
@@ -5227,17 +5319,14 @@
         "3": 1.0,
         "5": 1.0
       },
-      "tokens": 17
+      "tokens": 28
     },
     {
       "category": "BUG",
-      "dcg": 0,
-      "failure_classification": [
-        "lexical",
-        "type"
-      ],
-      "false_positive": false,
-      "first_relevant_rank": null,
+      "dcg": 3.0,
+      "failure_classification": [],
+      "false_positive": true,
+      "first_relevant_rank": 1,
       "gold_relevance": {
         "cedar.ambiguous": "irrelevant",
         "cedar.architecture": "irrelevant",
@@ -5261,41 +5350,42 @@
         "cedar.workaround": "irrelevant"
       },
       "id": "cedar.q086",
-      "irrelevant_retrieved": true,
+      "irrelevant_retrieved": false,
       "latency_ms": [
-        2.5985,
-        2.156949,
-        1.972366
+        3.856394,
+        3.883576,
+        3.971155
       ],
-      "ndcg": 0.0,
+      "ndcg": 1.0,
       "no_answer": false,
       "precision": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 0.1,
+        "3": 0.3333333333333333,
+        "5": 0.2
       },
       "project": "cedar",
       "query": "Which failure affected the Cedar Scheduler production system?",
-      "ranked_ids": [],
-      "ranked_labels": [],
+      "ranked_ids": [
+        38
+      ],
+      "ranked_labels": [
+        "cedar.bug"
+      ],
       "recall": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 1.0,
+        "3": 1.0,
+        "5": 1.0
       },
-      "tokens": 8
+      "tokens": 17
     },
     {
       "category": "WORKAROUND",
-      "dcg": 0,
-      "failure_classification": [
-        "lexical",
-        "ranking"
-      ],
-      "false_positive": false,
-      "first_relevant_rank": null,
+      "dcg": 15.0,
+      "failure_classification": [],
+      "false_positive": true,
+      "first_relevant_rank": 1,
       "gold_relevance": {
         "cedar.ambiguous": "irrelevant",
         "cedar.architecture": "irrelevant",
@@ -5319,31 +5409,35 @@
         "cedar.workaround": "highly_relevant"
       },
       "id": "cedar.q087",
-      "irrelevant_retrieved": true,
+      "irrelevant_retrieved": false,
       "latency_ms": [
-        2.000608,
-        2.408216,
-        1.97479
+        3.867365,
+        4.012485,
+        3.870009
       ],
-      "ndcg": 0.0,
+      "ndcg": 1.0,
       "no_answer": false,
       "precision": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 0.1,
+        "3": 0.3333333333333333,
+        "5": 0.2
       },
       "project": "cedar",
       "query": "What is the documented workaround for the Cedar Scheduler failure?",
-      "ranked_ids": [],
-      "ranked_labels": [],
+      "ranked_ids": [
+        39
+      ],
+      "ranked_labels": [
+        "cedar.workaround"
+      ],
       "recall": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 1.0,
+        "3": 1.0,
+        "5": 1.0
       },
-      "tokens": 10
+      "tokens": 25
     },
     {
       "category": "DISCOVERY",
@@ -5378,9 +5472,9 @@
       "id": "cedar.q088",
       "irrelevant_retrieved": false,
       "latency_ms": [
-        3.947768,
-        4.688374,
-        7.61853
+        4.528533,
+        4.621893,
+        3.985643
       ],
       "ndcg": 1.0,
       "no_answer": false,
@@ -5393,10 +5487,12 @@
       "project": "cedar",
       "query": "What did the Cedar Scheduler load test actually discover?",
       "ranked_ids": [
-        40
+        40,
+        58
       ],
       "ranked_labels": [
-        "cedar.discovery"
+        "cedar.discovery",
+        "cedar.low_confidence"
       ],
       "recall": {
         "1": 1.0,
@@ -5404,7 +5500,7 @@
         "3": 1.0,
         "5": 1.0
       },
-      "tokens": 20
+      "tokens": 29
     },
     {
       "category": "PREFERENCE",
@@ -5441,9 +5537,9 @@
       "id": "cedar.q089",
       "irrelevant_retrieved": true,
       "latency_ms": [
-        5.023227,
-        3.822965,
-        4.337161
+        4.058163,
+        4.287797,
+        4.281606
       ],
       "ndcg": 0.0,
       "no_answer": false,
@@ -5457,11 +5553,13 @@
       "query": "What implementation preference does the Cedar Scheduler team follow?",
       "ranked_ids": [
         34,
-        38
+        38,
+        42
       ],
       "ranked_labels": [
         "cedar.decision",
-        "cedar.bug"
+        "cedar.bug",
+        "cedar.code_related"
       ],
       "recall": {
         "1": 0.0,
@@ -5469,18 +5567,16 @@
         "3": 0.0,
         "5": 0.0
       },
-      "tokens": 29
+      "tokens": 38
     },
     {
       "category": "CODE_RELATED",
-      "dcg": 0.0,
+      "dcg": 1.8927892607143724,
       "failure_classification": [
-        "lexical",
-        "ranking",
-        "type"
+        "ranking"
       ],
-      "false_positive": false,
-      "first_relevant_rank": null,
+      "false_positive": true,
+      "first_relevant_rank": 2,
       "gold_relevance": {
         "cedar.ambiguous": "irrelevant",
         "cedar.architecture": "irrelevant",
@@ -5504,46 +5600,47 @@
         "cedar.workaround": "irrelevant"
       },
       "id": "cedar.q090",
-      "irrelevant_retrieved": true,
+      "irrelevant_retrieved": false,
       "latency_ms": [
-        3.931498,
-        3.755219,
-        3.693715
+        4.613718,
+        3.947018,
+        4.065869
       ],
-      "ndcg": 0.0,
+      "ndcg": 0.6309297535714574,
       "no_answer": false,
       "precision": {
         "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "10": 0.1,
+        "3": 0.3333333333333333,
+        "5": 0.2
       },
       "project": "cedar",
       "query": "Which file implements the central Cedar Scheduler processing path?",
       "ranked_ids": [
-        43
+        43,
+        42
       ],
       "ranked_labels": [
-        "cedar.historical"
+        "cedar.historical",
+        "cedar.code_related"
       ],
       "recall": {
         "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "10": 1.0,
+        "3": 1.0,
+        "5": 1.0
       },
-      "tokens": 19
+      "tokens": 28
     },
     {
       "category": "HISTORICAL",
-      "dcg": 0.0,
+      "dcg": 0.5,
       "failure_classification": [
-        "lexical",
         "ranking",
         "temporal"
       ],
-      "false_positive": false,
-      "first_relevant_rank": null,
+      "false_positive": true,
+      "first_relevant_rank": 3,
       "gold_relevance": {
         "cedar.ambiguous": "irrelevant",
         "cedar.architecture": "irrelevant",
@@ -5567,47 +5664,49 @@
         "cedar.workaround": "irrelevant"
       },
       "id": "cedar.q091",
-      "irrelevant_retrieved": true,
+      "irrelevant_retrieved": false,
       "latency_ms": [
-        3.672766,
-        3.565898,
-        3.646668
+        4.54252,
+        4.95139,
+        4.252499
       ],
-      "ndcg": 0.0,
+      "ndcg": 0.5,
       "no_answer": false,
       "precision": {
         "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "10": 0.1,
+        "3": 0.3333333333333333,
+        "5": 0.2
       },
       "project": "cedar",
       "query": "What did Cedar Scheduler do before the current architecture?",
       "ranked_ids": [
-        37,
-        39
+        44,
+        34,
+        43
       ],
       "ranked_labels": [
-        "cedar.architecture",
-        "cedar.workaround"
+        "cedar.supersession",
+        "cedar.decision",
+        "cedar.historical"
       ],
       "recall": {
         "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "10": 1.0,
+        "3": 1.0,
+        "5": 1.0
       },
-      "tokens": 34
+      "tokens": 39
     },
     {
       "category": "SUPERSESSION",
-      "dcg": 0,
+      "dcg": 12.463946303571863,
       "failure_classification": [
-        "lexical",
+        "ranking",
         "supersession"
       ],
-      "false_positive": false,
-      "first_relevant_rank": null,
+      "false_positive": true,
+      "first_relevant_rank": 1,
       "gold_relevance": {
         "cedar.ambiguous": "irrelevant",
         "cedar.architecture": "irrelevant",
@@ -5631,41 +5730,49 @@
         "cedar.workaround": "irrelevant"
       },
       "id": "cedar.q092",
-      "irrelevant_retrieved": true,
+      "irrelevant_retrieved": false,
       "latency_ms": [
-        2.057755,
-        2.172107,
-        2.214305
+        4.989764,
+        4.591965,
+        4.510287
       ],
-      "ndcg": 0.0,
+      "ndcg": 0.7378264247076021,
       "no_answer": false,
       "precision": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 0.2,
+        "3": 0.6666666666666666,
+        "5": 0.4
       },
       "project": "cedar",
       "query": "What superseded Cedar Scheduler policy should be recognized as old?",
-      "ranked_ids": [],
-      "ranked_labels": [],
+      "ranked_ids": [
+        44,
+        34,
+        43
+      ],
+      "ranked_labels": [
+        "cedar.supersession",
+        "cedar.decision",
+        "cedar.historical"
+      ],
       "recall": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 0.5,
+        "10": 1.0,
+        "3": 1.0,
+        "5": 1.0
       },
-      "tokens": 10
+      "tokens": 40
     },
     {
       "category": "CONTRADICTION",
-      "dcg": 0,
+      "dcg": 3.0,
       "failure_classification": [
         "lexical",
         "temporal"
       ],
-      "false_positive": false,
-      "first_relevant_rank": null,
+      "false_positive": true,
+      "first_relevant_rank": 1,
       "gold_relevance": {
         "cedar.ambiguous": "irrelevant",
         "cedar.architecture": "relevant",
@@ -5689,40 +5796,45 @@
         "cedar.workaround": "irrelevant"
       },
       "id": "cedar.q093",
-      "irrelevant_retrieved": true,
+      "irrelevant_retrieved": false,
       "latency_ms": [
-        1.907004,
-        1.831134,
-        1.816727
+        3.916039,
+        3.844942,
+        3.847386
       ],
-      "ndcg": 0.0,
+      "ndcg": 0.4692787260227565,
       "no_answer": false,
       "precision": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 0.1,
+        "3": 0.3333333333333333,
+        "5": 0.2
       },
       "project": "cedar",
       "query": "Which Cedar Scheduler design records disagree with each other?",
-      "ranked_ids": [],
-      "ranked_labels": [],
+      "ranked_ids": [
+        45
+      ],
+      "ranked_labels": [
+        "cedar.contradiction"
+      ],
       "recall": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 0.3333333333333333,
+        "10": 0.3333333333333333,
+        "3": 0.3333333333333333,
+        "5": 0.3333333333333333
       },
-      "tokens": 9
+      "tokens": 19
     },
     {
       "category": "SCOPE",
-      "dcg": 3.0,
+      "dcg": 1.5,
       "failure_classification": [
+        "ranking",
         "scope"
       ],
       "false_positive": true,
-      "first_relevant_rank": 1,
+      "first_relevant_rank": 3,
       "gold_relevance": {
         "cedar.ambiguous": "irrelevant",
         "cedar.architecture": "irrelevant",
@@ -5748,14 +5860,14 @@
       "id": "cedar.q094",
       "irrelevant_retrieved": false,
       "latency_ms": [
-        4.112433,
-        3.776348,
-        4.495114
+        4.05636,
+        4.09243,
+        4.027555
       ],
-      "ndcg": 1.0,
+      "ndcg": 0.5,
       "no_answer": false,
       "precision": {
-        "1": 1.0,
+        "1": 0.0,
         "10": 0.1,
         "3": 0.3333333333333333,
         "5": 0.2
@@ -5763,28 +5875,29 @@
       "project": "cedar",
       "query": "Which component is excluded from the Cedar Scheduler constrained release?",
       "ranked_ids": [
+        59,
+        37,
         46
       ],
       "ranked_labels": [
+        "cedar.graph",
+        "cedar.architecture",
         "cedar.scope"
       ],
       "recall": {
-        "1": 1.0,
+        "1": 0.0,
         "10": 1.0,
         "3": 1.0,
         "5": 1.0
       },
-      "tokens": 20
+      "tokens": 41
     },
     {
       "category": "AMBIGUOUS",
-      "dcg": 0,
-      "failure_classification": [
-        "lexical",
-        "noise"
-      ],
-      "false_positive": false,
-      "first_relevant_rank": null,
+      "dcg": 1.0,
+      "failure_classification": [],
+      "false_positive": true,
+      "first_relevant_rank": 1,
       "gold_relevance": {
         "cedar.ambiguous": "historical_only",
         "cedar.architecture": "irrelevant",
@@ -5808,31 +5921,35 @@
         "cedar.workaround": "irrelevant"
       },
       "id": "cedar.q095",
-      "irrelevant_retrieved": true,
+      "irrelevant_retrieved": false,
       "latency_ms": [
-        2.024062,
-        2.357121,
-        2.070118
+        4.726505,
+        4.656049,
+        3.789364
       ],
-      "ndcg": 0.0,
+      "ndcg": 1.0,
       "no_answer": false,
       "precision": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 0.1,
+        "3": 0.3333333333333333,
+        "5": 0.2
       },
       "project": "cedar",
       "query": "What ambiguous Cedar Scheduler symptom is documented?",
-      "ranked_ids": [],
-      "ranked_labels": [],
+      "ranked_ids": [
+        47
+      ],
+      "ranked_labels": [
+        "cedar.ambiguous"
+      ],
       "recall": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 1.0,
+        "3": 1.0,
+        "5": 1.0
       },
-      "tokens": 7
+      "tokens": 18
     },
     {
       "category": "IRRELEVANT",
@@ -5865,9 +5982,9 @@
       "id": "cedar.q096",
       "irrelevant_retrieved": false,
       "latency_ms": [
-        3.600452,
-        3.767623,
-        3.868911
+        3.635026,
+        3.857535,
+        3.893846
       ],
       "ndcg": 1.0,
       "no_answer": false,
@@ -5895,13 +6012,10 @@
     },
     {
       "category": "DIRECT_FACT",
-      "dcg": 0,
-      "failure_classification": [
-        "lexical",
-        "type"
-      ],
-      "false_positive": false,
-      "first_relevant_rank": null,
+      "dcg": 3.0,
+      "failure_classification": [],
+      "false_positive": true,
+      "first_relevant_rank": 1,
       "gold_relevance": {
         "cedar.ambiguous": "irrelevant",
         "cedar.architecture": "irrelevant",
@@ -5925,31 +6039,35 @@
         "cedar.workaround": "irrelevant"
       },
       "id": "cedar.q097",
-      "irrelevant_retrieved": true,
+      "irrelevant_retrieved": false,
       "latency_ms": [
-        2.382708,
-        2.153091,
-        2.009595
+        3.925978,
+        3.90103,
+        3.895169
       ],
-      "ndcg": 0.0,
+      "ndcg": 1.0,
       "no_answer": false,
       "precision": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 0.1,
+        "3": 0.3333333333333333,
+        "5": 0.2
       },
       "project": "cedar",
       "query": "Please answer: What is stored in the Cedar Scheduler journal?",
-      "ranked_ids": [],
-      "ranked_labels": [],
+      "ranked_ids": [
+        33
+      ],
+      "ranked_labels": [
+        "cedar.direct_fact"
+      ],
       "recall": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 1.0,
+        "3": 1.0,
+        "5": 1.0
       },
-      "tokens": 10
+      "tokens": 20
     },
     {
       "category": "DECISION",
@@ -5982,9 +6100,9 @@
       "id": "cedar.q098",
       "irrelevant_retrieved": false,
       "latency_ms": [
-        3.544387,
-        4.35765,
-        3.782891
+        4.094003,
+        4.082251,
+        4.014039
       ],
       "ndcg": 1.0,
       "no_answer": false,
@@ -5997,10 +6115,12 @@
       "project": "cedar",
       "query": "Please answer: Which technology did the Cedar Scheduler team choose?",
       "ranked_ids": [
-        34
+        34,
+        35
       ],
       "ranked_labels": [
-        "cedar.decision"
+        "cedar.decision",
+        "cedar.why_question"
       ],
       "recall": {
         "1": 1.0,
@@ -6008,17 +6128,14 @@
         "3": 1.0,
         "5": 1.0
       },
-      "tokens": 21
+      "tokens": 33
     },
     {
       "category": "WHY_QUESTION",
-      "dcg": 0.0,
-      "failure_classification": [
-        "lexical",
-        "ranking"
-      ],
-      "false_positive": false,
-      "first_relevant_rank": null,
+      "dcg": 3.0,
+      "failure_classification": [],
+      "false_positive": true,
+      "first_relevant_rank": 1,
       "gold_relevance": {
         "cedar.ambiguous": "irrelevant",
         "cedar.architecture": "irrelevant",
@@ -6042,43 +6159,45 @@
         "cedar.workaround": "irrelevant"
       },
       "id": "cedar.q099",
-      "irrelevant_retrieved": true,
+      "irrelevant_retrieved": false,
       "latency_ms": [
-        4.722678,
-        4.228329,
-        4.377236
+        4.448077,
+        5.289413,
+        5.015885
       ],
-      "ndcg": 0.0,
+      "ndcg": 1.0,
       "no_answer": false,
       "precision": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 0.1,
+        "3": 0.3333333333333333,
+        "5": 0.2
       },
       "project": "cedar",
       "query": "Please answer: Why did the Cedar Scheduler team make its durable storage choice?",
       "ranked_ids": [
-        34,
+        35,
         40,
         33,
         37,
+        34,
         58
       ],
       "ranked_labels": [
-        "cedar.decision",
+        "cedar.why_question",
         "cedar.discovery",
         "cedar.direct_fact",
         "cedar.architecture",
+        "cedar.decision",
         "cedar.low_confidence"
       ],
       "recall": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 1.0,
+        "3": 1.0,
+        "5": 1.0
       },
-      "tokens": 64
+      "tokens": 76
     },
     {
       "category": "CONSTRAINT",
@@ -6113,9 +6232,9 @@
       "id": "cedar.q100",
       "irrelevant_retrieved": false,
       "latency_ms": [
-        4.088949,
-        3.920387,
-        4.048996
+        4.176683,
+        4.125945,
+        4.191811
       ],
       "ndcg": 1.0,
       "no_answer": false,
@@ -6174,9 +6293,9 @@
       "id": "cedar.q101",
       "irrelevant_retrieved": false,
       "latency_ms": [
-        3.947937,
-        4.125497,
-        3.961623
+        4.029007,
+        4.603587,
+        4.142376
       ],
       "ndcg": 1.0,
       "no_answer": false,
@@ -6189,10 +6308,12 @@
       "project": "cedar",
       "query": "Please answer: Which components define the Cedar Scheduler architecture?",
       "ranked_ids": [
-        37
+        37,
+        59
       ],
       "ranked_labels": [
-        "cedar.architecture"
+        "cedar.architecture",
+        "cedar.graph"
       ],
       "recall": {
         "1": 1.0,
@@ -6200,17 +6321,14 @@
         "3": 1.0,
         "5": 1.0
       },
-      "tokens": 19
+      "tokens": 30
     },
     {
       "category": "BUG",
-      "dcg": 0,
-      "failure_classification": [
-        "lexical",
-        "type"
-      ],
-      "false_positive": false,
-      "first_relevant_rank": null,
+      "dcg": 3.0,
+      "failure_classification": [],
+      "false_positive": true,
+      "first_relevant_rank": 1,
       "gold_relevance": {
         "cedar.ambiguous": "irrelevant",
         "cedar.architecture": "irrelevant",
@@ -6234,41 +6352,42 @@
         "cedar.workaround": "irrelevant"
       },
       "id": "cedar.q102",
-      "irrelevant_retrieved": true,
+      "irrelevant_retrieved": false,
       "latency_ms": [
-        2.218053,
-        2.067102,
-        2.417673
+        4.184047,
+        4.012075,
+        4.001394
       ],
-      "ndcg": 0.0,
+      "ndcg": 1.0,
       "no_answer": false,
       "precision": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 0.1,
+        "3": 0.3333333333333333,
+        "5": 0.2
       },
       "project": "cedar",
       "query": "Please answer: Which failure affected the Cedar Scheduler production system?",
-      "ranked_ids": [],
-      "ranked_labels": [],
+      "ranked_ids": [
+        38
+      ],
+      "ranked_labels": [
+        "cedar.bug"
+      ],
       "recall": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 1.0,
+        "3": 1.0,
+        "5": 1.0
       },
-      "tokens": 10
+      "tokens": 19
     },
     {
       "category": "WORKAROUND",
-      "dcg": 0,
-      "failure_classification": [
-        "lexical",
-        "ranking"
-      ],
-      "false_positive": false,
-      "first_relevant_rank": null,
+      "dcg": 15.0,
+      "failure_classification": [],
+      "false_positive": true,
+      "first_relevant_rank": 1,
       "gold_relevance": {
         "cedar.ambiguous": "irrelevant",
         "cedar.architecture": "irrelevant",
@@ -6292,31 +6411,35 @@
         "cedar.workaround": "highly_relevant"
       },
       "id": "cedar.q103",
-      "irrelevant_retrieved": true,
+      "irrelevant_retrieved": false,
       "latency_ms": [
-        2.33471,
-        2.18479,
-        2.457848
+        4.110374,
+        5.703704,
+        4.14443
       ],
-      "ndcg": 0.0,
+      "ndcg": 1.0,
       "no_answer": false,
       "precision": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 0.1,
+        "3": 0.3333333333333333,
+        "5": 0.2
       },
       "project": "cedar",
       "query": "Please answer: What is the documented workaround for the Cedar Scheduler failure?",
-      "ranked_ids": [],
-      "ranked_labels": [],
+      "ranked_ids": [
+        39
+      ],
+      "ranked_labels": [
+        "cedar.workaround"
+      ],
       "recall": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 1.0,
+        "3": 1.0,
+        "5": 1.0
       },
-      "tokens": 12
+      "tokens": 27
     },
     {
       "category": "DISCOVERY",
@@ -6351,9 +6474,9 @@
       "id": "cedar.q104",
       "irrelevant_retrieved": false,
       "latency_ms": [
-        3.881084,
-        3.789874,
-        4.043104
+        3.993228,
+        4.352623,
+        4.411877
       ],
       "ndcg": 1.0,
       "no_answer": false,
@@ -6366,10 +6489,12 @@
       "project": "cedar",
       "query": "Please answer: What did the Cedar Scheduler load test actually discover?",
       "ranked_ids": [
-        40
+        40,
+        58
       ],
       "ranked_labels": [
-        "cedar.discovery"
+        "cedar.discovery",
+        "cedar.low_confidence"
       ],
       "recall": {
         "1": 1.0,
@@ -6377,7 +6502,7 @@
         "3": 1.0,
         "5": 1.0
       },
-      "tokens": 22
+      "tokens": 31
     },
     {
       "category": "PREFERENCE",
@@ -6414,9 +6539,9 @@
       "id": "cedar.q105",
       "irrelevant_retrieved": true,
       "latency_ms": [
-        4.596724,
-        4.883216,
-        4.015623
+        4.235666,
+        4.196621,
+        5.031415
       ],
       "ndcg": 0.0,
       "no_answer": false,
@@ -6430,11 +6555,13 @@
       "query": "Please answer: What implementation preference does the Cedar Scheduler team follow?",
       "ranked_ids": [
         34,
-        38
+        38,
+        42
       ],
       "ranked_labels": [
         "cedar.decision",
-        "cedar.bug"
+        "cedar.bug",
+        "cedar.code_related"
       ],
       "recall": {
         "1": 0.0,
@@ -6442,18 +6569,16 @@
         "3": 0.0,
         "5": 0.0
       },
-      "tokens": 31
+      "tokens": 40
     },
     {
       "category": "CODE_RELATED",
-      "dcg": 0.0,
+      "dcg": 1.8927892607143724,
       "failure_classification": [
-        "lexical",
-        "ranking",
-        "type"
+        "ranking"
       ],
-      "false_positive": false,
-      "first_relevant_rank": null,
+      "false_positive": true,
+      "first_relevant_rank": 2,
       "gold_relevance": {
         "cedar.ambiguous": "irrelevant",
         "cedar.architecture": "irrelevant",
@@ -6477,46 +6602,47 @@
         "cedar.workaround": "irrelevant"
       },
       "id": "cedar.q106",
-      "irrelevant_retrieved": true,
+      "irrelevant_retrieved": false,
       "latency_ms": [
-        3.842141,
-        3.859052,
-        3.802618
+        8.523584,
+        4.15461,
+        4.195859
       ],
-      "ndcg": 0.0,
+      "ndcg": 0.6309297535714574,
       "no_answer": false,
       "precision": {
         "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "10": 0.1,
+        "3": 0.3333333333333333,
+        "5": 0.2
       },
       "project": "cedar",
       "query": "Please answer: Which file implements the central Cedar Scheduler processing path?",
       "ranked_ids": [
-        43
+        43,
+        42
       ],
       "ranked_labels": [
-        "cedar.historical"
+        "cedar.historical",
+        "cedar.code_related"
       ],
       "recall": {
         "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "10": 1.0,
+        "3": 1.0,
+        "5": 1.0
       },
-      "tokens": 21
+      "tokens": 30
     },
     {
       "category": "HISTORICAL",
-      "dcg": 0.0,
+      "dcg": 0.5,
       "failure_classification": [
-        "lexical",
         "ranking",
         "temporal"
       ],
-      "false_positive": false,
-      "first_relevant_rank": null,
+      "false_positive": true,
+      "first_relevant_rank": 3,
       "gold_relevance": {
         "cedar.ambiguous": "irrelevant",
         "cedar.architecture": "irrelevant",
@@ -6540,47 +6666,49 @@
         "cedar.workaround": "irrelevant"
       },
       "id": "cedar.q107",
-      "irrelevant_retrieved": true,
+      "irrelevant_retrieved": false,
       "latency_ms": [
-        3.758706,
-        5.155923,
-        4.167826
+        4.18062,
+        4.180299,
+        4.00918
       ],
-      "ndcg": 0.0,
+      "ndcg": 0.5,
       "no_answer": false,
       "precision": {
         "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "10": 0.1,
+        "3": 0.3333333333333333,
+        "5": 0.2
       },
       "project": "cedar",
       "query": "Please answer: What did Cedar Scheduler do before the current architecture?",
       "ranked_ids": [
-        37,
-        39
+        44,
+        34,
+        43
       ],
       "ranked_labels": [
-        "cedar.architecture",
-        "cedar.workaround"
+        "cedar.supersession",
+        "cedar.decision",
+        "cedar.historical"
       ],
       "recall": {
         "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "10": 1.0,
+        "3": 1.0,
+        "5": 1.0
       },
-      "tokens": 36
+      "tokens": 41
     },
     {
       "category": "SUPERSESSION",
-      "dcg": 0,
+      "dcg": 12.463946303571863,
       "failure_classification": [
-        "lexical",
+        "ranking",
         "supersession"
       ],
-      "false_positive": false,
-      "first_relevant_rank": null,
+      "false_positive": true,
+      "first_relevant_rank": 1,
       "gold_relevance": {
         "cedar.ambiguous": "irrelevant",
         "cedar.architecture": "irrelevant",
@@ -6604,41 +6732,49 @@
         "cedar.workaround": "irrelevant"
       },
       "id": "cedar.q108",
-      "irrelevant_retrieved": true,
+      "irrelevant_retrieved": false,
       "latency_ms": [
-        2.181585,
-        2.597077,
-        2.088662
+        4.106116,
+        4.535927,
+        4.253251
       ],
-      "ndcg": 0.0,
+      "ndcg": 0.7378264247076021,
       "no_answer": false,
       "precision": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 0.2,
+        "3": 0.6666666666666666,
+        "5": 0.4
       },
       "project": "cedar",
       "query": "Please answer: What superseded Cedar Scheduler policy should be recognized as old?",
-      "ranked_ids": [],
-      "ranked_labels": [],
+      "ranked_ids": [
+        44,
+        34,
+        43
+      ],
+      "ranked_labels": [
+        "cedar.supersession",
+        "cedar.decision",
+        "cedar.historical"
+      ],
       "recall": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 0.5,
+        "10": 1.0,
+        "3": 1.0,
+        "5": 1.0
       },
-      "tokens": 12
+      "tokens": 42
     },
     {
       "category": "CONTRADICTION",
-      "dcg": 0,
+      "dcg": 3.0,
       "failure_classification": [
         "lexical",
         "temporal"
       ],
-      "false_positive": false,
-      "first_relevant_rank": null,
+      "false_positive": true,
+      "first_relevant_rank": 1,
       "gold_relevance": {
         "cedar.ambiguous": "irrelevant",
         "cedar.architecture": "relevant",
@@ -6662,40 +6798,45 @@
         "cedar.workaround": "irrelevant"
       },
       "id": "cedar.q109",
-      "irrelevant_retrieved": true,
+      "irrelevant_retrieved": false,
       "latency_ms": [
-        1.983657,
-        2.13609,
-        2.002632
+        3.904686,
+        4.073924,
+        4.152366
       ],
-      "ndcg": 0.0,
+      "ndcg": 0.4692787260227565,
       "no_answer": false,
       "precision": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 0.1,
+        "3": 0.3333333333333333,
+        "5": 0.2
       },
       "project": "cedar",
       "query": "Please answer: Which Cedar Scheduler design records disagree with each other?",
-      "ranked_ids": [],
-      "ranked_labels": [],
+      "ranked_ids": [
+        45
+      ],
+      "ranked_labels": [
+        "cedar.contradiction"
+      ],
       "recall": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 0.3333333333333333,
+        "10": 0.3333333333333333,
+        "3": 0.3333333333333333,
+        "5": 0.3333333333333333
       },
-      "tokens": 11
+      "tokens": 21
     },
     {
       "category": "SCOPE",
-      "dcg": 3.0,
+      "dcg": 1.5,
       "failure_classification": [
+        "ranking",
         "scope"
       ],
       "false_positive": true,
-      "first_relevant_rank": 1,
+      "first_relevant_rank": 3,
       "gold_relevance": {
         "cedar.ambiguous": "irrelevant",
         "cedar.architecture": "irrelevant",
@@ -6721,14 +6862,14 @@
       "id": "cedar.q110",
       "irrelevant_retrieved": false,
       "latency_ms": [
-        3.87886,
-        3.998802,
-        3.998461
+        4.234354,
+        4.121646,
+        4.086037
       ],
-      "ndcg": 1.0,
+      "ndcg": 0.5,
       "no_answer": false,
       "precision": {
-        "1": 1.0,
+        "1": 0.0,
         "10": 0.1,
         "3": 0.3333333333333333,
         "5": 0.2
@@ -6736,28 +6877,29 @@
       "project": "cedar",
       "query": "Please answer: Which component is excluded from the Cedar Scheduler constrained release?",
       "ranked_ids": [
+        59,
+        37,
         46
       ],
       "ranked_labels": [
+        "cedar.graph",
+        "cedar.architecture",
         "cedar.scope"
       ],
       "recall": {
-        "1": 1.0,
+        "1": 0.0,
         "10": 1.0,
         "3": 1.0,
         "5": 1.0
       },
-      "tokens": 22
+      "tokens": 43
     },
     {
       "category": "AMBIGUOUS",
-      "dcg": 0,
-      "failure_classification": [
-        "lexical",
-        "noise"
-      ],
-      "false_positive": false,
-      "first_relevant_rank": null,
+      "dcg": 1.0,
+      "failure_classification": [],
+      "false_positive": true,
+      "first_relevant_rank": 1,
       "gold_relevance": {
         "cedar.ambiguous": "historical_only",
         "cedar.architecture": "irrelevant",
@@ -6781,31 +6923,35 @@
         "cedar.workaround": "irrelevant"
       },
       "id": "cedar.q111",
-      "irrelevant_retrieved": true,
+      "irrelevant_retrieved": false,
       "latency_ms": [
-        2.105132,
-        2.149415,
-        2.47475
+        4.489928,
+        4.27358,
+        3.89054
       ],
-      "ndcg": 0.0,
+      "ndcg": 1.0,
       "no_answer": false,
       "precision": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 0.1,
+        "3": 0.3333333333333333,
+        "5": 0.2
       },
       "project": "cedar",
       "query": "Please answer: What ambiguous Cedar Scheduler symptom is documented?",
-      "ranked_ids": [],
-      "ranked_labels": [],
+      "ranked_ids": [
+        47
+      ],
+      "ranked_labels": [
+        "cedar.ambiguous"
+      ],
       "recall": {
-        "1": 0.0,
-        "10": 0.0,
-        "3": 0.0,
-        "5": 0.0
+        "1": 1.0,
+        "10": 1.0,
+        "3": 1.0,
+        "5": 1.0
       },
-      "tokens": 9
+      "tokens": 20
     },
     {
       "category": "IRRELEVANT",
@@ -6838,9 +6984,9 @@
       "id": "cedar.q112",
       "irrelevant_retrieved": false,
       "latency_ms": [
-        4.186221,
-        4.28836,
-        3.893887
+        5.290606,
+        4.182303,
+        4.617745
       ],
       "ndcg": 1.0,
       "no_answer": false,
@@ -6899,9 +7045,9 @@
       "id": "cedar.q113",
       "irrelevant_retrieved": false,
       "latency_ms": [
-        3.723521,
-        3.903455,
-        3.8365
+        3.785106,
+        3.779354,
+        3.919866
       ],
       "ndcg": 1.0,
       "no_answer": false,
@@ -6961,9 +7107,9 @@
       "id": "cedar.q114",
       "irrelevant_retrieved": true,
       "latency_ms": [
-        2.100815,
-        1.94796,
-        1.914157
+        2.128173,
+        1.962853,
+        1.938266
       ],
       "ndcg": 0.0,
       "no_answer": false,
@@ -7018,9 +7164,9 @@
       "id": "cedar.q115",
       "irrelevant_retrieved": false,
       "latency_ms": [
-        3.898656,
-        3.913935,
-        4.054977
+        3.788953,
+        3.957108,
+        4.219074
       ],
       "ndcg": 1.0,
       "no_answer": false,
@@ -7081,9 +7227,9 @@
       "id": "cedar.q116",
       "irrelevant_retrieved": true,
       "latency_ms": [
-        4.014291,
-        3.996017,
-        4.106462
+        4.481932,
+        4.08213,
+        3.873006
       ],
       "ndcg": 0.0,
       "no_answer": false,
@@ -7144,9 +7290,9 @@
       "id": "cedar.q117",
       "irrelevant_retrieved": true,
       "latency_ms": [
-        2.287812,
-        2.086648,
-        2.035483
+        2.350603,
+        2.179413,
+        2.101713
       ],
       "ndcg": 1.0,
       "no_answer": true,
@@ -7199,9 +7345,9 @@
       "id": "cedar.q118",
       "irrelevant_retrieved": true,
       "latency_ms": [
-        2.044009,
-        2.266774,
-        2.311406
+        2.120499,
+        2.09512,
+        2.078798
       ],
       "ndcg": 1.0,
       "no_answer": true,
@@ -7254,9 +7400,9 @@
       "id": "cedar.q119",
       "irrelevant_retrieved": true,
       "latency_ms": [
-        2.059367,
-        2.005818,
-        2.020996
+        2.083237,
+        2.06932,
+        2.071123
       ],
       "ndcg": 1.0,
       "no_answer": true,
@@ -7309,9 +7455,9 @@
       "id": "cedar.q120",
       "irrelevant_retrieved": true,
       "latency_ms": [
-        2.419487,
-        2.069135,
-        2.021097
+        2.101582,
+        2.115449,
+        2.081443
       ],
       "ndcg": 1.0,
       "no_answer": true,
@@ -7334,5 +7480,5 @@
       "tokens": 13
     }
   ],
-  "timestamp_utc": "2026-09-25T06:26:13.814272+00:00"
+  "timestamp_utc": "2026-09-25T06:33:14.644389+00:00"
 }

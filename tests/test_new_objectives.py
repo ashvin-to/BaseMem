@@ -1,10 +1,10 @@
 """Tests for get_review_context, tool consolidation, and skills system."""
 
 import os
-import tempfile
 import subprocess
+import tempfile
 
-from mcp_server.server import get_review_context, session_start, code_init, session_end
+from mcp_server.server import code_init, get_review_context, session_end, session_start
 
 
 def test_get_review_context_uninitialized():
@@ -19,14 +19,14 @@ def test_get_review_context_initialized():
         auth_file = os.path.join(tmpdir, "auth.py")
         with open(auth_file, "w") as f:
             f.write("def login(): pass\n")
-        
+
         main_file = os.path.join(tmpdir, "main.py")
         with open(main_file, "w") as f:
             f.write("from auth import login\ndef run(): login()\n")
-            
+
         # Index project
         code_init(tmpdir)
-        
+
         # Get review context
         res = get_review_context(["auth.py"], projectRoot=tmpdir)
         assert "CHANGED: auth.py" in res
@@ -36,7 +36,7 @@ def test_get_review_context_initialized():
 def test_session_start_create_and_resume():
     res1 = session_start(topic="test_topic", title="Test Session", agent_id="agent1")
     assert "Session created: id=" in res1
-    
+
     # Extract session ID
     sid_str = res1.split("id=")[1].split(",")[0]
     sid = int(sid_str)
@@ -58,7 +58,7 @@ def test_skills_installation_node():
     )
     assert "skills" in res.stdout
     home = os.path.expanduser("~")
-    
+
     # Verify README.md is copied
     readme_path = os.path.join(home, ".claude", "skills", "using-basemem", "README.md")
     assert os.path.isfile(readme_path)
@@ -66,13 +66,15 @@ def test_skills_installation_node():
     # Verify using-basemem/SKILL.md is copied directly
     using_basemem_skill = os.path.join(home, ".claude", "skills", "using-basemem", "SKILL.md")
     assert os.path.isfile(using_basemem_skill)
-    content = open(using_basemem_skill).read()
+    with open(using_basemem_skill) as f:
+        content = f.read()
     assert "name: using-basemem" in content
     assert "## Workflow" in content
 
-    for skill in ["code-review", "session-start", "explore-codebase", "debug-issue", "task-workflow"]:
+    for skill in ["code-review", "session-start", "explore-codebase", "debug-issue"]:
         skill_path = os.path.join(home, ".claude", "skills", "using-basemem", skill, "SKILL.md")
         assert os.path.isfile(skill_path)
-        content = open(skill_path).read()
+        with open(skill_path) as f:
+            content = f.read()
         assert f"name: {skill}" in content
         assert "## Workflow" in content

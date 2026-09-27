@@ -1,7 +1,9 @@
 """Main CLI entry point — registers all subcommand groups."""
 
+import contextlib
 import json
 import logging
+import os
 import sqlite3
 import sys
 from pathlib import Path
@@ -15,7 +17,6 @@ from .edge import edge
 from .note import note
 from .planet import planet
 from .session import session
-from .task import task
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
@@ -31,7 +32,6 @@ def get_project_root():
 
 def _topic_from_cwd():
     """Derive topic from cwd: package.json name → pyproject.toml name → dir name."""
-    import os
     cwd = Path.cwd()
     for parent in [cwd] + list(cwd.parents)[:3]:
         pkg = parent / "package.json"
@@ -66,7 +66,6 @@ def cli(ctx, db):
 cli.add_command(session)
 cli.add_command(planet)
 cli.add_command(note)
-cli.add_command(task)
 cli.add_command(edge)
 cli.add_command(code)
 
@@ -78,22 +77,22 @@ def _read_injected_exclude_ids(topic: str, cache_dir: str | None = None) -> set[
     storage/notes.py#_write_injected_notes_cache. Missing/corrupt file → empty
     set; never raises.
     """
-    from storage.sessions import SessionManager as _SM
     import json as _json
-    import os as _os
+
+    from storage.sessions import SessionManager
     try:
-        slug = _SM.normalize_topic(topic)
+        slug = SessionManager.normalize_topic(topic)
         if cache_dir is None:
-            override = _os.environ.get("BASEMEM_INJECTED_DIR")
-            base = override or _os.path.join(
-                _os.path.expanduser("~"), ".basemem", "injected-notes"
+            override = os.environ.get("BASEMEM_INJECTED_DIR")
+            base = override or os.path.join(
+                os.path.expanduser("~"), ".basemem", "injected-notes"
             )
         else:
             base = cache_dir
-        p = _os.path.join(base, f"{slug}.json")
-        if not _os.path.isfile(p):
+        p = os.path.join(base, f"{slug}.json")
+        if not os.path.isfile(p):
             return set()
-        with open(p, "r", encoding="utf-8") as f:
+        with open(p, encoding="utf-8") as f:
             data = _json.load(f)
         return {int(i) for i in (data.get("note_ids") or [])}
     except Exception:
@@ -251,7 +250,6 @@ def stats(ctx, tokens):
         return
 
     import asyncio
-    import os
     import subprocess
     from pathlib import Path
 
@@ -419,7 +417,7 @@ def stats(ctx, tokens):
         lines.append("  Note: Run 'mem planet create <topic>' to enable full memory context injection.")
     lines.extend([
         "",
-        f"MCP Tool Schemas (25 core tools)",
+        "MCP Tool Schemas (25 core tools)",
         f"  Total schema cost:         ~{total_schema_cost:,} tokens",
         "  Largest tools:",
     ])
@@ -458,16 +456,22 @@ def recompute_links(ctx, topic, threshold, min_weight):
 
 
 @cli.command()
-def migrate():
+@click.pass_context
+def migrate(ctx):
     """Run pending database schema migrations."""
-    from storage.db import StorageManager
-    from storage.sessions import _ensure_schema
-    from pathlib import Path
-    import os
+    from storage.migrations import MigrationError, run_migrations
 
-    db_path = os.environ.get("BASEMEM_DB_PATH") or str(Path.home() / ".basemem" / "basemem.db")
-    _ensure_schema(StorageManager(db_path).connection)
-    click.echo("Schema up-to-date.")
+    storage = ctx.obj['storage']
+    try:
+        report = run_migrations(storage.connection, ctx.obj['db'])
+    except MigrationError as exc:
+        raise click.ClickException(str(exc)) from exc
+    finally:
+        storage.close()
+    click.echo(
+        f"Schema up-to-date. applied={report['applied']} skipped={report['skipped']} "
+        f"archived_tasks={report['task_rows']} backup={report['backup_path'] or 'none'}"
+    )
 
 
 @cli.command(name="prompt-context")
@@ -491,8 +495,8 @@ def prompt_context(ctx, topic, query, root, limit, out_format, max_chars):
     # Cap prompt length sent into FTS tokenizers
     if len(text) > 2000:
         text = text[:2000]
-    from storage.sessions import SessionManager
     from storage.notes import tokenize_query
+    from storage.sessions import SessionManager
     manager = SessionManager(ctx.obj['storage'])
     if not topic:
         topic = _topic_from_cwd() or get_project_root()
@@ -535,10 +539,8 @@ def prompt_context(ctx, topic, query, root, limit, out_format, max_chars):
             try:
                 code_hits = indexer.search_symbols(' '.join(tokens[:8]), limit=limit) or []
             finally:
-                try:
+                with contextlib.suppress(Exception):
                     indexer.close()
-                except Exception:
-                    pass
     except Exception:
         code_hits = []
 
@@ -626,7 +628,7 @@ def doctor():
         cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
         tables = {row[0] for row in cursor.fetchall()}
         conn.close()
-        expected = {'planets', 'notes', 'note_links', 'planet_links', 'sessions', 'tasks'}
+        expected = {'planets', 'notes', 'note_links', 'planet_links', 'sessions'}
         missing = expected - tables
         if missing:
             checks.append(('Database schema', f'fail: missing tables {missing}'))
@@ -638,7 +640,6 @@ def doctor():
         all_pass = False
 
     try:
-        import mcp_server.server
         checks.append(('MCP server import', 'pass'))
     except Exception as e:
         checks.append(('MCP server import', f'fail: {e}'))

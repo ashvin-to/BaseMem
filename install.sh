@@ -19,7 +19,7 @@ print_usage() {
 Usage: install.sh [options]
 
 Options:
-  --dir <path>     Install directory (default: $HOME/.basemem)
+  --dir <path>     Install directory (default: $HOME/.local/share/basemem)
   --version <ref>  Git ref or tag to install (default: main)
   --no-gemini      Skip Gemini extension installation
   -h, --help       Show this help
@@ -38,7 +38,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-INSTALL_DIR="${INSTALL_DIR:-$HOME/.basemem}"
+INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/share/basemem}"
 REF="${REQUESTED_VERSION:-main}"
 
 # ── Resolve source directory ──────────────────────────────────────
@@ -64,7 +64,7 @@ elif [[ -f "$SCRIPT_DIR/setup.sh" && -f "$SCRIPT_DIR/bin/lib/install.js" ]]; the
   BASE_DIR="$SCRIPT_DIR"
   echo "Using existing checkout at $BASE_DIR"
 else
-  BASE_DIR="$HOME/.basemem"
+  BASE_DIR="$HOME/.local/share/basemem"
 fi
 
 echo "Installing to $BASE_DIR"

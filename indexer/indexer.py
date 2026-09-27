@@ -93,17 +93,20 @@ class CodeIndexer:
         self.conn.execute("PRAGMA journal_mode=WAL;")
         self.conn.execute("PRAGMA busy_timeout=10000;")
         self.conn.row_factory = sqlite3.Row
-        
+
         # Register generated file detection heuristic for search down-ranking
         def is_generated(filepath: str) -> int:
-            if not filepath: return 0
+            if not filepath:
+                return 0
             import re
             patterns = [
                 r'\.pb\.go$', r'\.pulsar\.go$', r'_grpc\.pb\.go$', r'_mock\.go$', r'_mocks\.go$', r'^mock_[^/]+\.go$',
                 r'\.generated\.', r'\.gen\.', r'^zzz_', r'\.min\.', r'openapi_client',
             ]
-            if any(re.search(p, filepath) for p in patterns): return 1
-            if '/generated/' in filepath or '/gen/' in filepath or '/mocks/' in filepath or '/vendor/' in filepath: return 1
+            if any(re.search(p, filepath) for p in patterns):
+                return 1
+            if any(marker in filepath for marker in ('/generated/', '/gen/', '/mocks/', '/vendor/')):
+                return 1
             return 0
         self.conn.create_function("is_generated", 1, is_generated)
 
@@ -133,7 +136,12 @@ class CodeIndexer:
             return True
         rel = str(p.relative_to(self.project_root) if p.is_absolute() else p)
         for pattern in self._ignore_patterns:
-            if fnmatch.fnmatch(rel, pattern) or fnmatch.fnmatch(rel, f"*/{pattern}") or fnmatch.fnmatch(rel, f"{pattern}/*") or fnmatch.fnmatch(rel, f"*/{pattern}/*"):
+            if (
+                fnmatch.fnmatch(rel, pattern)
+                or fnmatch.fnmatch(rel, f"*/{pattern}")
+                or fnmatch.fnmatch(rel, f"{pattern}/*")
+                or fnmatch.fnmatch(rel, f"*/{pattern}/*")
+            ):
                 return True
         return False
 
@@ -304,7 +312,7 @@ class CodeIndexer:
                 if not query:
                     # If only type: was provided, fallback to LIKE with empty query
                     query = "%"
-        
+
         # FTS5 with error fallback
         if type_filter is None:
             try:
@@ -332,7 +340,7 @@ class CodeIndexer:
             params = []
             for s in segments:
                 params.extend([f"%{s}%", f"%{s}%"])
-            
+
             type_sql = ""
             if type_filter:
                 type_sql = " AND cs.symbol_type = ?"
@@ -353,13 +361,13 @@ class CodeIndexer:
                 return fuzzy_results
 
         like = f"%{query.strip()}%" if query != "%" else "%"
-        
+
         type_sql = ""
         params_like = [like, like, like, like]
         if type_filter:
             type_sql = " AND cs.symbol_type = ?"
             params_like.append(type_filter)
-            
+
         cur = self.conn.execute(
             f"""SELECT cs.id, cs.file_path, cs.symbol_name, cs.symbol_type,
                       cs.language, cs.signature, cs.start_line, cs.end_line,
@@ -442,6 +450,7 @@ class CodeIndexer:
         Returns:
             {"nodes": {node_id: node_dict}, "edges": [edge_dict]}
         """
+        del depth
         nodes: dict = {}
         edges: list = []
         seen_edges = set()
@@ -474,7 +483,10 @@ class CodeIndexer:
             nodes[node_id] = {
                 "id": node_id,
                 "title": r["symbol_name"],
-                "content": f"{r['symbol_type']} defined in {r['file_path']}:L{r['start_line']}-{r['end_line']}\nSignature: {r['signature'] or 'N/A'}\n{r['docstring'] or ''}".strip(),
+                "content": (
+                    f"{r['symbol_type']} defined in {r['file_path']}:L{r['start_line']}-{r['end_line']}\n"
+                    f"Signature: {r['signature'] or 'N/A'}\n{r['docstring'] or ''}"
+                ).strip(),
                 "kind": "symbol",
                 "symbol_type": r["symbol_type"],
                 "file_path": r["file_path"],
@@ -779,8 +791,8 @@ class CodeIndexer:
 
         # 1. Precise AST Callers / Imports
         ast_refs = self.conn.execute(
-            """SELECT file_path, line_number, from_name as content 
-               FROM code_edges 
+            """SELECT file_path, line_number, from_name as content
+               FROM code_edges
                WHERE to_name = ? AND project_id = ?
                LIMIT ?""",
             (symbol_name, self.project_id, limit)
@@ -792,7 +804,7 @@ class CodeIndexer:
                 "content": f"[AST Usage] called/imported by {r['content']}",
             })
             seen_defs.add((r["file_path"], r["line_number"]))
-            
+
         if len(results) >= limit:
             return results
 

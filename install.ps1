@@ -5,7 +5,7 @@
   Downloads BaseMem and installs the CLI, MCP server, and agent integrations.
   Can be run standalone without cloning the repo first.
 .PARAMETER Dir
-  Install directory (default: $env:USERPROFILE\.basemem)
+  Install directory (default: $env:LOCALAPPDATA\basemem)
 .PARAMETER Version
   Git ref or tag to install (default: main)
 .PARAMETER NoGemini
@@ -25,7 +25,7 @@ $ErrorActionPreference = "Stop"
 $RepoUrl = "https://github.com/ashvin-to/basemem.git"
 $TarballBase = "https://github.com/ashvin-to/basemem/archive"
 
-if (-not $Dir) { $Dir = "$env:USERPROFILE\.basemem" }
+if (-not $Dir) { $Dir = "$env:LOCALAPPDATA\basemem" }
 
 # ── Resolve source directory ──────────────────────────────────────
 $ScriptDir = Split-Path -Parent $PSCommandPath

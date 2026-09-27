@@ -13,26 +13,17 @@ const DEFAULT_MCP_PYTHON = path.join(BASEMEM_ROOT, 'venv', 'bin', 'python3');
 const DEFAULT_MCP_SCRIPT = path.join(BASEMEM_ROOT, 'mem-mcp.py');
 const DEFAULT_MCP_DB = path.join(os.homedir(), '.basemem', 'basemem.db');
 
-const AGENTS = [
-  { name: 'claude',    format: 'markdown', capabilities: ['rules', 'mcp', 'hooks'] },
-  { name: 'codex',     format: 'markdown', capabilities: ['rules', 'mcp', 'hooks'] },
-  { name: 'agy',       format: 'markdown', capabilities: ['rules', 'mcp', 'hooks'] },
-  { name: 'opencode',  format: 'markdown', capabilities: ['rules', 'mcp', 'plugin'] },
-  { name: 'cursor',    format: 'mdc',      capabilities: ['rules', 'mcp', 'hooks'] },
-  { name: 'devin',     format: 'markdown', capabilities: ['rules', 'mcp', 'hooks', 'plugin'] },
-  { name: 'continue',  format: 'markdown', capabilities: ['rules', 'mcp'] },
-  { name: 'cline',     format: 'markdown', capabilities: ['rules', 'mcp', 'plugin'] },
-  { name: 'zed',       format: 'markdown', capabilities: ['rules', 'mcp'] },
-  { name: 'gemini',    format: 'markdown', capabilities: ['rules', 'mcp', 'plugin'] },
-  { name: 'copilot',   format: 'markdown', capabilities: ['rules', 'mcp'] },
-  { name: 'aider',     format: 'markdown', capabilities: ['rules'], detectBinary: true },
-  { name: 'vscode',    format: 'markdown', capabilities: ['mcp'], detectBinary: true, binaryName: 'code', skipRules: true },
-  { name: 'kilo',      format: 'markdown', capabilities: ['rules', 'mcp', 'plugin'] },
-  { name: 'kiro',      format: 'markdown', capabilities: ['rules', 'mcp', 'hooks'] },
-  { name: 'hermes',    format: 'markdown', capabilities: ['rules', 'mcp'] },
-  { name: 'vibe',      format: 'markdown', capabilities: ['rules', 'mcp'] },
-  { name: 'windsurf',  format: 'markdown', capabilities: ['rules', 'mcp'] },
-];
+const INTEGRATION_MANIFEST = JSON.parse(fs.readFileSync(path.join(__dirname, 'integrations.json'), 'utf8'));
+const AGENTS = INTEGRATION_MANIFEST.integrations.map(agent => ({
+  name: agent.name,
+  format: agent.format,
+  capabilities: agent.capabilities,
+  detectBinary: agent.detect_binary,
+  binaryName: agent.binary_name,
+  skipRules: agent.skip_rules,
+  displayName: agent.display_name,
+  tier: agent.tier,
+}));
 
 const TIER_RULES = { 1: BASEMEM_RULES_TIER1, 2: BASEMEM_RULES_TIER2, 3: BASEMEM_RULES_TIER3 };
 
@@ -771,7 +762,7 @@ function deployOpencodeCommands() {
   const destDir = path.join(home, '.config', 'opencode', 'commands');
   if (!fs.existsSync(srcDir)) return { deployed: false, reason: 'source missing' };
   fs.mkdirSync(destDir, { recursive: true });
-  const files = fs.readdirSync(srcDir).filter(f => f.endsWith('.md'));
+  const files = fs.readdirSync(srcDir).filter(f => f.endsWith('.md') && f !== 'tasks.md');
   for (const f of files) {
     fs.copyFileSync(path.join(srcDir, f), path.join(destDir, f));
   }
@@ -844,6 +835,7 @@ function installSkills(agentName, customDestDir) {
   for (const entry of fs.readdirSync(skillsSrc)) {
     const full = path.join(skillsSrc, entry);
     if (fs.statSync(full).isDirectory()) {
+      if (entry === 'task-workflow') continue;
       const targetSkillDir = path.join(destDir, entry);
       fs.mkdirSync(targetSkillDir, { recursive: true });
       for (const sf of fs.readdirSync(full)) {
@@ -879,6 +871,7 @@ function installSkills(agentName, customDestDir) {
       for (const entry of fs.readdirSync(skillsSrc)) {
         const full = path.join(skillsSrc, entry);
         if (fs.statSync(full).isDirectory()) {
+          if (entry === 'task-workflow') continue;
           const targetSkillDir = path.join(extra, entry);
           fs.mkdirSync(targetSkillDir, { recursive: true });
           for (const sf of fs.readdirSync(full)) {
@@ -1527,6 +1520,23 @@ if (require.main === module || process.argv[2]) {
       for (const result of clientResults) console.log(`${result.name}: ${result.status}${result.missing.length ? ` (${result.missing.join(', ')})` : ''}`);
     }
     process.exit(failed ? 1 : 0);
+  }
+
+  if (cmd === 'install' && process.argv[3] === 'all') {
+    const results = installAll();
+    for (const [name, res] of Object.entries(results)) {
+      if (name === '_cli' || name === '_pkg') continue;
+      const parts = [];
+      if (res.rule && res.rule.written) parts.push('rules');
+      if (res.hooks && res.hooks.deployed) parts.push('hooks');
+      if (res.settings && res.settings.merged) parts.push('settings');
+      if (res.mcp && res.mcp.written) parts.push('mcp');
+      if (res.skills && res.skills.copied) parts.push('skills');
+      console.log(`${name}: ${parts.length ? parts.join(', ') : 'no action'}`);
+    }
+    if (results._pkg && results._pkg.reinstalled) console.log('pkg: pip install -e . (reinstalled)');
+    if (results._cli && results._cli.written) console.log(`cli: mem wrapper at ${results._cli.path}`);
+    process.exit(0);
   }
 
   if (cmd === 'install') {

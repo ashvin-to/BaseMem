@@ -14,7 +14,6 @@ agent skips the MCP surface.
 """
 import json
 import os
-import sqlite3
 import sys
 
 # Allow running from repo root or via the MCP entry script
@@ -22,10 +21,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from mcp_server.server import get_db_path
-from storage.db import StorageManager
-from storage.sessions import SessionManager
-
+from mcp_server.server import get_db_path  # noqa: E402
+from storage.db import StorageManager  # noqa: E402
+from storage.sessions import SessionManager  # noqa: E402
 
 # Native tool -> (verb, param key holding the target path/pattern)
 NATIVE_TOOLS = {
@@ -103,16 +101,15 @@ def main():
     try:
         raw = sys.stdin.read()
         payload = json.loads(raw) if raw.strip() else {}
-    except Exception as e:
+    except Exception:
         payload = {}
 
-    if not payload:
+    if not payload and len(sys.argv) > 1:
         # Also accept args form: capture_native.py '<json>'
-        if len(sys.argv) > 1:
-            try:
-                payload = json.loads(sys.argv[1])
-            except Exception:
-                payload = {}
+        try:
+            payload = json.loads(sys.argv[1])
+        except Exception:
+            payload = {}
 
     try:
         result = capture(payload)

@@ -1,0 +1,138 @@
+{
+  "complexity_checks": [
+    {
+      "metric": "fts_search",
+      "observed_growth": 26.282040985781716,
+      "quadratic_suspected": false,
+      "size_growth": 100.0
+    },
+    {
+      "metric": "metadata_filter",
+      "observed_growth": 1.0,
+      "quadratic_suspected": false,
+      "size_growth": 100.0
+    },
+    {
+      "metric": "graph_traversal",
+      "observed_growth": 34.33253782354267,
+      "quadratic_suspected": false,
+      "size_growth": 100.0
+    },
+    {
+      "metric": "retrieval",
+      "observed_growth": 1.0,
+      "quadratic_suspected": false,
+      "size_growth": 100.0
+    },
+    {
+      "metric": "context_compilation",
+      "observed_growth": 1.0,
+      "quadratic_suspected": false,
+      "size_growth": 100.0
+    }
+  ],
+  "measurements": [
+    {
+      "bounded_seconds": 120.0,
+      "context_compilation": {
+        "ms": 6.145167993963696,
+        "sections": 1
+      },
+      "count": 1000,
+      "database_size_bytes": 671744,
+      "fts_search": {
+        "ms": 1.1161959992023185,
+        "results": 10
+      },
+      "graph_traversal": {
+        "ms": 0.8003149996511638,
+        "results": 4
+      },
+      "insert": {
+        "rows_per_second": 30409.187858082943,
+        "seconds": 0.03288479799812194
+      },
+      "metadata_filter": {
+        "ms": 0.5231790055404417,
+        "results": 77
+      },
+      "retrieval": {
+        "ms": 0.3319530005683191,
+        "results": 10
+      },
+      "startup": {
+        "ms": 1.9929010013584048
+      }
+    },
+    {
+      "bounded_seconds": 120.0,
+      "context_compilation": {
+        "ms": 4.523638002865482,
+        "sections": 1
+      },
+      "count": 10000,
+      "database_size_bytes": 5341184,
+      "fts_search": {
+        "ms": 7.2385870007565245,
+        "results": 10
+      },
+      "graph_traversal": {
+        "ms": 5.232381001405884,
+        "results": 4
+      },
+      "insert": {
+        "rows_per_second": 29433.7787485059,
+        "seconds": 0.3397457079991
+      },
+      "metadata_filter": {
+        "ms": 0.8451930043520406,
+        "results": 100
+      },
+      "retrieval": {
+        "ms": 0.349497000570409,
+        "results": 10
+      },
+      "startup": {
+        "ms": 1.9670289984787814
+      }
+    },
+    {
+      "bounded_seconds": 120.0,
+      "context_compilation": {
+        "ms": 2.796718996251002,
+        "sections": 1
+      },
+      "count": 100000,
+      "database_size_bytes": 52416512,
+      "fts_search": {
+        "ms": 29.33590899920091,
+        "results": 10
+      },
+      "graph_traversal": {
+        "ms": 27.47684499627212,
+        "results": 4
+      },
+      "insert": {
+        "rows_per_second": 31258.83024835661,
+        "seconds": 3.19909603799897
+      },
+      "metadata_filter": {
+        "ms": 0.416378999943845,
+        "results": 100
+      },
+      "retrieval": {
+        "ms": 0.2267760064569302,
+        "results": 10
+      },
+      "startup": {
+        "ms": 1.7146429963759147
+      }
+    }
+  ],
+  "scales": [
+    1000,
+    10000,
+    100000
+  ],
+  "schema": 1
+}

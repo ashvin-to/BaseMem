@@ -3,12 +3,11 @@
 import os
 import tempfile
 from pathlib import Path
-import pytest
 
-from storage.db import StorageManager
-from storage.sessions import SessionManager
 from indexer.indexer import CodeIndexer
 from indexer.watcher import CodeGraphWatcher
+from storage.db import StorageManager
+from storage.sessions import SessionManager
 
 
 def test_task_43_auto_extract_memories_and_contradictions():
@@ -31,7 +30,13 @@ def test_task_43_auto_extract_memories_and_contradictions():
 
         # 2. Contradiction Resolution
         manager.add_note("BaseMem", "basemem", "decision", "We decided to use PostgreSQL for main storage", title="PostgreSQL decision")
-        manager.add_note("BaseMem", "basemem", "decision", "We decided to use SQLite instead of PostgreSQL for main storage", title="SQLite decision instead of PostgreSQL")
+        manager.add_note(
+            "BaseMem",
+            "basemem",
+            "decision",
+            "We decided to use SQLite instead of PostgreSQL for main storage",
+            title="SQLite decision instead of PostgreSQL",
+        )
 
         res = manager.resolve_contradictions("BaseMem")
         assert res["resolved_count"] >= 1
@@ -61,7 +66,13 @@ def test_task_45_multi_layer_context_reranking():
 
         # Add sample notes
         n1 = manager.add_note("BaseMem", "basemem", "fact", "Tree-sitter parser implementation details", title="Tree-sitter Parser")
-        n2 = manager.add_note("BaseMem", "basemem", "decision", "Decided to implement multi-layer context reranking combining FTS and graph distance", title="Context Re-Ranking Decision")
+        n2 = manager.add_note(
+            "BaseMem",
+            "basemem",
+            "decision",
+            "Decided to implement multi-layer context reranking combining FTS and graph distance",
+            title="Context Re-Ranking Decision",
+        )
 
         # Link notes to give n2 higher graph connectivity
         n1_id = manager._parse_note_id(n1["id"])

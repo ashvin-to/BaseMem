@@ -1,231 +1,145 @@
-# BaseMem: AI Knowledge Base System
+# BaseMem
 
-Lightweight, persistent memory for AI agents. Planets hold task context, notes persist decisions, linked edges form a learnable graph. **31 MCP tools** let any agent read and write the same data, with zero background RAM consumption via standard `stdio` single-binary executable launching (`basemem-mcp`). Session-start hooks/plugins auto-inject memory context into every chat session — no manual `getContext` call needed.
+BaseMem is a local-first persistent project memory for coding agents. It keeps durable notes, decisions, project state, sessions, links, and code-graph evidence in SQLite so agents can recover context without making the model or a hosted service the source of truth.
 
-## Quick Start
+**BaseMem does not replace coding-agent todos.** Keep checklists, sprint planning, and work assignment in the agent or project tool that owns delivery. BaseMem stores the durable context around that work; it is not a writable first-class task manager.
 
-### Standalone (no git required)
+## Quick start
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ashvin-to/basemem/main/install.sh | bash
-```
-
-### From repo
-
-```bash
-git clone https://github.com/ashvin-to/BaseMem.git
-cd BaseMem
-chmod +x setup.sh && ./setup.sh  # uses uv if available, falls back to pip
-```
-
-### Install for your agent
-
-```bash
-# Install rules + MCP config + hooks for all detected agents
-node bin/lib/install.js install-all
-
-# Or per-agent
-node bin/lib/install.js install claude
-node bin/lib/install.js install opencode
-node bin/lib/install.js uninstall codex
-```
-
-### Verify
-
-```bash
 mem list-planets
-mem planet create "my-project" --goal "Build feature X"
 mem log "Use SQLite with WAL mode for concurrency" --topic "my-project"
-mem viz  # Launch D3 visualization web server at http://127.0.0.1:5000
 ```
 
-## Token Optimization
-
-BaseMem is designed to minimize LLM context consumption:
-
-- **Rules**: Compact shared core (~65 tokens/session) — behavioral directives only, no verbose headers
-- **Skills**: Modular skill folders with explicit decision matrices, workflows, and gotchas
-- **MCP server**: Executable binary launcher (`~/.local/bin/basemem-mcp`) with lazy instructions (no DB query on connect)
-
-## Slash Commands & CLI Logging
-
-BaseMem provides top-level logging and visualization commands in CLI and slash commands for supported IDEs:
-
-| Command | Purpose |
-|---------|---------|
-| `mem log "msg" --topic "name"` | Log a decision or fact directly to a planet in one pass |
-| `mem viz` | Launch D3 graph visualization web server |
-| `/ctx` | Fetch memory context for a project |
-| `/log` | Log a decision or fact |
-| `/review` | Review changed files with blast radius |
-| `/mem` | Show project memory status |
-| `/compact` | Compact old notes (keep summaries + 30 recent) |
-| `/tasks` | List project tasks |
-
-Deployed to:
-- **Opencode**: `~/.config/opencode/commands/`
-- **Antigravity**: `~/.gemini/antigravity-cli/skills/`
-
-## How It Works
-
-BaseMem installs **hooks** (for agents that support them) or **plugins** (for agent platforms with plugin systems) that fire at session/turn start. These hooks:
-
-1. Detect the current project directory
-2. Call `mem agent-context` to fetch stored memory for that project
-3. Inject the context directly into the agent's prompt — no extra tool calls
-
-If context was fetched successfully, the agent sees it as a `KNOWLEDGE_BASE_CONTEXT` block and knows not to call `getContext`. If no context exists, a fallback message tells the agent to call `getContext` once.
-
-**Supported agents by capability:**
-
-| Agent | Capabilities | Config Path |
-|-------|-------------|-------------|
-| Claude Code | rules + MCP + hooks + skills | `~/.claude.json` |
-| Codex CLI | rules + MCP + hooks + skills | `~/.codex/config.toml` |
-| Antigravity (agy) | rules + MCP + hooks + skills | `~/.gemini/config/mcp_config.json` |
-| OpenCode | rules + MCP + plugin + skills | `~/.config/opencode/opencode.jsonc` |
-| Cursor | rules + MCP + hooks + skills | `~/.cursor/mcp.json` |
-| Devin | rules + MCP + hooks + plugin + skills | `~/.config/devin/mcp_config.json` |
-| Cline | rules + MCP + plugin + skills | `~/.cline/mcp.json` & `cline_mcp_settings.json` |
-| Kilo | rules + MCP + plugin + skills | `~/.config/kilo/kilo.jsonc` |
-| Kiro | rules + MCP + hooks + skills | `~/.kiro/settings/mcp.json` |
-| Gemini CLI | rules + MCP + plugin + skills | `~/.gemini/settings.json` |
-| Continue | rules + MCP | `~/.continue/config.json` |
-| Zed | rules + MCP | `~/.config/zed/settings.json` |
-| GitHub Copilot | rules + MCP + skills | `~/.copilot/mcp-config.json` |
-| Crush | rules + MCP | `~/.config/crush/crush.json` |
-| Mistral Vibe | rules + MCP + skills | `~/.vibe/config.toml` |
-| Windsurf | rules + MCP + skills | `~/.codeium/windsurf/mcp_config.json` |
-| Aider | rules | `~/.aider/` (binary detection) |
-| VS Code | MCP | `~/.config/Code/User/mcp.json` |
-| Hermes | rules + MCP | `~/.hermes/config.yaml` |
-
-Run `node bin/lib/install.js detect` to see which are detected on your system.
-
-## Install / Uninstall
-
-### One-shot (all detected agents)
+From a checkout:
 
 ```bash
-node bin/lib/install.js install-all     # rules + MCP + hooks for every detected agent
-node bin/lib/install.js uninstall-all   # remove everything
+chmod +x setup.sh && ./setup.sh
+node bin/lib/install.js install-all
+mem agent-context --topic "my-project"
 ```
 
-### Per-agent
+The installer supports a broad set of coding agents. Run `node bin/lib/install.js capabilities` for the configured capability matrix, or `detect` to see which agents are present locally.
 
-```bash
-node bin/lib/install.js install claude
-node bin/lib/install.js uninstall codex
-```
+## What persists
 
-### MCP only
+- **Memory:** typed notes for facts, decisions, constraints, discoveries, preferences, bugs, workarounds, architecture, conventions, hypotheses, and history.
+- **Memory metadata:** bounded importance and confidence, scope, source/provenance, evidence fields, temporal validity, and supersession links.
+- **Project state:** current state, goals, handoffs, and next steps.
+- **Sessions:** start, pause, resume, and close records so a later agent can recover the thread.
+- **Code intelligence:** a local tree-sitter index with symbol search, bounded source windows, call relationships, review context, and grounded change evidence.
+- **MCP and CLI:** all interfaces use the same local SQLite database; there is no synchronization service.
 
-```bash
-node bin/lib/install.js install-mcp
-node bin/lib/install.js install-mcp cursor
-node bin/lib/install.js uninstall-mcp
-```
-
-### Standalone installer options
-
-```bash
-bash install.sh --dir ~/custom/path
-bash install.sh --version v0.1.0
-bash install.sh --no-gemini
-```
-
-### Uninstall
-
-```bash
-./uninstall.sh              # removes configs, hooks, MCP entries (keeps data)
-./uninstall.sh --purge-data # also removes ~/.basemem/ (db + sessions)
-./uninstall.sh --purge-env  # also removes venv
-```
-
-## Running Tests
-
-```bash
-pytest tests/ -v              # Python tests (MCP tools, sessions, tasks, API)
-bash bin/lib/test/run.sh      # JS installer tests
-```
-
-## Docs
-
-- **[doc/memory.md](./doc/memory.md)** — planets, notes, graphs, CLI, data models, auto-linking, memory tiers, all 25 MCP tools
-- **[doc/code-intelligence.md](./doc/code-intelligence.md)** — tree-sitter code indexing, code tools, zero-read edit workflow
-- **[doc/tasks.md](./doc/tasks.md)** — task system, CLI, MCP tools, dependency cycle prevention
-- **[doc/visualization.md](./doc/visualization.md)** — D3.js knowledge graph visualizer, web server, REST API reference
+The connected agent performs interpretation, summarisation, and retrieval decisions. BaseMem itself does not require an embedding model, vector database, or background model server.
 
 ## Architecture
 
-**Zero-RAM "Dumb Storage" Layer.** No Torch, Transformers, or FAISS. All intelligence (summaries, similarity, reranking) is provided by the connected AI agent. Memory uses ~35MB RAM.
+1. `storage/` owns SQLite, WAL-mode concurrency, FTS5 search, and the data model.
+2. `mcp_server/` exposes memory, graph, session, and code-intelligence tools over stdio.
+3. `cli/` provides the `mem` command for direct inspection and logging.
+4. `indexer/` stores a per-project `.basemem.code.db` index built from source files.
+5. `server.py` provides an optional local visualization/API surface.
+6. `bin/lib/install.js` deploys integration rules, MCP configuration, hooks/plugins, and skills to detected agents.
 
-All interfaces (CLI, MCP, Flask) read and write the same SQLite tables — no sync needed.
+The MCP executable is launched locally over stdio. BaseMem has no required network dependency after installation and does not send project memory to a hosted service.
 
-### Core Components
+## Retrieval and session context
 
-1. **Storage Layer** (`storage/`) — SQLite + FTS5 with WAL journal mode and 10s busy timeouts for high-concurrency safety; `SessionManager`, schema: planets, notes, note_links, planet_links, sessions, tasks; config via env vars
-2. **MCP Server** (`mcp_server/server.py`) — 31 tools registered via stdio executable launcher (`~/.local/bin/basemem-mcp`)
-3. **Hook System** (`src/hooks/`) — session-start hook scripts shared across agents, context fetching via `mem agent-context`, conditional preamble injection
-4. **Agent Plugins** (`src/agents/`) — per-agent plugin/hook definitions (opencode, cline, gemini, kilo, kiro, etc.)
-5. **Web Hub** (`server.py`) — Flask REST API, D3.js graph visualization
-6. **CLI** (`cli/`) — subcommands: log, planet, note, task, session, code, edge
-7. **Code Intelligence** (`indexer/`) — tree-sitter powered, per-project `.basemem.code.db`
+Session-start hooks or plugins identify the current project, fetch a compact context, and inject it into the agent prompt. Agents with no hook/plugin support receive tiered rules that tell them how to retrieve context once. A session records the memory written during an interaction; it is a continuity record, not a task tracker.
 
-### Project Structure
+Retrieval is local and explainable:
 
-```
-BaseMem/
-├── cli/              # CLI subcommands (planet, note, task, session, code, edge)
-├── graph/            # Graph engine (auto-linking, traversal)
-├── indexer/          # Code intelligence (tree-sitter indexing, search, trace)
-├── mcp_server/       # MCP server — 25 core tools (34 with advanced)
-├── storage/          # SQLite storage layer
-│   ├── sessions.py   # Session manager (auto-recovery, stamping, context)
-│   ├── planets.py    # Planet CRUD
-│   ├── notes.py      # Note CRUD + linking
-│   └── tasks.py      # Task CRUD + dependency cycle detection
-├── src/
-│   ├── hooks/        # Shared session-start hook scripts
-│   │   ├── lib/
-│   │   │   ├── context.js    # mem agent-context fetcher with topic fallback
-│   │   │   └── output.js     # Format-aware hook output (claude, codex, cursor, agy)
-│   │   └── basemem-session-start.js
-│   └── agents/       # Per-agent hook configs + plugins
-│       ├── opencode/  # OpenCode V2 plugin
-│       ├── cline/     # Cline AgentPlugin
-│       ├── gemini/    # Gemini extension
-│       └── ...
-├── bin/
-│   └── lib/
-│       ├── install.js    # CLI installer (rules + MCP + hooks + plugins)
-│       ├── constants.js  # Agent paths, markers
-│       ├── rules.js      # Rule file write/remove
-│       └── settings.js   # Settings merge/clean
-├── models.py         # Data models
-├── server.py         # Flask REST API + D3 viz
-├── mem.py            # CLI entry point
-├── mem-mcp.py        # MCP entry point
-├── setup.sh / setup.ps1
-├── install.sh / install.ps1
-├── extensions/gemini/  # Gemini CLI extension
-├── tests/
-├── doc/
-│   ├── memory.md
-│   ├── code-intelligence.md
-│   └── tasks.md
-└── README.md
+```text
+query
+→ FTS5 candidates
+→ topic/scope and confidence filtering
+→ current or historical validity
+→ type, importance, confidence, and graph scoring
+→ supersession resolution
+→ top-K selection
+→ budgeted context compilation
 ```
 
-## Development
+Current queries prefer active memories and exclude superseded claims. Queries containing historical intent such as “previously” or “before” can retrieve superseded history. Ranking results expose FTS, type, importance, confidence, graph, temporal, supersession, and final scores for diagnostics; normal agent context remains concise.
+
+The context compiler emits only useful sections such as `RELEVANT DECISIONS`, `CURRENT PROJECT FACTS`, `IMPORTANT CONSTRAINTS`, `RECENT DISCOVERIES`, and `RELEVANT HISTORY`, while respecting the requested token budget. Retrieval uses memory for durable rationale and state; inspect current source, artifacts, and tests before making claims. The code-intelligence tools provide compact symbol context and call paths; they do not replace reading the exact source or running tests.
+
+## Retrieval benchmark
+
+The benchmark contains 120 deterministic queries across three synthetic coding projects, including direct facts, decisions, rationale, constraints, architecture, bugs, workarounds, discoveries, preferences, code relationships, history, supersession, contradictions, scope, ambiguity, and no-answer cases. It stores graded relevance labels and failure classifications in `benchmark/baseline.json` and `benchmark/after.json`.
+
+Measured after the quality pass:
+
+| Metric | Result |
+|---|---:|
+| Recall@1 / @3 / @5 / @10 | 0.6481 / 0.7963 / 0.7963 / 0.7963 |
+| Precision@1 / @3 / @5 / @10 | 0.6417 / 0.2667 / 0.1600 / 0.0800 |
+| MRR / nDCG | 0.7593 / 0.7339 |
+| Irrelevant-result rate | 0.1531 |
+| No-answer false-positive rate | 0.0000 |
+| Historical / contradiction accuracy | 1.0000 / 1.0000 |
+| Mean / p95 latency | 4.11 ms / 5.17 ms |
+
+The benchmark is intentionally local and does not use embeddings or hosted services.
+
+The performance harness also measures 1,000, 10,000, and 100,000 memories. On the current development environment, the 100,000-memory run inserted rows in 3.20 seconds, completed FTS search in 29.34 ms, used a 52.42 MB database, and showed no automated quadratic-growth signal. See `benchmark/performance.json` for the complete run.
+
+## Supported integration tiers
+
+`bin/lib/integrations.json` is the machine-readable manifest. `bin/lib/install.js` derives deployment behaviour from it, and `doc/integrations.md` is the generated-readable capability matrix.
+
+- **Tier 1:** rules, MCP, and session hooks. Best context injection.
+- **Tier 2:** rules, MCP, and a native plugin. Stronger platform-native integration.
+- **Tier 3:** rules and/or MCP configuration. Portable fallback for agents without reliable hooks/plugins.
+
+The manifest includes MCP-only profiles and rules-only profiles. A profile describes a deployment capability, not a claim that every agent has identical lifecycle hooks. Integrations are deliberately broad and remain independent of the memory schema.
+
+## Local storage, privacy, and data exit
+
+By default, memory is stored at `~/.basemem/basemem.db` and code indexes at `.basemem.code.db` inside the indexed project. Standalone installers keep application files separately under `~/.local/share/basemem` (or `%LOCALAPPDATA%\\basemem` on Windows) so `~/.basemem` remains the data directory. SQLite `*-wal` and `*-shm` files are transient companion files and are ignored by Git.
+
+The optional Flask surface binds to `127.0.0.1` by default. Set `BASEMEM_CODE_WORKSPACE` to the directory containing projects you intend to expose through code APIs. Set `BASEMEM_CORS_ORIGINS` to a comma-separated allowlist only when a trusted local browser needs API access; wildcard CORS is not enabled. `BASEMEM_HOST` and `BASEMEM_PORT` configure the optional server, but changing the host can expose data and should be done deliberately.
+
+BaseMem does not log credentials, tokens, or complete request payloads. The database remains local unless the user explicitly copies it or configures an agent/runtime that transmits it. To export data, stop the agent integrations, copy the SQLite database and any code indexes you want to retain, and use the normal filesystem transfer mechanism. To remove data, use `uninstall.sh --purge-data` or delete `~/.basemem` after backing it up. Removing integrations does not remove memory.
+
+## Migration and legacy task workflow
+
+The historical task table and task tools are retained in the storage compatibility layer for existing databases, but they are not advertised or deployed as a new BaseMem workflow. This preserves old data during migration without presenting tasks as the product model. Use the agent's own todo/task mechanism for current work; record durable decisions, blockers, and handoffs as memory notes.
+
+`doc/tasks.md` is a migration archive. It documents the old schema and explains how to preserve, inspect, or remove legacy task data during an upgrade. New integrations do not install task commands or task-workflow skills. Uninstallers still remove those files from older installations.
+
+## Commands
+
+```text
+mem log "message" --topic "project"   Record a durable decision or fact
+mem planet show "project"               Read project state
+mem session-start ...                   Start or resume continuity
+mem session-end ...                     Close or pause continuity
+mem code-init .                         Build the local code index
+mem code-search "symbol" --project .    Find code symbols
+mem viz                                 Start the optional local viewer
+```
+
+Use `/ctx`, `/log`, `/review`, `/mem`, and `/compact` where the agent integration provides them. Use the agent-native todo/task facility for actionable work items.
+
+## Development and tests
 
 ```bash
-python -m venv venv && source venv/bin/activate && pip install -e .
-# or with uv:
-uv pip install --python venv/bin/python -e .
-pytest tests/ -v
+bash bin/lib/test/run.sh
+uv run pytest -q
 ```
+
+The test suite includes installer, API, session, code-intelligence, extraction, graph, migration, retrieval benchmark, context quality, performance, and concurrency coverage. The current validation run reports 242 passing Python tests, all installer tests passing, Ruff clean, and Mypy clean across 67 source files. Integration support is verified against the manifest so documentation cannot drift into advertising a capability the installer does not configure.
+
+## Documentation
+
+- [Memory and graph](doc/memory.md)
+- [Code intelligence](doc/code-intelligence.md)
+- [Visualization](doc/visualization.md)
+- [Supported integrations](doc/integrations.md)
+- [Legacy task migration archive](doc/tasks.md)
 
 ## License
 
-[MIT](./LICENSE)
+MIT. See [LICENSE](LICENSE).

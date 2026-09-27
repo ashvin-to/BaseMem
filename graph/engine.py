@@ -91,8 +91,9 @@ class GraphEngine:
 
     def get_virtual_code_overlay(self, project_root: str = "", symbol_name: str = "", limit: int = 50) -> dict:
         """Fetch virtual AST code nodes and cross-link bridge edges with memory nodes."""
-        from indexer.indexer import CodeIndexer, CODE_DB_FILENAME
         import os
+
+        from indexer.indexer import CODE_DB_FILENAME, CodeIndexer
 
         if not project_root:
             project_root = getattr(self.storage, "project_root", os.getcwd())
@@ -116,13 +117,15 @@ class GraphEngine:
             for vnode_id, vnode in vgraph["nodes"].items():
                 sym_name = vnode.get("title", "").lower()
                 if sym_name and len(sym_name) > 3 and sym_name in text:
-                    bridge_edges.append({
-                        "from_id": memory_node.id,
-                        "to_id": vnode_id,
-                        "edge_type": "REFERENCES_CODE",
-                        "weight": 0.8,
-                        "virtual": True,
-                    })
+                    bridge_edges.append(
+                        {
+                            "from_id": memory_node.id,
+                            "to_id": vnode_id,
+                            "edge_type": "REFERENCES_CODE",
+                            "weight": 0.8,
+                            "virtual": True,
+                        }
+                    )
 
         vgraph["edges"].extend(bridge_edges)
         return vgraph
@@ -248,10 +251,11 @@ class GraphEngine:
         This method operates on the legacy `Node`/`Edge` model (UUID keys).
         """
         import warnings
+
         warnings.warn(
-            "GraphEngine.auto_link_nodes is deprecated. "
-            "Use SessionManager.recompute_links() instead.",
-            DeprecationWarning, stacklevel=2,
+            "GraphEngine.auto_link_nodes is deprecated. Use SessionManager.recompute_links() instead.",
+            DeprecationWarning,
+            stacklevel=2,
         )
         new_node = self.storage.get_node(new_node_id)
         if not new_node:
@@ -337,6 +341,5 @@ class GraphEngine:
             "edges": len(all_edges),
             "clusters": len(self.get_clusters()),
             "avg_clustering_coeff": avg_clustering,
-            "edge_types": {et.value: sum(1 for e in all_edges if e.edge_type == et)
-                          for et in EdgeType},
+            "edge_types": {et.value: sum(1 for e in all_edges if e.edge_type == et) for et in EdgeType},
         }

@@ -1,14 +1,14 @@
 """Tests for AST Call-Graph Indexing integration into BaseMem graph nodes (Task-42)."""
 
-import os
 import tempfile
 from pathlib import Path
+
 import pytest
 
-from storage.db import StorageManager
-from models import Node, NodeType
 from graph.engine import GraphEngine
 from indexer.indexer import CodeIndexer
+from models import Node, NodeType
+from storage.db import StorageManager
 
 
 @pytest.fixture

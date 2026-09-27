@@ -3,7 +3,6 @@ import json
 import os
 import sqlite3
 import subprocess
-import sys
 import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -14,7 +13,7 @@ PYTHON = 'python3'
 def run_capture(payload, db_path):
     env = dict(os.environ)
     env['BASEMEM_DB_PATH'] = db_path
-    p = subprocess.run(
+    return subprocess.run(
         [PYTHON, CAPTURE_PY],
         input=json.dumps(payload),
         capture_output=True,
@@ -22,7 +21,6 @@ def run_capture(payload, db_path):
         env=env,
         cwd=ROOT,
     )
-    return p
 
 
 def notes(db_path):

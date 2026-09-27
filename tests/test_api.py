@@ -30,6 +30,22 @@ def client():
         app.config["TESTING"] = orig_testing
 
 
+class TestSecurity:
+    def test_code_api_confines_project_roots(self, client, tmp_path, monkeypatch):
+        monkeypatch.setenv("BASEMEM_CODE_WORKSPACE", str(tmp_path))
+        project = tmp_path / "project"
+        project.mkdir()
+        outside = tmp_path.parent / "outside"
+        outside.mkdir(exist_ok=True)
+
+        assert client.get("/api/code/status", query_string={"root": str(outside)}).status_code == 400
+        assert client.get("/api/code/status", query_string={"root": str(project)}).status_code == 404
+
+    def test_cors_is_not_wildcard_by_default(self, client):
+        response = client.get("/", headers={"Origin": "https://untrusted.example"})
+        assert "Access-Control-Allow-Origin" not in response.headers
+
+
 class TestIndex:
     def test_index(self, client):
         resp = client.get("/")

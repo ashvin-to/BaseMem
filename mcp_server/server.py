@@ -1091,15 +1091,6 @@ def getContext(topic: str = "", project: str = "", query: str = "") -> str:
     storage = StorageManager(db_path)
     manager = SessionManager(storage)
 
-    try:
-        storage.connection.execute(
-            "INSERT OR IGNORE INTO notes (topic, kind, content, agent_id, turn_index) VALUES (?, 'turn', ?, 'system', 0)",
-            (SessionManager.normalize_topic(topic), f"Context retrieved (query: {query or 'none'})"),
-        )
-        storage.connection.commit()
-    except Exception:
-        pass
-
     ctx = manager.get_context(topic, query=query)
     lines.extend(ctx.splitlines()[1:])  # skip the "ctx:" line already added
 
@@ -1351,7 +1342,7 @@ def prompt_context(query: str, topic: str = "", projectRoot: str = "", limit: in
         croot = _os.path.abspath(projectRoot or _os.getcwd())
         cur = croot
         found = None
-        for _ in range(4):
+        for _ in range(8):  # Increased from 4 to 8 for deeper monorepo structures
             cand = _os.path.join(cur, CODE_DB_FILENAME)
             if _os.path.isfile(cand):
                 found = cur
@@ -1547,107 +1538,6 @@ def note_update(noteId: str | int, pinned: bool | None = None, tags: str | None 
     storage = StorageManager(get_db_path())
     manager = SessionManager(storage)
     return manager.note_update(noteId, pinned=pinned, tags=tags)
-
-
-# ── Task MCP tools ─────────────────────────────────────────────
-
-
-@server.tool(description="Create a task on a planet. Returns the task id.")
-def task_create(topic: str, title: str, priority: str = "medium", depends_on: list | None = None, files: list | None = None, notes: list | None = None) -> str:
-    from storage.db import StorageManager
-    from storage.sessions import SessionManager
-    storage = StorageManager(get_db_path())
-    manager = SessionManager(storage)
-    if notes:
-        notes = [int(n.replace("note-", "")) if isinstance(n, str) and "note-" in n else int(n) for n in notes]
-    if depends_on:
-        depends_on = [int(d.replace("task-", "")) if isinstance(d, str) and "task-" in d else int(d) for d in depends_on]
-    result = manager.create_task(topic, title, priority=priority, depends_on=depends_on, files=files, notes=notes)
-    deps = json.loads(result.get("depends_on", "[]"))
-    parts = [f"Task created: task-{result['id']} [{result['status']}/{result['priority']}] {result['title']}"]
-    if deps:
-        parts.append(f"  depends_on: {deps}")
-    return "\n".join(parts)
-
-
-@server.tool(description="Update a task's status, priority, files, or notes.")
-def task_update(task_id: int, status: str | None = None, priority: str | None = None, files: list | None = None, notes: list | None = None) -> str:
-    from storage.db import StorageManager
-    from storage.sessions import SessionManager
-    storage = StorageManager(get_db_path())
-    manager = SessionManager(storage)
-    if notes:
-        notes = [int(n.replace("note-", "")) if isinstance(n, str) and "note-" in n else int(n) for n in notes]
-    ok, msg = manager.update_task(task_id, status=status, priority=priority, files=files, notes=notes)
-    return msg
-
-
-@server.tool(description="Batch-update multiple tasks in one call using {task_id, status, priority, files, notes} objects. Returns one compact result per task.")
-def task_update_many(updates: list[dict]) -> str:
-    from storage.db import StorageManager
-    from storage.sessions import SessionManager
-
-    storage = StorageManager(get_db_path())
-    manager = SessionManager(storage)
-    results = []
-    for update in updates:
-        task_id = update.get("task_id")
-        if task_id is None:
-            results.append("error: missing task_id")
-            continue
-        notes = update.get("notes")
-        if notes:
-            notes = [int(n.replace("note-", "")) if isinstance(n, str) and "note-" in n else int(n) for n in notes]
-        ok, message = manager.update_task(
-            int(task_id),
-            status=update.get("status"),
-            priority=update.get("priority"),
-            files=update.get("files"),
-            notes=notes,
-        )
-        results.append(f"task-{task_id}: {'ok' if ok else 'error'} {message}")
-    return f"task_update_many updated={len(results)} errors={sum(1 for r in results if r.startswith('error'))}\n" + "\n".join(results)
-
-
-@server.tool(description="List tasks, optionally filtered by topic, status, priority.")
-def task_list(topic: str | None = None, status: str | None = None, priority: str | None = None) -> str:
-    from storage.db import StorageManager
-    from storage.sessions import SessionManager
-    storage = StorageManager(get_db_path())
-    manager = SessionManager(storage)
-    tasks = manager.list_tasks(topic=topic, status=status, priority=priority)
-    if not tasks:
-        return "No tasks found."
-    lines = [f"Tasks ({len(tasks)}):\n"]
-    for t in tasks:
-        deps = json.loads(t.get("depends_on", "[]"))
-        dep_str = f" depends_on: {deps}" if deps else ""
-        lines.append(f"  task-{t['id']} [{t['status']}/{t['priority']}] {t['title']}{dep_str}")
-    return "\n".join(lines)
-
-
-@server.tool(description="Block a task. Optionally provide a reason (stored as an issue note).")
-def task_block(task_id: int, reason: str | None = None) -> str:
-    from storage.db import StorageManager
-    from storage.sessions import SessionManager
-    storage = StorageManager(get_db_path())
-    manager = SessionManager(storage)
-    if reason:
-        row = manager.storage.connection.cursor().execute(
-            "SELECT topic, title, notes FROM tasks WHERE id = ?", (task_id,)
-        ).fetchone()
-        if row:
-            note = manager.add_note("", row["topic"], "issue", reason, title=f"Blocked: {row['title']}", status="open")
-            nid = int(note["id"].replace("note-", ""))
-            notes_str = row["notes"] if row["notes"] else "[]"
-            existing = json.loads(notes_str)
-            if nid not in existing:
-                existing.append(nid)
-                # Normalize to ints: filter out non-numeric entries, convert strings that look like ints
-                ints = [int(x) for x in existing if isinstance(x, (int, str)) and str(x).lstrip('-').isdigit()]
-                manager.update_task(task_id, notes=ints)
-    ok, msg = manager.update_task(task_id, status="blocked")
-    return "Blocked. " + msg if ok else msg
 
 
 # ── Planet links ─────────────────────────────────────────────
@@ -1923,16 +1813,6 @@ def session_read(session_id: int) -> str:
         ):
             title = r["title"] or r["content"][:80]
             lines.append(f"    note-{r['id']} [{r['kind']}] {title[:200]}")
-    task_ids = _json.loads(session.get("task_ids", "[]"))
-    if task_ids:
-        lines.append(f"  tasks ({len(task_ids)}):")
-        placeholders = ",".join("?" for _ in task_ids)
-        cursor = manager.storage.connection.cursor()
-        for r in cursor.execute(
-            f"SELECT id, status, priority, title FROM tasks WHERE id IN ({placeholders}) ORDER BY id ASC",
-            task_ids,
-        ):
-            lines.append(f"    task-{r['id']} [{r['status']}/{r['priority']}] {r['title']}")
     return "\n".join(lines)
 
 

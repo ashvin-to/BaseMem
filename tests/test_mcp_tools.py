@@ -1,4 +1,4 @@
-"""Tests for all 35 core MCP tools (memory + graph + code + sessions + tasks smoke tests)."""
+"""Tests for memory, graph, code, and session MCP tools."""
 
 import json
 import os
@@ -144,18 +144,6 @@ class TestNoteTools:
         from mcp_server.server import logInteraction
         r = logInteraction(topic="log-test")
         assert "no-op" in r
-
-    def test_task_update_many(self, temp_db):
-        from mcp_server.server import task_update_many
-        _db_path, _storage, manager = temp_db
-        first = manager.create_task("test", "First")["id"]
-        second = manager.create_task("test", "Second")["id"]
-        result = task_update_many([
-            {"task_id": first, "status": "done"},
-            {"task_id": second, "priority": "high"},
-        ])
-        assert "updated=2 errors=0" in result
-        assert manager.get_task_summary("test")["counts"]["done"] == 1
 
     def test_session_recap(self, temp_db):
         from mcp_server.server import session_recap
@@ -816,7 +804,7 @@ class TestEdgeMaintainCombined:
             # Add new notes to trigger auto-linking (auto-links are the ones
             # affected by edge_decay; manager.link_notes creates explicit links)
             n1 = manager.add_note("test", "graph-test-planet", "fact", "alpha test data")
-            n2 = manager.add_note("test", "graph-test-planet", "fact", "alpha test experiment")
+            manager.add_note("test", "graph-test-planet", "fact", "alpha test experiment")
             nid = n1["id"]
             # Get auto-link weights before
             auto_before = _auto_neighbor_weights(manager, nid)
@@ -870,13 +858,6 @@ class TestAdvancedToolsTier:
         assert "compute_similarity" in names
         assert "rerank" in names
 
-    def test_optional_tool_registered_when_true(self, monkeypatch):
-        monkeypatch.setenv("BASEMEM_ENABLE_ADVANCED_TOOLS", "true")
-        self._reload_server_module()
-        names = self._get_tool_names()
-        assert "compute_similarity" in names
-        assert "rerank" in names
-
     def test_functions_always_importable(self):
         from mcp_server.server import compute_similarity, rerank
         assert callable(compute_similarity)
@@ -892,15 +873,20 @@ class TestContextIntegrity:
 
     def test_check_rules_integrity_returns_intact_for_valid_file(self, tmp_path):
         """checkRulesIntegrity returns intact=True when rules file has marker."""
-        import subprocess, json
+        import json
+        import subprocess
         rules_file = tmp_path / "rules.md"
         rules_file.write_text("some content\n<!-- basemem-managed-start -->\nmore content")
         r = subprocess.run(
-            ["node", "-e", """
-                const { checkRulesIntegrity } = require('./src/hooks/lib/context.js');
-                const r = checkRulesIntegrity('test', '%s');
+            [
+                "node",
+                "-e",
+                f"""
+                const {{ checkRulesIntegrity }} = require('./src/hooks/lib/context.js');
+                const r = checkRulesIntegrity('test', '{rules_file}');
                 console.log(JSON.stringify(r));
-            """ % str(rules_file)],
+                """,
+            ],
             capture_output=True, text=True, timeout=10,
             cwd=str(Path(__file__).parent.parent),
         )
@@ -910,15 +896,20 @@ class TestContextIntegrity:
 
     def test_check_rules_integrity_detects_missing_marker(self, tmp_path):
         """checkRulesIntegrity returns intact=False when marker is missing."""
-        import subprocess, json
+        import json
+        import subprocess
         rules_file = tmp_path / "rules.md"
         rules_file.write_text("content without the marker")
         r = subprocess.run(
-            ["node", "-e", """
-                const { checkRulesIntegrity } = require('./src/hooks/lib/context.js');
-                const r = checkRulesIntegrity('test', '%s');
+            [
+                "node",
+                "-e",
+                f"""
+                const {{ checkRulesIntegrity }} = require('./src/hooks/lib/context.js');
+                const r = checkRulesIntegrity('test', '{rules_file}');
                 console.log(JSON.stringify(r));
-            """ % str(rules_file)],
+                """,
+            ],
             capture_output=True, text=True, timeout=10,
             cwd=str(Path(__file__).parent.parent),
         )
@@ -929,16 +920,21 @@ class TestContextIntegrity:
 
     def test_check_rules_integrity_detects_missing_import(self, tmp_path):
         """checkRulesIntegrity detects missing import file for Claude."""
-        import subprocess, json
+        import json
+        import subprocess
         rules_file = tmp_path / "rules.md"
         rules_file.write_text("<!-- basemem-managed-start -->\ncontent")
         import_file = tmp_path / "import.md"
         r = subprocess.run(
-            ["node", "-e", """
-                const { checkRulesIntegrity } = require('./src/hooks/lib/context.js');
-                const r = checkRulesIntegrity('claude', '%s', '%s');
+            [
+                "node",
+                "-e",
+                f"""
+                const {{ checkRulesIntegrity }} = require('./src/hooks/lib/context.js');
+                const r = checkRulesIntegrity('claude', '{rules_file}', '{import_file}');
                 console.log(JSON.stringify(r));
-            """ % (str(rules_file), str(import_file))],
+                """,
+            ],
             capture_output=True, text=True, timeout=10,
             cwd=str(Path(__file__).parent.parent),
         )

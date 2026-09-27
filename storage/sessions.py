@@ -11,9 +11,11 @@ from models import Node, NodeType
 
 from .config import get_session_timeout_hours
 from .db import StorageManager
+from .extraction import HeuristicExtractor, MemoryExtractor
+from .graph import GraphMixin
+from .migrations import run_migrations
 from .notes import NoteMixin
 from .planets import PlanetMixin
-from .tasks import TaskMixin
 
 logger = logging.getLogger(__name__)
 
@@ -21,8 +23,9 @@ logger = logging.getLogger(__name__)
 class SessionManagerBase:
     SUMMARIZE_THRESHOLD = 50
 
-    def __init__(self, storage: StorageManager):
+    def __init__(self, storage: StorageManager, extractor: MemoryExtractor | None = None):
         self.storage = storage
+        self.memory_extractor = extractor or HeuristicExtractor()
         _ensure_schema(self.storage.connection)
 
     @staticmethod
@@ -121,9 +124,9 @@ class SessionManagerBase:
         return node
 
 
-class SessionManager(PlanetMixin, NoteMixin, TaskMixin, SessionManagerBase):
+class SessionManager(PlanetMixin, NoteMixin, GraphMixin, SessionManagerBase):
 
-    # ── Session CRUD ──
+    # Session CRUD
 
     def create_session(self, topic: str, title: str, agent_id: str, resume_id: int | None = None) -> int:
         if resume_id is not None and resume_id > 0:
@@ -134,7 +137,7 @@ class SessionManager(PlanetMixin, NoteMixin, TaskMixin, SessionManagerBase):
         now = self._now()
         cursor = self.storage.connection.cursor()
         cursor.execute(
-            "INSERT INTO sessions (topic, title, agent_id, started_at, last_active_at, note_ids, task_ids) VALUES (?, ?, ?, ?, ?, '[]', '[]')",
+            "INSERT INTO sessions (topic, title, agent_id, started_at, last_active_at, note_ids) VALUES (?, ?, ?, ?, ?, '[]')",
             (topic_slug, title, agent_id, now, now),
         )
         self.storage.connection.commit()
@@ -161,7 +164,7 @@ class SessionManager(PlanetMixin, NoteMixin, TaskMixin, SessionManagerBase):
         return [dict(r) for r in rows]
 
     def update_session(self, session_id: int, **kwargs: str) -> bool:
-        allowed = {"title", "status", "summary", "agent_id", "note_ids", "task_ids"}
+        allowed = {"title", "status", "summary", "agent_id", "note_ids"}
         updates = {k: v for k, v in kwargs.items() if k in allowed and v is not None}
         if not updates:
             return False
@@ -174,6 +177,20 @@ class SessionManager(PlanetMixin, NoteMixin, TaskMixin, SessionManagerBase):
         return cursor.rowcount > 0
 
     def close_session(self, session_id: int, summary: str | None = None) -> bool:
+        if summary:
+            session = self.get_session(session_id)
+            if session:
+                self.add_note(
+                    "system",
+                    session["topic"],
+                    "history",
+                    summary,
+                    agent_id=session.get("agent_id") or "default",
+                    title=f"Session {session_id} durable summary",
+                    importance=0.8,
+                    confidence=1.0,
+                    provenance={"session_id": session_id},
+                )
         now = self._now()
         cursor = self.storage.connection.cursor()
         if summary:
@@ -217,18 +234,6 @@ class SessionManager(PlanetMixin, NoteMixin, TaskMixin, SessionManagerBase):
         if note_id not in note_ids:
             note_ids.append(note_id)
             self.update_session(session_id, note_ids=json.dumps(note_ids))
-        else:
-            self.update_session(session_id)
-        return True
-
-    def stamp_task(self, session_id: int, task_id: int) -> bool:
-        session = self.get_session(session_id)
-        if not session:
-            return False
-        task_ids = json.loads(session["task_ids"])
-        if task_id not in task_ids:
-            task_ids.append(task_id)
-            self.update_session(session_id, task_ids=json.dumps(task_ids))
         else:
             self.update_session(session_id)
         return True
@@ -303,6 +308,22 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             created_at TEXT DEFAULT (datetime('now')),
             updated_at TEXT DEFAULT (datetime('now'))
         );
+        CREATE TABLE IF NOT EXISTS memory_access_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            topic TEXT NOT NULL,
+            note_id INTEGER,
+            query TEXT DEFAULT '',
+            outcome TEXT DEFAULT 'retrieved',
+            created_at TEXT DEFAULT (datetime('now'))
+        );
+        CREATE TABLE IF NOT EXISTS feedback_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            note_id INTEGER,
+            topic TEXT NOT NULL,
+            value REAL NOT NULL,
+            comment TEXT DEFAULT '',
+            created_at TEXT DEFAULT (datetime('now'))
+        );
         CREATE TABLE IF NOT EXISTS note_links (
             from_note_id INTEGER NOT NULL,
             to_note_id INTEGER NOT NULL,
@@ -313,18 +334,6 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             created_at TEXT DEFAULT (datetime('now')),
             updated_at TEXT DEFAULT (datetime('now')),
             PRIMARY KEY (from_note_id, to_note_id, link_type)
-        );
-        CREATE TABLE IF NOT EXISTS tasks (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            topic TEXT NOT NULL,
-            title TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'todo',
-            priority TEXT NOT NULL DEFAULT 'medium',
-            depends_on TEXT DEFAULT '[]',
-            files TEXT DEFAULT '[]',
-            notes TEXT DEFAULT '[]',
-            created_at TEXT DEFAULT (datetime('now')),
-            completed_at TEXT
         );
         CREATE TABLE IF NOT EXISTS planet_links (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -354,7 +363,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         with contextlib.suppress(Exception):
             conn.execute(f"ALTER TABLE notes ADD COLUMN {col} {dtype}")
 
-    # v2: sessions table + session_id on notes/tasks
+    # v2: sessions table + session_id on notes
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS sessions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -366,15 +375,12 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             last_active_at TEXT NOT NULL,
             summary TEXT,
             agent_id TEXT NOT NULL,
-            note_ids TEXT NOT NULL DEFAULT '[]',
-            task_ids TEXT NOT NULL DEFAULT '[]'
+            note_ids TEXT NOT NULL DEFAULT '[]'
         );
     """)
     for col, dtype in [("session_id", "INTEGER")]:
         with contextlib.suppress(Exception):
             conn.execute(f"ALTER TABLE notes ADD COLUMN {col} {dtype}")
-        with contextlib.suppress(Exception):
-            conn.execute(f"ALTER TABLE tasks ADD COLUMN {col} {dtype}")
 
     # Ensure notes_fts virtual table and sync triggers exist
     conn.executescript("""
@@ -404,6 +410,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             SELECT id, id, topic, kind, content, title, status FROM notes
         """)
 
+    run_migrations(conn)
     conn.commit()
 
 
@@ -436,14 +443,6 @@ def stamp_note(session_id: int, note_id: int) -> bool:
     manager = _get_default_manager()
     try:
         return manager.stamp_note(session_id, note_id)
-    finally:
-        manager.storage.close()
-
-
-def stamp_task(session_id: int, task_id: int) -> bool:
-    manager = _get_default_manager()
-    try:
-        return manager.stamp_task(session_id, task_id)
     finally:
         manager.storage.close()
 

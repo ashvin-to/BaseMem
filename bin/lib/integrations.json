@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "integrations": [
+    {"name":"claude","display_name":"Claude Code","format":"markdown","capabilities":["rules","mcp","hooks"],"tier":1},
+    {"name":"codex","display_name":"Codex CLI","format":"markdown","capabilities":["rules","mcp","hooks"],"tier":1},
+    {"name":"agy","display_name":"Antigravity","format":"markdown","capabilities":["rules","mcp","hooks"],"tier":1},
+    {"name":"opencode","display_name":"OpenCode","format":"markdown","capabilities":["rules","mcp","plugin"],"tier":2},
+    {"name":"cursor","display_name":"Cursor","format":"mdc","capabilities":["rules","mcp","hooks"],"tier":1},
+    {"name":"devin","display_name":"Devin","format":"markdown","capabilities":["rules","mcp","hooks","plugin"],"tier":1},
+    {"name":"continue","display_name":"Continue","format":"markdown","capabilities":["rules","mcp"],"tier":3},
+    {"name":"cline","display_name":"Cline","format":"markdown","capabilities":["rules","mcp","plugin"],"tier":2},
+    {"name":"zed","display_name":"Zed","format":"markdown","capabilities":["rules","mcp"],"tier":3},
+    {"name":"gemini","display_name":"Gemini CLI","format":"markdown","capabilities":["rules","mcp","plugin"],"tier":2},
+    {"name":"copilot","display_name":"GitHub Copilot","format":"markdown","capabilities":["rules","mcp"],"tier":3},
+    {"name":"aider","display_name":"Aider","format":"markdown","capabilities":["rules"],"tier":3,"detect_binary":true},
+    {"name":"vscode","display_name":"VS Code","format":"markdown","capabilities":["mcp"],"tier":3,"detect_binary":true,"binary_name":"code","skip_rules":true},
+    {"name":"kilo","display_name":"Kilo Code","format":"markdown","capabilities":["rules","mcp","plugin"],"tier":2},
+    {"name":"kiro","display_name":"Kiro","format":"markdown","capabilities":["rules","mcp","hooks"],"tier":1},
+    {"name":"hermes","display_name":"Hermes","format":"markdown","capabilities":["rules","mcp"],"tier":3},
+    {"name":"vibe","display_name":"Mistral Vibe","format":"markdown","capabilities":["rules","mcp"],"tier":3},
+    {"name":"windsurf","display_name":"Windsurf","format":"markdown","capabilities":["rules","mcp"],"tier":3}
+  ]
+}

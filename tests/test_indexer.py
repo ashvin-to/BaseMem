@@ -1,11 +1,11 @@
-import os
 import tempfile
 from pathlib import Path
-import sqlite3
+
 import pytest
 
 from indexer.indexer import CodeIndexer
-from indexer.parser import LANGUAGE_QUERIES, _LANGUAGE_SO, CodeParser
+from indexer.parser import _LANGUAGE_SO, LANGUAGE_QUERIES, CodeParser
+
 
 @pytest.fixture
 def temp_project():
@@ -59,23 +59,23 @@ def test_indexer_gitignore_handling(temp_project):
     # Setup test files
     (temp_project / ".gitignore").write_text("ignored_dir/\n*.txt\n")
     (temp_project / ".basememignore").write_text("secret_file.py\n")
-    
+
     # Create files
     (temp_project / "ignored_dir").mkdir()
     (temp_project / "ignored_dir" / "test.py").write_text("def hidden(): pass")
-    
+
     (temp_project / "valid.py").write_text("def valid(): pass")
     (temp_project / "readme.txt").write_text("Hello")
     (temp_project / "secret_file.py").write_text("def secret(): pass")
-    
+
     indexer = CodeIndexer(str(temp_project))
-    
+
     # Check _is_skipped
     assert indexer._is_skipped(str(temp_project / "ignored_dir" / "test.py")) is True
     assert indexer._is_skipped(str(temp_project / "readme.txt")) is True
     assert indexer._is_skipped(str(temp_project / "secret_file.py")) is True
     assert indexer._is_skipped(str(temp_project / "valid.py")) is False
-    
+
     # Discover files should only yield valid.py
     files = list(indexer._discover_files(temp_project))
     assert len(files) == 1
@@ -91,19 +91,19 @@ def test_indexer_fuzzy_camelcase_search(temp_project):
     )
     indexer = CodeIndexer(str(temp_project))
     indexer.index_project()
-    
+
     # Exact match should work
     res = indexer.search_symbols("UserAccountController")
     assert len(res) == 1
-    
+
     # Fuzzy segment search should work
     res = indexer.search_symbols("account")
     assert len(res) == 1
     assert res[0]["symbol_name"] == "UserAccountController"
-    
+
     res2 = indexer.search_symbols("User")
     assert len(res2) == 1
-    
+
     indexer.close()
 
 
@@ -120,17 +120,17 @@ def test_indexer_ast_references(temp_project):
         "def another_function():\n"
         "    def_file.my_super_function()\n"
     )
-    
+
     indexer = CodeIndexer(str(temp_project))
     indexer.index_project()
-    
+
     # find_references should first yield the AST reference
     refs = indexer.find_references("my_super_function")
     assert len(refs) == 1
     assert refs[0]["file_path"] == "call_file.py"
     assert "[AST Usage]" in refs[0]["content"]
     assert refs[0]["line_number"] == 4
-    
+
     indexer.close()
 
 
@@ -144,28 +144,28 @@ def test_indexer_type_filter(temp_project):
     )
     indexer = CodeIndexer(str(temp_project))
     indexer.index_project()
-    
+
     # Searching for node should return both
     res = indexer.search_symbols("node")
     assert len(res) == 2
-    
+
     # Filter by type:class
     res2 = indexer.search_symbols("type:class node")
     assert len(res2) == 1
     assert res2[0]["symbol_type"] == "class"
     assert res2[0]["symbol_name"] == "Node"
-    
+
     # Filter by type:function
     res3 = indexer.search_symbols("type:function node")
     assert len(res3) == 1
     assert res3[0]["symbol_type"] == "function"
     assert res3[0]["symbol_name"] == "create_node"
-    
+
     # Filter by type:class only
     res4 = indexer.search_symbols("type:class")
     assert len(res4) == 1
     assert res4[0]["symbol_type"] == "class"
     assert res4[0]["symbol_name"] == "Node"
-    
+
     indexer.close()
 

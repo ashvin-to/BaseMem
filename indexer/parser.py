@@ -7,11 +7,8 @@ Supported languages:
 
 from __future__ import annotations
 
-import ctypes
 import hashlib
-import warnings
 from pathlib import Path
-from typing import Optional
 
 from .languages import LANGUAGE_QUERIES as _LANGUAGE_QUERIES
 
@@ -61,8 +58,7 @@ def _get_grammar(lang: str) -> Language | None:
 
 def ensure_grammars():
     """Download any missing tree-sitter grammar .so files for languages in _LANGUAGE_SO."""
-    from tree_sitter_language_pack import cache_dir, downloaded_languages
-    cache = Path(cache_dir())
+    from tree_sitter_language_pack import downloaded_languages
     downloaded = set(downloaded_languages())
     needed = [lang for lang in _LANGUAGE_SO if lang not in downloaded]
     if not needed:
@@ -340,7 +336,7 @@ class CodeParser:
                 self._grammar_ok = True
 
     @classmethod
-    def for_file(cls, file_path: str) -> Optional["CodeParser"]:
+    def for_file(cls, file_path: str) -> CodeParser | None:
         ext = Path(file_path).suffix.lower()
         if not ext or ext in _SKIP_EXTENSIONS:
             return None
