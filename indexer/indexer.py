@@ -1069,6 +1069,19 @@ class CodeIndexer:
         ):
             var_types.setdefault(row["file_path"], {})[row["variable"]] = row["type"]
 
+        # (file, enclosing function) -> {name: declared type} for parameters and
+        # method receivers. Scoped by function because different methods routinely
+        # use the same receiver name for different types.
+        param_types: dict[tuple[str, str], dict[str, str]] = {}
+        for row in self.conn.execute(
+            "SELECT file_path, from_name, to_receiver AS name, to_name AS type FROM code_edges "
+            "WHERE project_id = ? AND edge_type = 'param_type' "
+            "AND to_receiver != '' AND to_name != ''",
+            (self.project_id,),
+        ):
+            key = (row["file_path"], row["from_name"] or "")
+            param_types.setdefault(key, {})[row["name"]] = row["type"]
+
         # file -> {local name: dotted module}. Import edges carry the imported path
         # in from_name, e.g. "storage.sessions.SessionManager".
         file_imports: dict[str, dict[str, str]] = {}
@@ -1083,7 +1096,8 @@ class CodeIndexer:
             local = head if module else imported
             file_imports.setdefault(row["file_path"], {})[local] = module
 
-        return symbols_by_name, methods_by_parent, methods_by_name, file_imports, var_types, bases
+        return (symbols_by_name, methods_by_parent, methods_by_name, file_imports,
+                var_types, bases, param_types)
 
     def _module_to_file(self, module: str, known_files: set[str]) -> str:
         """Map a dotted module path to an indexed file, or '' when unknown."""
@@ -1144,7 +1158,7 @@ class CodeIndexer:
         return 0
 
     def _resolve_member_call(self, row, imports, methods_by_parent, methods_by_name,
-                              symbols_by_name, known_files, var_types, bases) -> int:
+                              symbols_by_name, known_files, var_types, bases, param_types) -> int:
         """Resolve `receiver.name()` by looking for a method on that receiver."""
         name = row["to_name"]
         receiver = (row["to_receiver"] or "").strip()
@@ -1154,7 +1168,10 @@ class CodeIndexer:
         # `x = Foo()` then `x.method()`: look the method up on Foo's methods. This
         # is the common local-variable case and the main source of misses before it.
         if head:
-            inferred = (var_types.get(file_path) or {}).get(head)
+            # A parameter or method receiver in the caller's own signature is the
+            # strongest signal available; `x := New()` at file scope is the fallback.
+            inferred = (param_types.get((file_path, row["from_name"] or "")) or {}).get(head) \
+                or (var_types.get(file_path) or {}).get(head)
             if inferred:
                 hit = self._method_on_class(inferred, name, methods_by_parent, methods_by_name, bases)
                 if hit:
@@ -1230,8 +1247,8 @@ class CodeIndexer:
         project-wide. Whatever stays unresolved is a genuinely external or dynamic
         call, which is a real answer rather than a gap to hide.
         """
-        (symbols_by_name, methods_by_parent, methods_by_name,
-         file_imports, var_types, bases) = self._build_resolution_maps()
+        (symbols_by_name, methods_by_parent, methods_by_name, file_imports,
+         var_types, bases, param_types) = self._build_resolution_maps()
         known_files = {f["file_path"] for rows in symbols_by_name.values() for f in rows}
 
         rows = self.conn.execute(
@@ -1249,7 +1266,7 @@ class CodeIndexer:
             if r["edge_type"] == "member_calls":
                 target = self._resolve_member_call(
                     r, imports, methods_by_parent, methods_by_name, symbols_by_name,
-                    known_files, var_types, bases
+                    known_files, var_types, bases, param_types
                 )
             else:
                 target = self._resolve_free_call(r, imports, symbols_by_name, known_files)
