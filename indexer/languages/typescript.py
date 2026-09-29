@@ -45,11 +45,13 @@ TS_QUERIES = {
     "method_call": """
         (call_expression
             function: (member_expression
+                object: (_) @obj
                 property: (property_identifier) @method)) @call
     """,
     "optional_call": """
         (optional_call_expression
             function: (member_expression
+                object: (_) @obj
                 property: (property_identifier) @method)) @call
     """,
     "new": """
