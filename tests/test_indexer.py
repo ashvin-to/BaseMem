@@ -169,3 +169,111 @@ def test_indexer_type_filter(temp_project):
 
     indexer.close()
 
+
+
+# ── ignore-pattern negations ───────────────────────────────────────
+# A repo whose .gitignore has `lib/` plus `!bin/lib/` must still get
+# bin/lib indexed. Dropping the negation silently blinds the index to whole
+# source trees, and code_find then quietly degrades to grep.
+
+
+def test_gitignore_negation_reincludes_files(temp_project):
+    (temp_project / ".gitignore").write_text("lib/\n!bin/lib/\n")
+    (temp_project / "bin" / "lib").mkdir(parents=True)
+    (temp_project / "bin" / "lib" / "thing.js").write_text("export function thing() { return 1 }\n")
+    (temp_project / "lib").mkdir()
+    (temp_project / "lib" / "vendor.js").write_text("export function vendored() { return 1 }\n")
+
+    indexer = CodeIndexer(str(temp_project))
+    try:
+        assert indexer._is_skipped(str(temp_project / "bin" / "lib" / "thing.js")) is False
+        assert indexer._is_skipped(str(temp_project / "lib" / "vendor.js")) is True
+    finally:
+        indexer.close()
+
+
+def test_gitignore_negations_are_not_treated_as_positive_patterns(temp_project):
+    (temp_project / ".gitignore").write_text("lib/\n!bin/lib/\n")
+    indexer = CodeIndexer(str(temp_project))
+    try:
+        assert indexer._ignore_patterns == ["lib"]
+        assert indexer._negate_patterns == ["bin/lib"]
+    finally:
+        indexer.close()
+
+
+# ── staleness / auto-sync ──────────────────────────────────────────
+
+
+def _project(tmp_path: Path) -> Path:
+    p = tmp_path / "StaleProj"
+    p.mkdir()
+    return p
+
+
+def test_staleness_tracks_symbol_free_files(temp_project):
+    (temp_project / "empty.py").write_text("")
+    (temp_project / "thing.js").write_text("export function thing() { return 1 }\n")
+    indexer = CodeIndexer(str(temp_project))
+    try:
+        indexer.index_project(_max_workers=1)
+        report = indexer.staleness()
+        # empty.py has no symbols; it must still be tracked, or every query
+        # would see it as newly added and re-sync forever.
+        assert report["stale"] is False
+        assert report["added"] == []
+        assert report["on_disk"] == report["indexed_files"] == 2
+    finally:
+        indexer.close()
+
+
+def test_staleness_detects_modify_add_delete(temp_project):
+    target = temp_project / "thing.js"
+    target.write_text("export function thing() { return 1 }\n")
+    indexer = CodeIndexer(str(temp_project))
+    try:
+        indexer.index_project(_max_workers=1)
+        assert indexer.staleness()["stale"] is False
+
+        target.write_text("export function thing() { return 2 }\n")
+        assert "thing.js" in indexer.staleness()["changed"]
+        assert indexer.ensure_fresh()["status"] == "synced"
+        assert indexer.staleness()["stale"] is False
+
+        added = temp_project / "new.js"
+        added.write_text("export function added() { return 1 }\n")
+        assert "new.js" in indexer.staleness()["added"]
+        indexer.ensure_fresh()
+        assert indexer.search_symbols("added")
+
+        added.unlink()
+        indexer.ensure_fresh()
+        assert "new.js" in indexer.staleness()["removed"] or not indexer.search_symbols("added")
+        indexer.ensure_fresh()
+        assert indexer.staleness()["stale"] is False
+    finally:
+        indexer.close()
+
+
+def test_ensure_fresh_is_idempotent(temp_project):
+    (temp_project / "thing.js").write_text("export function thing() { return 1 }\n")
+    indexer = CodeIndexer(str(temp_project))
+    try:
+        indexer.index_project(_max_workers=1)
+        assert indexer.ensure_fresh() is None
+        assert indexer.ensure_fresh() is None
+    finally:
+        indexer.close()
+
+
+def test_auto_sync_can_be_disabled(temp_project, monkeypatch):
+    (temp_project / "thing.js").write_text("export function thing() { return 1 }\n")
+    indexer = CodeIndexer(str(temp_project))
+    try:
+        indexer.index_project(_max_workers=1)
+        (temp_project / "other.js").write_text("export function other() { return 1 }\n")
+        monkeypatch.setenv("BASEMEM_CODE_AUTO_SYNC", "0")
+        assert indexer.ensure_fresh() is None
+        assert indexer.staleness()["stale"] is True
+    finally:
+        indexer.close()

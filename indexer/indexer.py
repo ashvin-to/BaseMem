@@ -111,39 +111,56 @@ class CodeIndexer:
         self.conn.create_function("is_generated", 1, is_generated)
 
         self._ignore_patterns: list[str] = []
+        self._negate_patterns: list[str] = []
         self._load_ignore_files()
 
         ensure_code_schema(self.conn)
 
     def _load_ignore_files(self):
-        """Load patterns from .gitignore and .basememignore."""
+        """Load patterns from .gitignore and .basememignore.
+
+        `!pattern` lines are re-include rules: git applies them to undo an earlier
+        ignore, so they must be matched AFTER the positive patterns rather than
+        being dropped. A repo that ignores `lib/` but re-includes `bin/lib/`
+        expects those files to be tracked, and to index them.
+        """
         for filename in [".gitignore", ".basememignore"]:
             ignore_path = Path(self.project_root) / filename
             if ignore_path.exists():
                 try:
                     for line in ignore_path.read_text().splitlines():
                         line = line.strip()
-                        if line and not line.startswith('#'):
+                        if not line or line.startswith('#'):
+                            continue
+                        if line.startswith('!'):
+                            self._negate_patterns.append(line[1:].rstrip('/'))
+                        else:
                             self._ignore_patterns.append(line.rstrip('/'))
                 except Exception:
                     pass
 
+    @staticmethod
+    def _pattern_matches(rel: str, pattern: str) -> bool:
+        import fnmatch
+        return (
+            fnmatch.fnmatch(rel, pattern)
+            or fnmatch.fnmatch(rel, f"*/{pattern}")
+            or fnmatch.fnmatch(rel, f"{pattern}/*")
+            or fnmatch.fnmatch(rel, f"*/{pattern}/*")
+        )
+
     def _is_skipped(self, filepath: str) -> bool:
         """Check if a file should be skipped based on SKIP_DIRS or ignore patterns."""
-        import fnmatch
         p = Path(filepath)
         if any(part in SKIP_DIRS for part in p.parts):
             return True
-        rel = str(p.relative_to(self.project_root) if p.is_absolute() else p)
-        for pattern in self._ignore_patterns:
-            if (
-                fnmatch.fnmatch(rel, pattern)
-                or fnmatch.fnmatch(rel, f"*/{pattern}")
-                or fnmatch.fnmatch(rel, f"{pattern}/*")
-                or fnmatch.fnmatch(rel, f"*/{pattern}/*")
-            ):
-                return True
-        return False
+        try:
+            rel = str(p.relative_to(self.project_root) if p.is_absolute() else p)
+        except ValueError:
+            return True
+        if any(self._pattern_matches(rel, pat) for pat in self._negate_patterns):
+            return False
+        return any(self._pattern_matches(rel, pat) for pat in self._ignore_patterns)
 
     def close(self):
         self.conn.close()
@@ -249,6 +266,10 @@ class CodeIndexer:
             "DELETE FROM code_edges WHERE file_path = ?",
             (file_path,),
         )
+        self.conn.execute(
+            "DELETE FROM code_files WHERE project_id = ? AND file_path = ?",
+            (self.project_id, file_path),
+        )
         self.conn.commit()
         return {"removed": removed}
 
@@ -258,7 +279,8 @@ class CodeIndexer:
         """List all code symbols in this project's DB."""
         cur = self.conn.execute(
             """SELECT cs.id, cs.file_path, cs.symbol_name, cs.symbol_type,
-                      cs.language, cs.signature, cs.start_line, cs.end_line
+                      cs.language, cs.signature, cs.start_line, cs.end_line,
+                      cs.body_hash
                FROM code_symbols cs
                ORDER BY cs.file_path, cs.start_line
                LIMIT ? OFFSET ?""",
@@ -288,7 +310,7 @@ class CodeIndexer:
             cur = self.conn.execute(
                 """SELECT cs.id, cs.file_path, cs.symbol_name, cs.symbol_type,
                           cs.language, cs.signature, cs.start_line, cs.end_line,
-                          cs.docstring, cs.kind
+                          cs.docstring, cs.kind, cs.body_hash
                    FROM code_symbols cs
                    ORDER BY is_generated(cs.file_path) ASC, cs.symbol_name"""
             )
@@ -319,7 +341,7 @@ class CodeIndexer:
                 cur = self.conn.execute(
                     """SELECT cs.id, cs.file_path, cs.symbol_name, cs.symbol_type,
                               cs.language, cs.signature, cs.start_line, cs.end_line,
-                              cs.docstring
+                              cs.docstring, cs.body_hash
                        FROM code_symbols_fts fts
                        JOIN code_symbols cs ON cs.id = fts.rowid
                        WHERE code_symbols_fts MATCH ?
@@ -349,7 +371,7 @@ class CodeIndexer:
             cur = self.conn.execute(
                 f"""SELECT cs.id, cs.file_path, cs.symbol_name, cs.symbol_type,
                           cs.language, cs.signature, cs.start_line, cs.end_line,
-                          cs.docstring
+                          cs.docstring, cs.body_hash
                    FROM code_symbols cs
                    WHERE {like_conditions}{type_sql}
                    ORDER BY is_generated(cs.file_path) ASC, cs.symbol_name
@@ -371,7 +393,7 @@ class CodeIndexer:
         cur = self.conn.execute(
             f"""SELECT cs.id, cs.file_path, cs.symbol_name, cs.symbol_type,
                       cs.language, cs.signature, cs.start_line, cs.end_line,
-                      cs.docstring
+                      cs.docstring, cs.body_hash
                FROM code_symbols cs
                WHERE (cs.symbol_name LIKE ? OR cs.symbol_type LIKE ? OR cs.kind LIKE ? OR cs.file_path LIKE ?){type_sql}
                ORDER BY is_generated(cs.file_path) ASC, cs.symbol_name
@@ -625,7 +647,7 @@ class CodeIndexer:
         cur = self.conn.execute(
             f"""SELECT cs.id, cs.file_path, cs.symbol_name, cs.symbol_type,
                       cs.language, cs.signature, cs.start_line, cs.end_line,
-                      cs.docstring, cs.kind
+                      cs.docstring, cs.kind, cs.body_hash
                FROM code_symbols cs
                WHERE cs.file_path = ? AND cs.project_id = ?
                ORDER BY cs.start_line
@@ -650,7 +672,7 @@ class CodeIndexer:
         cur = self.conn.execute(
             f"""SELECT cs.id, cs.file_path, cs.symbol_name, cs.symbol_type,
                       cs.language, cs.signature, cs.start_line, cs.end_line,
-                      cs.docstring, cs.kind
+                      cs.docstring, cs.kind, cs.body_hash
                FROM code_symbols cs
                LEFT JOIN code_edges ce ON ce.to_name = cs.symbol_name
                 AND ce.edge_type = 'calls'
@@ -833,78 +855,134 @@ class CodeIndexer:
 
         return results
 
-    def sync_index(self, max_workers: int = 4) -> dict:
-        """Incremental re-index: only re-index files changed since last index.
+    def staleness(self) -> dict:
+        """Report index freshness without parsing anything.
 
-        Uses git diff (if available) or re-indexes all (fallback).
+        Compares the set of indexable files on disk against the indexed set and
+        flags anything modified after the last index. Cheap enough (os.walk +
+        os.stat) to run on every query, and independent of git, so it also sees
+        untracked files and files git ignores but that are still indexable.
         """
-        import subprocess
         repo = Path(self.project_root)
-        repo / ".git"
+        known = {
+            r[0]: (r[1], r[2])
+            for r in self.conn.execute(
+                "SELECT file_path, mtime, size FROM code_files WHERE project_id = ?", (self.project_id,)
+            )
+        }
+        on_disk: dict[str, tuple[float, int]] = {}
+        for fp in self._discover_files(repo):
+            try:
+                st = fp.stat()
+            except OSError:
+                continue
+            on_disk[str(fp.relative_to(repo))] = (st.st_mtime, st.st_size)
+
+        added = sorted(set(on_disk) - set(known))
+        removed = sorted(set(known) - set(on_disk))
+        changed = sorted(p for p in (set(on_disk) & set(known)) if on_disk[p] != known[p])
+
         stats = self.get_project_stats()
-        if not stats.get("indexed"):
-            # No existing index — do full index
+        return {
+            "indexed": bool(stats.get("indexed")),
+            "last_indexed": stats.get("last_indexed"),
+            "on_disk": len(on_disk),
+            "indexed_files": len(known),
+            "added": added,
+            "removed": removed,
+            "changed": changed,
+            "stale": bool(added or removed or changed) or not stats.get("indexed"),
+        }
+
+    def resolve_refs(self, refs: list[str]) -> list[tuple[str, str, str]]:
+        """Turn "path/to/file.js::SymbolName" (or a bare path) into
+        (file_path, symbol_name, content_hash) tuples for memory linking.
+
+        The content hash is captured now so a later rename can still find the
+        memory: an unchanged body at a new path keeps the same hash.
+        """
+        out: list[tuple[str, str, str]] = []
+        for raw in refs:
+            ref = (raw or "").strip()
+            if not ref:
+                continue
+            file_path, _, symbol_name = ref.partition("::")
+            file_path = file_path.strip().strip("'\"")
+            symbol_name = symbol_name.strip().strip("'\"")
+            content_hash = ""
+            if symbol_name:
+                rows = self.conn.execute(
+                    "SELECT COALESCE(NULLIF(body_hash, ''), content_hash) "
+                    "FROM code_symbols WHERE project_id = ? AND file_path = ? AND symbol_name = ?",
+                    (self.project_id, file_path, symbol_name),
+                ).fetchall()
+                if rows:
+                    content_hash = rows[0][0] or ""
+            else:
+                rows = self.conn.execute(
+                    "SELECT COALESCE(NULLIF(body_hash, ''), content_hash) "
+                    "FROM code_symbols WHERE project_id = ? AND file_path = ? LIMIT 1",
+                    (self.project_id, file_path),
+                ).fetchall()
+                if rows:
+                    content_hash = rows[0][0] or ""
+            out.append((file_path, symbol_name, content_hash))
+        return out
+
+    def symbols_with_same_body(self, content_hash: str, exclude_path: str = "") -> list[dict]:
+        """Other symbols sharing a body hash — i.e. a rename or a move."""
+        if not content_hash:
+            return []
+        rows = self.conn.execute(
+            "SELECT symbol_name, file_path, start_line, language FROM code_symbols "
+            "WHERE project_id = ? AND content_hash = ? AND file_path != ? LIMIT 20",
+            (self.project_id, content_hash, exclude_path),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def ensure_fresh(self, max_workers: int = 4) -> dict | None:
+        """Re-index when the index has drifted. Returns a report, or None if fresh.
+
+        Set BASEMEM_CODE_AUTO_SYNC=0 to opt out. Never raises: a failed sync must
+        degrade to a stale index, never break the caller's query.
+        """
+        if os.environ.get("BASEMEM_CODE_AUTO_SYNC", "1").lower() in ("0", "false", "no"):
+            return None
+        try:
+            report = self.staleness()
+        except Exception as e:
+            logger.warning(f"staleness check failed: {e}")
+            return None
+        if not report.get("stale"):
+            return None
+        try:
+            return self.sync_index(max_workers=max_workers)
+        except Exception as e:
+            logger.warning(f"auto-sync failed: {e}")
+            return {"status": "error", "reason": str(e)}
+
+    def sync_index(self, max_workers: int = 4) -> dict:
+        """Incremental re-index of only the files that drifted since last index."""
+        report = self.staleness()
+        if not report.get("indexed"):
             return self.index_project(_max_workers=max_workers)
 
-        # Try git diff to find changed files
-        try:
-            result = subprocess.run(
-                ["git", "diff", "--name-only", "HEAD"],
-                capture_output=True, text=True, cwd=self.project_root, timeout=30,
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                changed = [line.strip() for line in result.stdout.splitlines()
-                          if line.strip() and not line.startswith(".basemem")]
-            else:
-                changed = []
-        except Exception:
-            changed = []
+        changed = list(report["changed"]) + list(report["added"])
+        removed = list(report["removed"])
 
-        if not changed:
-            # Also check unstaged/untracked
-            try:
-                result = subprocess.run(
-                    ["git", "ls-files", "--other", "--modified", "--exclude-standard"],
-                    capture_output=True, text=True, cwd=self.project_root, timeout=30,
-                )
-                if result.returncode == 0:
-                    changed = [line.strip() for line in result.stdout.splitlines()
-                              if line.strip() and not line.startswith(".basemem")]
-            except Exception:
-                pass
-
-        if not changed:
-            last_indexed = stats.get("last_indexed")
-            if last_indexed:
-                try:
-                    from datetime import datetime, timezone
-
-                    indexed_at = datetime.fromisoformat(last_indexed).replace(tzinfo=timezone.utc).timestamp()
-                    changed = [
-                        str(fp.relative_to(repo))
-                        for fp in self._discover_files(repo)
-                        if fp.stat().st_mtime > indexed_at
-                    ]
-                except (TypeError, ValueError, OSError):
-                    changed = []
-
-        if not changed:
+        if not changed and not removed:
             stat = self.get_project_stats()
             return {"status": "unchanged", "files": 0, "symbols": stat.get("symbol_count", 0), "edges": 0}
 
-        # Re-index only changed files
-        removed = 0
+        root = Path(self.project_root).resolve()
         added_symbols = 0
         added_edges = 0
-        root = repo.resolve()
         for cf in changed:
             fp = root / cf
             if not fp.is_file():
-                # File was deleted
                 self.remove_file(str(cf))
-                removed += 1
+                removed.append(cf)
                 continue
-            # Remove old symbols for this file, then re-index
             self.remove_file(str(cf))
             try:
                 sc, ec = self._index_file(str(root), str(fp))
@@ -913,7 +991,10 @@ class CodeIndexer:
             except Exception as e:
                 logger.warning(f"Failed to sync {cf}: {e}")
 
-        if added_symbols or removed:
+        for cf in removed:
+            self.remove_file(str(cf))
+
+        if added_symbols or removed or changed:
             self.conn.execute("INSERT INTO code_symbols_fts(code_symbols_fts) VALUES('rebuild')")
             self._resolve_cross_file_references()
             stat = self.get_project_stats()
@@ -924,8 +1005,8 @@ class CodeIndexer:
             )
             self.conn.commit()
 
-        return {"status": "synced", "files_changed": len(changed), "symbols_added": added_symbols, "edges_added": added_edges,
-                "files_removed": removed}
+        return {"status": "synced", "files_changed": len(changed), "symbols_added": added_symbols,
+                "edges_added": added_edges, "files_removed": len(removed)}
 
     def _resolve_cross_file_references(self):
         """Post-indexing pass: resolve to_symbol_id=0 and from_symbol_id=0 edges.
@@ -964,6 +1045,22 @@ class CodeIndexer:
             self.conn.commit()
             logger.info(f"Resolved {resolved} cross-file symbol references")
 
+    def _record_file(self, rel_path: str, file_path: str, symbol_count: int) -> None:
+        """Track a walked file in the inventory, even when it has no symbols."""
+        try:
+            st = os.stat(file_path)
+            mtime, size = st.st_mtime, st.st_size
+        except OSError:
+            return
+        self.conn.execute(
+            """INSERT INTO code_files (project_id, file_path, mtime, size, symbol_count, indexed_at)
+               VALUES (?, ?, ?, ?, ?, datetime('now'))
+               ON CONFLICT(project_id, file_path) DO UPDATE SET
+                   mtime = excluded.mtime, size = excluded.size,
+                   symbol_count = excluded.symbol_count, indexed_at = excluded.indexed_at""",
+            (self.project_id, rel_path, mtime, size, symbol_count),
+        )
+
     def _index_file(self, root_path: str, file_path: str) -> tuple[int, int]:
         rel_path = os.path.relpath(file_path, root_path)
         parser = CodeParser.for_file(file_path)
@@ -973,10 +1070,12 @@ class CodeIndexer:
             source_bytes = f.read()
 
         if not source_bytes.strip():
+            self._record_file(rel_path, file_path, 0)
             return 0, 0
 
         symbols, edges = parser.parse(source_bytes, rel_path)
         if not symbols and not edges:
+            self._record_file(rel_path, file_path, 0)
             return 0, 0
 
         # Batch insert symbols
@@ -986,14 +1085,15 @@ class CodeIndexer:
                 """INSERT INTO code_symbols
                    (project_id, file_path, symbol_name, symbol_type, language, kind,
                     start_line, end_line, start_col, end_col,
-                    signature, docstring, content_hash)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    signature, docstring, content_hash, body_hash)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     self.project_id, sym["file_path"], sym["symbol_name"],
                     sym["symbol_type"], sym["language"], sym["kind"],
                     sym["start_line"], sym["end_line"],
                     sym["start_col"], sym["end_col"],
                     sym["signature"], sym["docstring"], sym["content_hash"],
+                    sym.get("body_hash", ""),
                 ),
             )
             sym_id_map[sym["symbol_name"]] = cur.lastrowid
@@ -1026,4 +1126,5 @@ class CodeIndexer:
             )
 
         self.conn.commit()
+        self._record_file(rel_path, file_path, len(symbols))
         return len(symbols), len(edges)

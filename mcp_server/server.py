@@ -184,10 +184,36 @@ def _bounded_limit(limit: int) -> int:
     return min(limit, _MAX_CODE_LINES)
 
 
-def _ensure_code_index(project_root: str):
+def _ensure_code_index(project_root: str, sync: bool = True):
     from indexer.lifecycle import open_or_create_index
 
-    return open_or_create_index(project_root, max_workers=4)
+    index = open_or_create_index(project_root, max_workers=4)
+    if sync:
+        try:
+            index.ensure_fresh()
+        except Exception:
+            pass
+    return index
+
+
+def _code_freshness(project_root: str) -> str:
+    """One-line index freshness, or '' when the index is current."""
+    try:
+        from indexer.lifecycle import open_or_create_index
+
+        report = open_or_create_index(project_root, max_workers=1).staleness()
+    except Exception:
+        return ""
+    if not report.get("stale"):
+        return ""
+    parts = []
+    for key, label in (("changed", "modified"), ("added", "new"), ("removed", "deleted")):
+        n = len(report.get(key) or ())
+        if n:
+            parts.append(f"{n} {label}")
+    if not parts:
+        return "code index not yet built for this project"
+    return "code index stale (" + ", ".join(parts) + ") — run code_sync"
 
 
 def _grouped_text_query(query: str) -> str:
@@ -650,6 +676,171 @@ def code_explore(query: str, projectRoot: str = "", limit: int = 10) -> str:
         indexer.close()
 
 
+def _parse_refs(symbols: str) -> list[str]:
+    return [s for s in (x.strip() for x in (symbols or "").replace("\n", ",").split(",")) if s]
+
+
+def _split_ref(ref: str) -> tuple[str, str]:
+    file_path, _, symbol_name = (ref or "").partition("::")
+    return file_path.strip().strip("'\""), symbol_name.strip().strip("'\"")
+
+
+@server.tool(description="Link memory notes to code symbols, and list the memories behind a symbol. Use 'path::Symbol' refs so a rename can still be traced back to the decision.")
+def code_refs(
+    action: str = "notes",
+    ref: str = "",
+    note: str = "",
+    projectRoot: str = "",
+    topic: str = "",
+) -> str:
+    import os
+
+    from storage.db import StorageManager
+    from storage.sessions import SessionManager
+
+    if action not in ("notes", "link", "unlink", "refs"):
+        return "code_refs: action must be one of: notes, link, unlink, refs"
+
+    storage = StorageManager(get_db_path())
+    manager = SessionManager(storage)
+    action = action.lower()
+
+    if action in ("link", "unlink"):
+        if not (note and ref):
+            return f"code_refs: {action} needs both note (e.g. note-42) and ref (path::Symbol)"
+        file_path, symbol_name = _split_ref(ref)
+        if not file_path:
+            return "code_refs: ref must be path/to/file or path/to/file::Symbol"
+        if action == "unlink":
+            n = manager.unlink_symbol_ref(note, file_path, symbol_name)
+            return f"code_refs: unlinked {n} ref(s) from {note}"
+        content_hash = ""
+        root = projectRoot or _detect_project_root()
+        if os.path.isdir(root):
+            try:
+                index = _ensure_code_index(root, sync=False)
+                try:
+                    resolved = index.resolve_refs([ref])
+                    content_hash = resolved[0][2] if resolved else ""
+                finally:
+                    index.close()
+            except Exception:
+                content_hash = ""
+        linked = manager.link_symbol_refs(
+            note, topic, [(file_path, symbol_name, content_hash)], project_root=root if os.path.isdir(root or "") else ""
+        )
+        return f"code_refs: linked {file_path}{'::' + symbol_name if symbol_name else ''} to {note}" + (" (hash captured)" if content_hash else " (no index match; hash not captured)")
+
+    if action == "refs":
+        if not note:
+            return "code_refs: refs needs note (e.g. note-42)"
+        rows = manager.symbol_refs_for_note(note)
+        if not rows:
+            return f"code_refs: no symbol refs on {note}"
+        return "\n".join(
+            f"{r['file_path']}{'::' + r['symbol_name'] if r.get('symbol_name') else ''}" for r in rows
+        )
+
+    if not ref:
+        return "code_refs: notes needs ref (path/to/file or path::Symbol)"
+    file_path, symbol_name = _split_ref(ref)
+    content_hash = ""
+    root = projectRoot or _detect_project_root()
+    if os.path.isdir(root or ""):
+        try:
+            index = _ensure_code_index(root, sync=False)
+            try:
+                resolved = index.resolve_refs([ref])
+                content_hash = resolved[0][2] if resolved else ""
+            finally:
+                index.close()
+        except Exception:
+            content_hash = ""
+
+    if not file_path and symbol_name:
+        rows = manager.notes_for_symbol(symbol_name=symbol_name, topic=topic)
+    elif content_hash:
+        rows = manager.notes_for_symbol(file_path=file_path, symbol_name=symbol_name, topic=topic)
+        if not rows:
+            rows = manager.notes_for_symbol(content_hash=content_hash, topic=topic)
+    else:
+        rows = manager.notes_for_symbol(file_path=file_path, topic=topic)
+    if not rows:
+        return f"code_refs: no memories linked to {ref}"
+    lines = [f"memories linked to {ref} ({len(rows)}):"]
+    for r in rows:
+        title = (r.get("title") or r.get("content") or "").strip().replace("\n", " ")[:110]
+        nid = r.get("note_id")
+        nid = f"note-{nid}" if isinstance(nid, int) or (isinstance(nid, str) and nid.isdigit()) else nid
+        lines.append(f"  {nid} [{r.get('kind', 'fact')}] {title}")
+    return "\n".join(lines)
+
+
+@server.tool(description="Re-index files that changed since the last index. Tools auto-sync, so this is only needed to force a sync or to see what drifted.")
+def code_sync(projectRoot: str = "") -> str:
+    import os
+
+    if not projectRoot:
+        projectRoot = _detect_project_root()
+    if not os.path.isdir(projectRoot):
+        return f"code_sync: directory not found: {projectRoot}"
+    from indexer.lifecycle import open_or_create_index
+
+    index = open_or_create_index(projectRoot, max_workers=4)
+    try:
+        before = index.staleness()
+        result = index.sync_index()
+        if result.get("status") == "unchanged":
+            return (
+                f"code_sync: nothing to do ({before.get('on_disk', 0)} files tracked, "
+                f"last indexed {before.get('last_indexed')})"
+            )
+        return (
+            f"code_sync: {result.get('status')} — {result.get('files_changed', 0)} re-indexed, "
+            f"{result.get('files_removed', 0)} removed, +{result.get('symbols_added', 0)} symbols, "
+            f"+{result.get('edges_added', 0)} edges"
+        )
+    finally:
+        index.close()
+
+
+@server.tool(description="Code index freshness and inventory. Use when a symbol lookup returns nothing, or to confirm the index covers what you expect.")
+def code_status(projectRoot: str = "") -> str:
+    import os
+
+    if not projectRoot:
+        projectRoot = _detect_project_root()
+    if not os.path.isdir(projectRoot):
+        return f"code_status: directory not found: {projectRoot}"
+    from indexer.lifecycle import open_or_create_index
+
+    index = open_or_create_index(projectRoot, max_workers=1)
+    try:
+        report = index.staleness()
+        stats = index.get_project_stats()
+        diag = index.get_index_diagnostics()
+        langs = ", ".join(
+            f"{d['language']}({d['symbols']})" for d in diag.get("languages", [])[:8]
+        ) or "none"
+        lines = [
+            f"project: {'indexed' if report.get('indexed') else 'not indexed'}",
+            f"last_indexed: {report.get('last_indexed')}",
+            f"files on disk: {report.get('on_disk')}   tracked: {report.get('indexed_files')}",
+            f"symbols: {stats.get('symbol_count', 0)}   edges: {stats.get('edges', 0)}",
+            f"languages: {langs}",
+            f"stale: {report.get('stale')}",
+        ]
+        for key, label in (("changed", "modified"), ("added", "new"), ("removed", "deleted")):
+            files = report.get(key) or []
+            if files:
+                lines.append(f"  {label}: {len(files)} ({', '.join(files[:5])}{'...' if len(files) > 5 else ''})")
+        if report.get("stale"):
+            lines.append("next: run code_sync, or set BASEMEM_CODE_AUTO_SYNC=0 to disable auto-sync")
+        return "\n".join(lines)
+    finally:
+        index.close()
+
+
 @server.tool(description="One-shot symbol context: definition, bounded source, callers, callees, imports, related tests, and next action.")
 def code_context(query: str, projectRoot: str = "", limit: int = 10) -> str:
     import os
@@ -672,7 +863,11 @@ def code_context(query: str, projectRoot: str = "", limit: int = 10) -> str:
         if not symbols:
             symbols = indexer.search_symbols(query, limit=limit)
         if not symbols:
-            return f"code_context: no symbol match: {query!r}"
+            stale = _code_freshness(projectRoot)
+            msg = f"code_context: no symbol match: {query!r}"
+            if stale:
+                msg += f"\n{stale}"
+            return msg
 
         symbol = symbols[0]
         file_path = symbol["file_path"]
@@ -704,6 +899,28 @@ def code_context(query: str, projectRoot: str = "", limit: int = 10) -> str:
         parts.append("callees: " + (", ".join(f"{c['to_name']}@{c['file_path']}:{c['line_number']}" for c in callees[:limit]) or "none"))
         parts.append("imports: " + (", ".join(str(item.get("from_name", "")) for item in imports) or "none"))
         parts.append("tests: " + (", ".join(tests) or "none found"))
+        try:
+            from storage.db import StorageManager
+            from storage.sessions import SessionManager
+
+            _sm = SessionManager(StorageManager(get_db_path()))
+            _rows = _sm.notes_for_symbol(
+                file_path=file_path,
+                symbol_name=symbol["symbol_name"],
+                content_hash=symbol.get("content_hash") or "",
+            )
+            if _rows:
+                _shown = [
+                    f"{r.get('note_id')}[{r.get('kind', 'fact')}] "
+                    f"{(r.get('title') or r.get('content') or '').strip()[:80]}"
+                    for r in _rows[:5]
+                ]
+                more = f" (+{len(_rows) - 5} more)" if len(_rows) > 5 else ""
+                parts.append("memories: " + " | ".join(_shown) + more)
+            else:
+                parts.append("memories: none linked")
+        except Exception:
+            pass
         parts.append(f"next: code_explore({symbol['symbol_name']!r}, projectRoot={projectRoot!r}, limit={limit})")
         return "\n".join(parts)
     finally:
@@ -1177,7 +1394,15 @@ def logInteraction(
     observed_at: str = "",
     verification_status: str = "memory_only",
     evidence_summary: str = "",
+    symbols: str = "",
+    projectRoot: str = "",
 ) -> str:
+    """Log a decision/fact/summary to the planet.
+
+    `symbols` accepts comma-separated "path/to/file.ext::SymbolName" refs (or bare
+    file paths). They are linked to the note so a later edit to that symbol surfaces
+    this decision. Resolution is best-effort: a ref with no index match is still stored.
+    """
     from storage.db import StorageManager
     from storage.sessions import SessionManager
 
@@ -1194,9 +1419,10 @@ def logInteraction(
     manager = SessionManager(storage)
     parts = []
 
+    note_ids: list[str] = []
     for kind, val in [("decision", decision), ("fact", fact), ("summary", summary)]:
         if val:
-            manager.add_note(
+            result = manager.add_note(
                 topic,
                 topic,
                 kind,
@@ -1207,6 +1433,8 @@ def logInteraction(
                 verification_status=verification_status,
                 evidence_summary=evidence_summary,
             )
+            if result and result.get("id"):
+                note_ids.append(result["id"])
             parts.append(f"note({kind})")
 
     if currentState or nextStep:
@@ -1220,6 +1448,26 @@ def logInteraction(
     if activity:
         manager.log_chat_to_planet(topic, topic, activity, agent_id="system", _sender="system")
         parts.append("turn_logged")
+
+    refs = _parse_refs(symbols)
+    if refs and note_ids:
+        root = projectRoot or _detect_project_root()
+        resolved = []
+        if os.path.isdir(root or ""):
+            try:
+                index = _ensure_code_index(root, sync=False)
+                try:
+                    resolved = index.resolve_refs(refs)
+                finally:
+                    index.close()
+            except Exception:
+                resolved = []
+        if not resolved:
+            resolved = [(*_split_ref(r), "") for r in refs]
+        linked = 0
+        for note_id in note_ids:
+            linked += manager.link_symbol_refs(note_id, topic, resolved, project_root=root or "")
+        parts.append(f"{len(refs)} symbol_ref(s)" if linked else "symbol_refs(failed)")
 
     if not parts:
         return "no-op: logInteraction called with no content. Pass at least one of: decision='what was decided and why', fact='what is now known', summary='what happened this session', currentState='current progress', nextStep='next action'. Example: logInteraction(topic='myproject', decision='Chose SQLite because it requires no separate server process.')"

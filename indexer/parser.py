@@ -8,6 +8,7 @@ Supported languages:
 from __future__ import annotations
 
 import hashlib
+import re
 from pathlib import Path
 
 from .languages import LANGUAGE_QUERIES as _LANGUAGE_QUERIES
@@ -479,6 +480,7 @@ class CodeParser:
                     "docstring": docstring,
                     "parent_id": parent_id,
                     "content_hash": _content_hash(source_bytes, sym_node),
+                    "body_hash": _body_hash(source_bytes, sym_node, sym_name),
                 }
                 symbols.append(symbol)
 
@@ -666,6 +668,9 @@ class CodeParser:
                 "content_hash": hashlib.sha256(
                     source_bytes[s.start_byte:s.end_byte]
                 ).hexdigest()[:16],
+                "body_hash": _body_hash(source_bytes, s.node, s.name)
+                if getattr(s, "node", None) is not None
+                else "",
             }
             symbols.append(symbol)
 
@@ -696,6 +701,23 @@ def _first_node(nodes):
 
 def _content_hash(source_bytes, node):
     return hashlib.sha256(source_bytes[node.start_byte:node.end_byte]).hexdigest()[:16]
+
+
+_IDENT_RE = re.compile(rb"[A-Za-z_$][A-Za-z0-9_$]*")
+
+
+def _body_hash(source_bytes, node, name: str = "") -> str:
+    """Rename-invariant hash of a symbol's body.
+
+    _content_hash covers the whole declaration, so renaming a function changes it
+    and a memory note would lose its symbol. Here every identifier is normalized to
+    a placeholder, leaving literals and structure intact. Two symbols with the same
+    shape and the same literals therefore hash equal, so a rename or a move keeps
+    the link. This is deliberately coarser than content_hash: it is a fallback for
+    matching, not an identity.
+    """
+    body = source_bytes[node.start_byte:node.end_byte]
+    return hashlib.sha256(_IDENT_RE.sub(b"ID", body)).hexdigest()[:16]
 
 
 def _is_python_method(_root, func_node):

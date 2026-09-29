@@ -182,7 +182,9 @@ codex mcp remove mem 2>/dev/null || true
 echo "  Removing basemem hook directories..."
 rm -rf "$HOME/.claude/hooks"
 rm -rf "$HOME/.codex/hooks"
-rm -rf "$HOME/.config/opencode/plugins"
+# Only our own file: ~/.config/opencode/plugins also holds other tools' plugins.
+rm -f "$HOME/.config/opencode/plugins/basemem.js"
+rmdir "$HOME/.config/opencode/plugins" 2>/dev/null || true
 rm -rf "$HOME/.gemini/antigravity-cli/plugins/basemem"
 rm -rf "$HOME/.gemini/config/plugins/basemem"
 
