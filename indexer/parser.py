@@ -493,6 +493,7 @@ class CodeParser:
         edges.extend(imports)
 
         edges.extend(self._extract_instantiations(root, source_bytes, file_path))
+        edges.extend(self._extract_inheritance(root, source_bytes, file_path))
 
         return symbols, edges
 
@@ -565,6 +566,35 @@ class CodeParser:
                         "line_number": callee_node.start_point[0] + 1,
                     })
 
+        return edges
+
+    def _extract_inheritance(self, root: Node, source_bytes: bytes, file_path: str):
+        """Record `class D(B)` as an inherits edge, subclass -> base.
+
+        Without this a method defined on a base class can never be resolved from
+        a subclass instance, so the call graph breaks at every inheritance boundary.
+        """
+        query = self._get_query("inherits")
+        if query is None:
+            return []
+        edges: list[dict] = []
+        for _p_idx, captures in QueryCursor(query).matches(root):
+            name_node = _first_node(captures.get("name"))
+            base_node = _first_node(captures.get("base"))
+            if not (name_node and base_node):
+                continue
+            subclass = _node_text(name_node, source_bytes)
+            base = _node_text(base_node, source_bytes)
+            if not subclass or not base or subclass == base:
+                continue
+            edges.append({
+                "edge_type": "inherits",
+                "from_name": subclass,
+                "target_name": base,
+                "target_receiver": "",
+                "file_path": file_path,
+                "line_number": name_node.start_point[0] + 1,
+            })
         return edges
 
     def _extract_instantiations(self, root: Node, source_bytes: bytes, file_path: str):

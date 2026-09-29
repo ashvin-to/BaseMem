@@ -1049,6 +1049,15 @@ class CodeIndexer:
             methods_by_parent.setdefault((row["parent"], row["symbol_name"]), []).append(rec)
             methods_by_name.setdefault(row["symbol_name"], []).append(rec)
 
+        # subclass -> [base classes], so a method lookup can walk up the chain
+        bases: dict[str, list[str]] = {}
+        for row in self.conn.execute(
+            "SELECT from_name, to_name FROM code_edges "
+            "WHERE project_id = ? AND edge_type = 'inherits' AND from_name != '' AND to_name != ''",
+            (self.project_id,),
+        ):
+            bases.setdefault(row["from_name"], []).append(row["to_name"])
+
         # file -> {variable: inferred type} from `x = Foo()` / `x = new Foo()`.
         # This is what lets `x.method()` resolve when x is a local, not a class.
         var_types: dict[str, dict[str, str]] = {}
@@ -1074,7 +1083,7 @@ class CodeIndexer:
             local = head if module else imported
             file_imports.setdefault(row["file_path"], {})[local] = module
 
-        return symbols_by_name, methods_by_parent, methods_by_name, file_imports, var_types
+        return symbols_by_name, methods_by_parent, methods_by_name, file_imports, var_types, bases
 
     def _module_to_file(self, module: str, known_files: set[str]) -> str:
         """Map a dotted module path to an indexed file, or '' when unknown."""
@@ -1117,8 +1126,25 @@ class CodeIndexer:
         )
         return ordered[0]["id"]
 
+    def _method_on_class(self, class_name, name, methods_by_parent, methods_by_name, bases, depth=0):
+        """Look for `name` on `class_name`, walking up its base classes.
+
+        Without this the call graph breaks at every inheritance boundary: a method
+        defined on a base class never resolves from a subclass instance.
+        """
+        hit = self._pick(methods_by_parent.get((class_name, name), []))
+        if hit:
+            return hit
+        if depth >= 5:
+            return 0
+        for base in bases.get(class_name, ()):
+            hit = self._method_on_class(base, name, methods_by_parent, methods_by_name, bases, depth + 1)
+            if hit:
+                return hit
+        return 0
+
     def _resolve_member_call(self, row, imports, methods_by_parent, methods_by_name,
-                              symbols_by_name, known_files, var_types) -> int:
+                              symbols_by_name, known_files, var_types, bases) -> int:
         """Resolve `receiver.name()` by looking for a method on that receiver."""
         name = row["to_name"]
         receiver = (row["to_receiver"] or "").strip()
@@ -1130,7 +1156,7 @@ class CodeIndexer:
         if head:
             inferred = (var_types.get(file_path) or {}).get(head)
             if inferred:
-                hit = self._pick(methods_by_parent.get((inferred, name), []))
+                hit = self._method_on_class(inferred, name, methods_by_parent, methods_by_name, bases)
                 if hit:
                     return hit
                 hit = self._pick(
@@ -1142,7 +1168,7 @@ class CodeIndexer:
         if head and head in imports:
             mod_file = self._module_to_file(imports[head], known_files)
             if mod_file:
-                hit = self._pick(methods_by_parent.get((head, name), []))
+                hit = self._method_on_class(head, name, methods_by_parent, methods_by_name, bases)
                 if hit:
                     return hit
                 hit = self._pick(
@@ -1152,7 +1178,7 @@ class CodeIndexer:
                     return hit
 
         # a class or receiver declared in this very file
-        hit = self._pick(methods_by_parent.get((head, name), [])) if head else 0
+        hit = self._method_on_class(head, name, methods_by_parent, methods_by_name, bases) if head else 0
         if hit:
             return hit
         if head:
@@ -1163,12 +1189,12 @@ class CodeIndexer:
         if receiver == "self" and row["from_symbol_id"]:
             parent = self._parent_name(row["from_symbol_id"])
             if parent:
-                hit = self._pick(methods_by_parent.get((parent, name), []))
+                hit = self._method_on_class(parent, name, methods_by_parent, methods_by_name, bases)
                 if hit:
                     return hit
         # a method of the enclosing symbol
         if row["from_name"]:
-            hit = self._pick(methods_by_parent.get((row["from_name"], name), []))
+            hit = self._method_on_class(row["from_name"], name, methods_by_parent, methods_by_name, bases)
             if hit:
                 return hit
         # last resort: exactly one class in the project owns a method of this name.
@@ -1204,9 +1230,8 @@ class CodeIndexer:
         project-wide. Whatever stays unresolved is a genuinely external or dynamic
         call, which is a real answer rather than a gap to hide.
         """
-        symbols_by_name, methods_by_parent, methods_by_name, file_imports, var_types = (
-            self._build_resolution_maps()
-        )
+        (symbols_by_name, methods_by_parent, methods_by_name,
+         file_imports, var_types, bases) = self._build_resolution_maps()
         known_files = {f["file_path"] for rows in symbols_by_name.values() for f in rows}
 
         rows = self.conn.execute(
@@ -1222,7 +1247,7 @@ class CodeIndexer:
             if r["edge_type"] == "member_calls":
                 target = self._resolve_member_call(
                     r, imports, methods_by_parent, methods_by_name, symbols_by_name,
-                    known_files, var_types
+                    known_files, var_types, bases
                 )
             else:
                 target = self._resolve_free_call(r, imports, symbols_by_name, known_files)
