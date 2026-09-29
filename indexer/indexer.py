@@ -1242,7 +1242,9 @@ class CodeIndexer:
         ).fetchall()
 
         updates: list[tuple[int, int]] = []
+        source_ids: dict[int, int] = {}
         for r in rows:
+            source_ids[r["id"]] = r["from_symbol_id"] or 0
             imports = file_imports.get(r["file_path"] or "", {})
             if r["edge_type"] == "member_calls":
                 target = self._resolve_member_call(
@@ -1254,6 +1256,14 @@ class CodeIndexer:
             if target:
                 updates.append((target, r["id"]))
 
+        # An edge never points at its own source. Resolving a base or callee by name
+        # inside a repo with duplicate names happily lands on the caller itself, and
+        # a self-call or a D->D inheritance is always wrong.
+        updates = [
+            (tid, eid)
+            for tid, eid in updates
+            if tid != (source_ids.get(eid) or 0)
+        ]
         if updates:
             self.conn.executemany("UPDATE code_edges SET to_symbol_id = ? WHERE id = ?", updates)
             self.conn.commit()
@@ -1323,6 +1333,12 @@ class CodeIndexer:
 
         # Batch insert edges
         for edge in edges:
+            # Same invariant as the cross-file pass: an edge never points at its own
+            # source. Same-file resolution by name happily lands on the caller.
+            from_id = sym_id_map.get(edge.get("from_name", ""), 0)
+            to_id = sym_id_map.get(edge.get("target_name", ""), 0)
+            if to_id and to_id == from_id:
+                to_id = 0
             self.conn.execute(
                 """INSERT INTO code_edges
                    (project_id, from_symbol_id, to_symbol_id, from_name, to_name,
@@ -1330,8 +1346,8 @@ class CodeIndexer:
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     self.project_id,
-                    sym_id_map.get(edge.get("from_name", ""), 0),
-                    sym_id_map.get(edge.get("target_name", ""), 0),
+                    from_id,
+                    to_id,
                     edge.get("from_name", ""),
                     edge.get("target_name", ""),
                     edge.get("target_receiver", ""),
