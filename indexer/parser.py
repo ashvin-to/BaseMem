@@ -350,6 +350,11 @@ _PROCESS_KIND_MAP = {
 }
 
 
+# Parsers are expensive to build (grammar load + query compilation) and
+# hold no per-parse state, so one per language is reused for the process.
+_PARSER_CACHE: dict = {}
+
+
 class CodeParser:
     """Parses source code into symbols and edges using tree-sitter.
 
@@ -378,7 +383,16 @@ class CodeParser:
         lang = detect_language_for_file(file_path)
         if not lang:
             return None
-        return cls(lang)
+        # One parser per language, reused across files. Compiling a tree-sitter
+        # Query costs milliseconds, and a fresh instance recompiles every query
+        # for every file -- that alone was ~90% of total indexing time. A
+        # tree-sitter Parser holds no per-parse state, so sharing is safe.
+        cached = _PARSER_CACHE.get(lang)
+        if cached is not None:
+            return cached
+        parser = cls(lang)
+        _PARSER_CACHE[lang] = parser
+        return parser
 
     @classmethod
     def supported_extension(cls, ext: str) -> bool:
