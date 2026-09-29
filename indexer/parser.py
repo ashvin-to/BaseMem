@@ -1068,9 +1068,31 @@ _NAME_NODE_TYPES = {
 _NAME_FALLBACKS = ("identifier", "simple_identifier", "IDENTIFIER", "atom", "name", "value_name", "bareword")
 
 
+def _find_declarator_name(node, depth=0):
+    """C and C++ bury a declared name under a chain of declarators.
+
+    `function_definition -> declarator -> function_declarator -> declarator ->
+    identifier`, so a direct-child search never finds it and every edge from a C
+    or C++ file ended up with an empty from_name.
+    """
+    if node is None or depth > 4:
+        return None
+    for c in node.children:
+        if c.type in _NAME_FALLBACKS or c.type in ("type_identifier", "field_identifier"):
+            return c
+    for c in node.children:
+        if "declarator" in c.type or c.type in ("qualified_identifier", "init_declarator"):
+            found = _find_declarator_name(c, depth + 1)
+            if found is not None:
+                return found
+    return None
+
+
 def _find_named_child(node, language):
     for candidate in _NAME_NODE_TYPES.get(language, ()) + _NAME_FALLBACKS:
         found = _find_child_of_type(node, candidate)
         if found is not None:
             return found
-    return None
+    # Only reached when the direct search found nothing, so languages whose
+    # names are direct children keep their existing behaviour.
+    return _find_declarator_name(node)
