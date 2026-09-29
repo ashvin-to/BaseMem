@@ -492,6 +492,8 @@ class CodeParser:
         imports = self._extract_imports(root, source_bytes, file_path)
         edges.extend(imports)
 
+        edges.extend(self._extract_instantiations(root, source_bytes, file_path))
+
         return symbols, edges
 
     def _extract_calls(self, root: Node, source_bytes: bytes, file_path: str):
@@ -563,6 +565,39 @@ class CodeParser:
                         "line_number": callee_node.start_point[0] + 1,
                     })
 
+        return edges
+
+    def _extract_instantiations(self, root: Node, source_bytes: bytes, file_path: str):
+        """Record `x = Foo(...)` / `x = new Foo()` so `x.method()` can be typed.
+
+        Without this a receiver like `indexer` in `indexer.close()` has nothing to
+        resolve against: it is a local variable, not a class, so a method lookup
+        has no key. The variable rides in to_receiver because from_name already
+        holds the enclosing function.
+        """
+        edges: list[dict] = []
+        for query_name in ("instantiate", "instantiate_call", "annotate"):
+            query = self._get_query(query_name)
+            if query is None:
+                continue
+            for _p_idx, captures in QueryCursor(query).matches(root):
+                assign_node = _first_node(captures.get("assign"))
+                name_node = _first_node(captures.get("name"))
+                func_node = _first_node(captures.get("func"))
+                if not (assign_node and name_node and func_node):
+                    continue
+                variable = _node_text(name_node, source_bytes)
+                constructor = _node_text(func_node, source_bytes)
+                if not variable or not constructor or variable == constructor:
+                    continue
+                edges.append({
+                    "edge_type": "instantiates",
+                    "from_name": _find_enclosing_func(source_bytes, assign_node, self.language) or "",
+                    "target_name": constructor,
+                    "target_receiver": variable,
+                    "file_path": file_path,
+                    "line_number": assign_node.start_point[0] + 1,
+                })
         return edges
 
     def _extract_imports(self, root: Node, source_bytes: bytes, file_path: str):
