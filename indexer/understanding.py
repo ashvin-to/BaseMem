@@ -196,10 +196,10 @@ class CodeUnderstanding:
         cur = self.indexer.conn.execute(
             f"""
             SELECT 'inbound' as direction, from_name as source, to_name as target
-            FROM code_edges WHERE project_id = ? AND to_symbol_id IN ({placeholders}) AND edge_type IN ('calls', 'references')
+            FROM code_edges WHERE project_id = ? AND to_symbol_id IN ({placeholders}) AND edge_type IN ('calls', 'member_calls', 'references')
             UNION ALL
             SELECT 'outbound' as direction, from_name as source, to_name as target
-            FROM code_edges WHERE project_id = ? AND from_symbol_id IN ({placeholders}) AND edge_type IN ('calls', 'imports', 'references')
+            FROM code_edges WHERE project_id = ? AND from_symbol_id IN ({placeholders}) AND edge_type IN ('calls', 'member_calls', 'imports', 'references')
             LIMIT 300
             """,
             (self.indexer.project_id, *ids, self.indexer.project_id, *ids),
