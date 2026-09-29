@@ -10,11 +10,26 @@ PYTHON_QUERIES = {
             name: (identifier) @name
             body: (block) @body) @symbol
     """,
+    "instantiate": """
+        (assignment
+            left: (identifier) @name
+            right: (call
+                function: (identifier) @func) @call) @assign
+    """,
+    "annotate": """
+        (assignment
+            left: (identifier) @name
+            right: (call
+                function: (attribute
+                    attribute: (identifier) @func) @obj) @call) @assign
+    """,
     "call": """
         (call function: (identifier) @func) @call
     """,
     "method_call": """
-        (call function: (attribute attribute: (identifier) @method) @attr) @call
+        (call function: (attribute
+            object: (_) @obj
+            attribute: (identifier) @method)) @call
     """,
     "import": """
         (import_statement

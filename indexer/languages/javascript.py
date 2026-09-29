@@ -19,6 +19,18 @@ JS_QUERIES = {
             name: (property_identifier) @name
             body: (statement_block) @body) @symbol
     """,
+    "instantiate": """
+        (variable_declarator
+            name: (identifier) @name
+            value: (new_expression
+                constructor: (identifier) @func) @call) @assign
+    """,
+    "instantiate_call": """
+        (variable_declarator
+            name: (identifier) @name
+            value: (call_expression
+                function: (identifier) @func) @call) @assign
+    """,
     "call": """
         (call_expression
             function: (identifier) @func) @call

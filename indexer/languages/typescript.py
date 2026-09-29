@@ -38,6 +38,18 @@ TS_QUERIES = {
             name: (identifier) @name
             body: (enum_body) @body) @symbol
     """,
+    "instantiate": """
+        (variable_declarator
+            name: (identifier) @name
+            value: (new_expression
+                constructor: (identifier) @func) @call) @assign
+    """,
+    "instantiate_call": """
+        (variable_declarator
+            name: (identifier) @name
+            value: (call_expression
+                function: (identifier) @func) @call) @assign
+    """,
     "call": """
         (call_expression
             function: (identifier) @func) @call
