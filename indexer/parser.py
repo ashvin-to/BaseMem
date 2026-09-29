@@ -594,10 +594,22 @@ class CodeParser:
                 callee_node = _first_node(captures.get(capture_name))
                 if call_node and callee_node:
                     caller = _find_enclosing_func(source_bytes, call_node, self.language)
+                    raw_target = _node_text(callee_node, source_bytes)
+                    # A path-qualified call is stored under the symbol's own name.
+                    # `crate::app::build_ui` is the symbol `build_ui`, and keeping
+                    # the full path means it never matches and get_callers is empty.
+                    target = raw_target
+                    receiver = ""
+                    if "::" in raw_target:
+                        segments = [s for s in raw_target.split("::") if s]
+                        target = segments[-1] if segments else raw_target
+                        if len(segments) == 2:
+                            receiver = segments[0]
                     edges.append({
                         "edge_type": "calls",
                         "from_name": caller or "",
-                        "target_name": _node_text(callee_node, source_bytes),
+                        "target_name": target,
+                        "target_receiver": receiver,
                         "file_path": file_path,
                         "line_number": callee_node.start_point[0] + 1,
                     })
@@ -644,23 +656,29 @@ class CodeParser:
         edges: list[dict] = []
         # Parameters and receivers are typed at their declaration, which is what
         # lets a call on a parameter or a method receiver resolve.
-        for query_name in ("param", "param_value"):
+        for query_name in ("param", "param_value", "self_type"):
             query = self._get_query(query_name)
             if query is None:
                 continue
             for _p_idx, captures in QueryCursor(query).matches(root):
-                anchor = _first_node(captures.get("symbol")) or _first_node(captures.get("assign"))
+                # `assign` is the inner node (the declaration itself), so prefer it:
+                # `symbol` is often the enclosing impl or type, which has no name.
+                anchor = _first_node(captures.get("assign")) or _first_node(captures.get("symbol"))
                 name_node = _first_node(captures.get("name"))
                 type_node = _first_node(captures.get("func"))
                 if not (anchor and name_node and type_node):
                     continue
-                param = _node_text(name_node, source_bytes)
-                declared = _node_text(type_node, source_bytes)
+                # A `self_type` match supplies the enclosing method's name as the
+                # subject; the receiver it types is always `self`.
+                param = "self" if query_name == "self_type" else _node_text(name_node, source_bytes)
+                declared = _normalize_type(_node_text(type_node, source_bytes))
                 if not param or not declared or param == declared:
                     continue
                 edges.append({
                     "edge_type": "param_type",
-                    "from_name": _find_enclosing_func(source_bytes, anchor, self.language) or "",
+                    "from_name": _find_enclosing_func(
+                        source_bytes, anchor, self.language, include_self=True
+                    ) or "",
                     "target_name": declared,
                     "target_receiver": param,
                     "file_path": file_path,
@@ -829,6 +847,44 @@ def _node_text(node, source_bytes):
     return source_bytes[node.start_byte:node.end_byte].decode("utf-8", errors="replace")
 
 
+_TYPE_QUALIFIER = re.compile(r"\b(?:mut|ref|dyn|const|static|unsafe|extern)\b\s*")
+_TYPE_LIFETIME = re.compile(r"'[A-Za-z_][A-Za-z0-9_]*\b\s*")
+_TYPE_IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+# Transparent wrappers: the methods a caller reaches through them belong to the
+# inner type, so unwrap to it. Collections are deliberately absent -- `v.push()`
+# on a Vec really is a Vec method, and unwrapping to the element type would lose it.
+_TYPE_WRAPPERS = frozenset(
+    {"box", "rc", "arc", "refcell", "refmut", "mutex", "rwlock", "option", "cow", "pin",
+     "cell", "lockresult"}
+)
+
+
+def _normalize_type(declared):
+    """Reduce a declared type to the bare name a symbol is stored under.
+
+    `&mut Widget`, `&'a Widget`, `*const Widget` and `Box<Widget>` all name the
+    same underlying type, so storing them verbatim makes every lookup miss.
+    """
+    if not declared:
+        return ""
+    text = _TYPE_QUALIFIER.sub("", _TYPE_LIFETIME.sub("", declared)).strip()
+    text = text.lstrip("&*").strip()
+    if text.startswith("[") and text.endswith("]"):
+        text = text[1:-1].strip()  # a slice `[T]` is the type T for lookup purposes
+    if "::" in text:
+        text = text.rpartition("::")[2]  # `std::sync::Arc` is stored as `Arc`
+    names = _TYPE_IDENT.findall(text)
+    if not names:
+        return ""
+    # Walk through any stack of transparent wrappers: `Rc<RefCell<AppState>>` is
+    # `AppState`. A collection stops the walk, because `v.push()` really is a
+    # method on the Vec rather than on its element type.
+    for name in names[:-1]:
+        if name.lower() not in _TYPE_WRAPPERS:
+            return name
+    return names[-1]
+
+
 def _first_node(nodes):
     if not nodes:
         return None
@@ -951,12 +1007,17 @@ def _find_parent_class(_root, method_node):
     return None
 
 
-def _find_enclosing_func(source_bytes, node, language):
+def _find_enclosing_func(source_bytes, node, language, include_self=False):
     """Walk up to find the enclosing function/method name, as text.
 
     Returns the name string (not the node) because callers store it directly on
-    the edge's from_name.
+    the edge's from_name. `include_self` matters when the anchor already *is* the
+    declaration, as it is for a parameter or a method's own `self`.
     """
+    if include_self and node is not None and node.type in _FUNCTION_NODE_TYPES:
+        name_node = _find_named_child(node, language)
+        if name_node is not None:
+            return _node_text(name_node, source_bytes)
     cur = node.parent
     while cur is not None and cur.type not in _ROOT_NODE_TYPES:
         if cur.type in _FUNCTION_NODE_TYPES:
