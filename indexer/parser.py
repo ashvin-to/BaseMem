@@ -30,6 +30,40 @@ except ImportError:  # tree-sitter not installed: indexing is unavailable, but D
 
 _GRAMMAR_CACHE: dict = {}
 
+# The bundled language pack does not map these extensions, so a file with one was
+# never even considered for indexing. Filling them in is a mapping change, not a
+# query: each language still needs a query to extract declarations.
+EXTRA_EXTENSION_LANGUAGES = {
+    ".sql": "sql",
+    ".graphql": "graphql",
+    ".gql": "graphql",
+    ".yaml": "yaml",
+    ".yml": "yaml",
+    ".toml": "toml",
+    "dockerfile": "dockerfile",
+    ".tf": "hcl",
+    ".tfvars": "hcl",
+}
+
+_EXTENSION_OVERRIDES = {
+    **{k: v for k, v in EXTRA_EXTENSION_LANGUAGES.items() if k.startswith(".")},
+    "dockerfile": "dockerfile",
+}
+
+
+def detect_language_for_file(file_path) -> str | None:
+    """Extension -> language, preferring our own map over the pack's."""
+    p = Path(file_path)
+    name = p.name.lower()
+    if name in _EXTENSION_OVERRIDES or name.startswith("dockerfile"):
+        return "dockerfile"
+    ext = p.suffix.lower()
+    if ext in _EXTENSION_OVERRIDES:
+        return _EXTENSION_OVERRIDES[ext]
+    if not ext or ext in _SKIP_EXTENSIONS:
+        return None
+    return detect_language_from_extension(ext.lstrip("."))
+
 # Map our language names to the bundled .so filename and C export function.
 _LANGUAGE_SO = {
     "python":     ("libtree_sitter_python.so",     "tree_sitter_python"),
@@ -68,14 +102,17 @@ def ensure_grammars():
     download(needed)
 
 
+# .yaml/.toml/.graphql/.sql used to sit here and were never opened. They now have
+# real extraction (see languages/iaccfg.py) and are indexed as resources, the way
+# cbm treats Dockerfile/K8s nodes. The rest are still noise.
 _SKIP_EXTENSIONS = frozenset({
     ".md", ".markdown", ".rst", ".txt", ".tex",
     ".json", ".jsonc", ".json5",
-    ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf",
+    ".ini", ".cfg", ".conf",
     ".css", ".scss", ".less", ".sass",
     ".html", ".htm", ".xhtml",
-    ".xml", ".svg", ".graphql", ".proto",
-    ".sql", ".db", ".sqlite",
+    ".xml", ".svg", ".proto",
+    ".db", ".sqlite",
     ".csv", ".tsv",
     ".png", ".jpg", ".jpeg", ".gif", ".ico", ".webp", ".bmp",
     ".woff", ".woff2", ".ttf", ".eot",
@@ -338,10 +375,7 @@ class CodeParser:
 
     @classmethod
     def for_file(cls, file_path: str) -> CodeParser | None:
-        ext = Path(file_path).suffix.lower()
-        if not ext or ext in _SKIP_EXTENSIONS:
-            return None
-        lang = detect_language_from_extension(ext.lstrip("."))
+        lang = detect_language_for_file(file_path)
         if not lang:
             return None
         return cls(lang)
@@ -350,6 +384,8 @@ class CodeParser:
     def supported_extension(cls, ext: str) -> bool:
         if not ext or ext in _SKIP_EXTENSIONS:
             return False
+        if ext in _EXTENSION_OVERRIDES:
+            return True
         return detect_language_from_extension(ext.lstrip(".")) is not None
 
     def _get_query(self, name: str):
