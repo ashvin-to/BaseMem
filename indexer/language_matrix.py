@@ -22,6 +22,7 @@ FIXTURES: list[tuple[str, str, str]] = [
     ("typescript", "m.ts", "export function alpha(): number { return 1 }\nexport class Beta { gamma(): number { return 2 } }\n"),
     ("tsx", "m.tsx", "export function Alpha(): number { return 1 }\nexport class Beta { gamma(): number { return 2 } }\n"),
     ("go", "m.go", "package m\n\nfunc Alpha() int { return 1 }\n\ntype Beta struct{}\n\nfunc (b Beta) Gamma() int { return 2 }\n"),
+    ("go_call", "m2.go", "package m\n\ntype Beta struct{}\n\nfunc (b Beta) Gamma() int { return 2 }\n\nfunc Delta(b Beta) int { return b.Gamma() }\n"),
     ("rust", "m.rs", "pub fn alpha() -> i32 { 1 }\n\npub struct Beta;\n\nimpl Beta { pub fn gamma(&self) -> i32 { 2 } }\n"),
     ("java", "M.java", "public class M {\n  public int alpha() { return 1; }\n  static class Beta { int gamma() { return 2; } }\n}\n"),
     ("c", "m.c", "int alpha(void) { return 1; }\n"),
@@ -74,7 +75,7 @@ FIXTURES: list[tuple[str, str, str]] = [
 # Query files added on this branch. Call extraction for these is verified in
 # test_language_call_queries.py, because the bare-declaration fixtures in FIXTURES
 # contain no calls and cannot measure it.
-NEW_QUERY_LANGUAGES = {"kotlin", "julia", "erlang", "ocaml", "nim", "zig", "fsharp", "perl"}
+NEW_QUERY_LANGUAGES = {"kotlin", "julia", "erlang", "ocaml", "nim", "zig", "fsharp", "perl", "go", "go_call"}
 
 # Of NEW_QUERY_LANGUAGES, these yield symbols but no call edges.
 NO_CALL_GRAPH = {
@@ -130,9 +131,10 @@ def coverage() -> list[dict]:
             target.write_text(source, encoding="utf-8")
             parser = CodeParser.for_file(str(target))
             ext = Path(filename).suffix or filename
+            resolved = parser.language if parser else language
             if parser is None:
                 rows.append(
-                    {"language": language, "ext": ext, "query": language in LANGUAGE_QUERIES,
+                    {"language": language, "ext": ext, "query": resolved in LANGUAGE_QUERIES,
                      "parsed": False, "parse_error": False, "symbols": 0, "calls": 0}
                 )
                 continue
@@ -148,7 +150,7 @@ def coverage() -> list[dict]:
                 symbols, edge_list = [], []
             calls = sum(1 for e in edge_list if "call" in e["edge_type"])
             rows.append(
-                {"language": language, "ext": ext, "query": language in LANGUAGE_QUERIES,
+                {"language": language, "ext": ext, "query": resolved in LANGUAGE_QUERIES,
                  "parsed": True, "parse_error": parse_error, "symbols": len(symbols),
                  "calls": calls}
             )
