@@ -9,8 +9,11 @@ curated languages against silent regression.
 import pytest
 
 from indexer.language_matrix import (
+    BLOCKED,
     CURATED,
     FIXTURES,
+    NEW_QUERY_LANGUAGES,
+    SYMBOLS_ONLY_LANGUAGES,
     RESOURCE_LANGUAGES,
     UNMAPPED_EXTS,
     coverage,
@@ -58,3 +61,30 @@ def test_summary_is_coherent(rows):
     explained = set(s["needs_query_langs"]) | set(s["unmapped_ext"]) | RESOURCE_LANGUAGES
     unexplained = [r["language"] for r in rows if r["symbols"] == 0 and r["language"] not in explained]
     assert not unexplained, f"unclassified gaps: {unexplained}"
+
+
+def test_no_fixture_fails_to_parse(rows):
+    """A fixture that does not parse makes every other number meaningless."""
+    bad = [r["language"] for r in rows if r.get("parse_error")]
+    assert not bad, f"fixtures do not parse cleanly: {bad}"
+
+
+def test_every_new_query_language_extracts_symbols(rows):
+    """A language we ship queries for must either yield a call graph or say why not.
+
+    Only meaningful for the query languages this branch added: the fixtures in
+    FIXTURES are bare declarations with no calls, so call extraction for the
+    curated languages is covered by test_edge_resolution instead.
+    """
+    by_lang = {r["language"]: r for r in rows}
+    for lang in NEW_QUERY_LANGUAGES:
+        assert lang in by_lang, f"NEW_QUERY_LANGUAGES names a language with no fixture: {lang}"
+        row = by_lang[lang]
+        assert row["symbols"], f"{lang} has a query file but extracts no symbols"
+    for lang in SYMBOLS_ONLY_LANGUAGES:
+        assert lang in by_lang, f"SYMBOLS_ONLY_LANGUAGES names a language with no fixture: {lang}"
+
+
+def test_blocked_languages_have_reasons():
+    for lang, reason in BLOCKED.items():
+        assert reason and len(reason) > 20, f"{lang} needs a real explanation"

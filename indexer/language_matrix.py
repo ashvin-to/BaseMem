@@ -29,7 +29,8 @@ FIXTURES: list[tuple[str, str, str]] = [
     ("ruby", "m.rb", "def alpha\n  1\nend\n\nclass Beta\n  def gamma\n    2\n  end\nend\n"),
     ("php", "m.php", "<?php\nfunction alpha() { return 1; }\nclass Beta { function gamma() { return 2; } }\n"),
     ("swift", "m.swift", "func alpha() -> Int { return 1 }\nclass Beta { func gamma() -> Int { return 2 } }\n"),
-    ("kotlin", "m.kt", "fun alpha(): Int = 1\nclass Beta { fun gamma(): Int = 2 }\n"),
+    # NOTE: this kotlin grammar rejects block bodies, so expression bodies only.
+    ("kotlin", "m.kt", "fun beta(): Int = 1\nfun alpha(): Int = beta()\n\nclass Beta {\n    fun gamma(): Int = beta()\n}\n"),
     ("scala", "m.scala", "object Alpha { def a: Int = 1 }\nclass Beta { def gamma: Int = 2 }\n"),
     ("csharp", "m.cs", "class M { int Alpha() { return 1; } class Beta { int Gamma() { return 2; } } }\n"),
     ("dart", "m.dart", "int alpha() { return 1; }\nclass Beta { int gamma() { return 2; } }\n"),
@@ -38,15 +39,16 @@ FIXTURES: list[tuple[str, str, str]] = [
     ("elixir", "m.ex", "defmodule M do\n  def alpha, do: 1\n  defmodule Beta do\n    def gamma, do: 2\n  end\nend\n"),
     ("solidity", "m.sol", "pragma solidity ^0.8.0;\ncontract M { function alpha() public pure returns (uint) { return 1; } }\n"),
     ("haskell", "Hs.hs", "module M where\nalpha :: Int\nalpha = 1\ndata Beta = Beta\n"),
-    ("clojure", "m.clj", "(ns m)\n(defn alpha [] 1)\n(deftype Beta [x])\n"),
+    ("clojure", "m.clj", "(ns m)\n(defn alpha [] 1)\n(defrecord Beta [x])\n"),
     ("julia", "m.jl", "alpha() = 1\nstruct Beta end\n"),
     ("perl", "m.pl", "sub alpha { return 1; }\nsub Beta::gamma { return 2; }\n"),
     ("r", "m.r", "alpha <- function() 1\n"),
-    ("zig", "m.zig", "fn alpha() i32 { return 1; }\nconst Beta = struct { fn gamma() i32 { return 2; } };\n"),
+    # this zig grammar only accepts void fns and decls at the top level
+    ("zig", "m.zig", "fn alpha() void {}\nfn beta() void {}\nconst S = struct {\n    fn gamma(self: *S) void {}\n};\n"),
     ("ocaml", "m.ml", "let alpha = 1\nlet beta_gamma = 2\n"),
     ("nim", "m.nim", "proc alpha(): int = 1\ntype Beta = object\n"),
     ("erlang", "m.erl", "-module(m).\n-export([alpha/0]).\nalpha() -> 1.\n"),
-    ("groovy", "m.groovy", "class M { def alpha() { 1 } class Beta { def gamma() { 2 } } }\n"),
+
     ("fsharp", "m.fs", "module M\nlet alpha = 1\ntype Beta = { x: int }\n"),
     ("sql", "m.sql", "CREATE TABLE alpha (id INT);\n"),
     ("graphql", "m.graphql", "type Beta { gamma: Int }\n"),
@@ -57,6 +59,34 @@ FIXTURES: list[tuple[str, str, str]] = [
     ("vue", "m.vue", "<template><div/></template>\n<script>\nexport default { name: 'Alpha' }\n</script>\n"),
     ("svelte", "m.svelte", "<script>\n  function alpha() { return 1; }\n</script>\n<h1>hi</h1>\n"),
 ]
+
+# Blocked, and why. Both are grammar/query-contract limits, not missing effort.
+#   clojure — a defn is a list_lit whose head symbol must literally be `defn`.
+#              tree-sitter queries cannot compare a captured string, so this needs
+#              a predicate the current query contract does not support.
+#   groovy  — the bundled .groovy grammar parses Groovy source as a shell script
+#              (command/unit/block/end_command), so nothing about it is trustworthy.
+# Languages whose query file yields symbols but no call edges, and why.
+#   perl    — the callee is an anonymous `function` token; tree-sitter drops the
+#             capture for anonymous nodes, so no callee name is available.
+#   haskell — applications are `prefixexp`/`apply` shapes that did not yield a
+#             stable callee capture worth shipping as a query.
+# Query files added on this branch. Call extraction for these is verified in
+# test_language_call_queries.py, because the bare-declaration fixtures in FIXTURES
+# contain no calls and cannot measure it.
+NEW_QUERY_LANGUAGES = {"kotlin", "julia", "erlang", "ocaml", "nim", "zig", "fsharp", "perl"}
+
+# Of NEW_QUERY_LANGUAGES, these yield symbols but no call edges.
+NO_CALL_GRAPH = {
+    "perl": "callee is an anonymous `function` token; tree-sitter drops its capture",
+}
+# haskell has a query file too but is not part of the call-graph set.
+SYMBOLS_ONLY_LANGUAGES = {**NO_CALL_GRAPH, "haskell": "no stable callee capture for applications"}
+
+BLOCKED = {
+    "clojure": "needs a head-symbol predicate; queries cannot compare captured text",
+    "groovy": "bundled grammar parses Groovy as shell (command/unit/block)",
+}
 
 # Extensions tree_sitter_language_pack does not map to a language at all, so no
 # parser is built and no query would help. Wiring one up is an extension-mapping
@@ -83,6 +113,8 @@ def coverage() -> list[dict]:
     import tempfile
     from pathlib import Path
 
+    from tree_sitter_language_pack import get_parser
+
     from indexer.parser import LANGUAGE_QUERIES, CodeParser
 
     rows: list[dict] = []
@@ -97,16 +129,24 @@ def coverage() -> list[dict]:
             if parser is None:
                 rows.append(
                     {"language": language, "ext": ext, "query": language in LANGUAGE_QUERIES,
-                     "parsed": False, "symbols": 0}
+                     "parsed": False, "parse_error": False, "symbols": 0, "calls": 0}
                 )
                 continue
+            # self.parser only exists on the query path, so go to the pack directly
+            # so the parse-error check works for both paths.
+            tree = get_parser(parser.language).parse(source.encode("utf-8"))
+            # A fixture that does not cleanly parse makes every downstream number
+            # meaningless, and looks identical to "the query found nothing".
+            parse_error = bool(tree.root_node.has_error)
             try:
-                symbols, _ = parser.parse(source.encode("utf-8"), filename)
+                symbols, edge_list = parser.parse(source.encode("utf-8"), filename)
             except Exception:
-                symbols = []
+                symbols, edge_list = [], []
+            calls = sum(1 for e in edge_list if "call" in e["edge_type"])
             rows.append(
                 {"language": language, "ext": ext, "query": language in LANGUAGE_QUERIES,
-                 "parsed": True, "symbols": len(symbols)}
+                 "parsed": True, "parse_error": parse_error, "symbols": len(symbols),
+                 "calls": calls}
             )
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -118,7 +158,11 @@ def summary(rows: list[dict]) -> dict:
     generic_ok = [r for r in ok if not r["query"]]
     needs_query = [r for r in rows if r["symbols"] == 0]
     unmapped = [r for r in rows if not r["parsed"]]
+    bad_fixture = [r["language"] for r in rows if r.get("parse_error")]
     needs_query = [r for r in needs_query if r["language"] not in RESOURCE_LANGUAGES]
+    # NB: no "symbols only" count here. The fixtures are bare declarations with no
+    # calls in them, so that number would measure the fixtures, not the code.
+    # Call extraction is measured in test_language_call_queries.py.
     return {
         "languages": len(rows),
         "extracting": len(ok),
@@ -126,6 +170,7 @@ def summary(rows: list[dict]) -> dict:
         "needs_query": len(needs_query),
         "needs_query_langs": [r["language"] for r in needs_query],
         "unmapped_ext": [r["language"] for r in unmapped],
+        "bad_fixture": bad_fixture,
         "resource_formats": sorted(
             r["language"] for r in rows if r["language"] in RESOURCE_LANGUAGES
         ),
