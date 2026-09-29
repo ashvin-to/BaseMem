@@ -23,6 +23,12 @@ PYTHON_QUERIES = {
                 function: (attribute
                     attribute: (identifier) @func) @obj) @call) @assign
     """,
+    "inherits": """
+        (class_definition
+            name: (identifier) @name
+            superclasses: (argument_list
+                (identifier) @base)) @symbol
+    """,
     "call": """
         (call function: (identifier) @func) @call
     """,

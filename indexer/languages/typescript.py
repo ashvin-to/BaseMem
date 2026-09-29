@@ -50,6 +50,13 @@ TS_QUERIES = {
             value: (call_expression
                 function: (identifier) @func) @call) @assign
     """,
+    "inherits": """
+        (class_declaration
+            name: (type_identifier) @name
+            (class_heritage
+                (extends_clause
+                    value: (identifier) @base))) @symbol
+    """,
     "call": """
         (call_expression
             function: (identifier) @func) @call
