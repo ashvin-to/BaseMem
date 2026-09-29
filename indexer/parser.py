@@ -642,6 +642,31 @@ class CodeParser:
         holds the enclosing function.
         """
         edges: list[dict] = []
+        # Parameters and receivers are typed at their declaration, which is what
+        # lets a call on a parameter or a method receiver resolve.
+        for query_name in ("param", "param_value"):
+            query = self._get_query(query_name)
+            if query is None:
+                continue
+            for _p_idx, captures in QueryCursor(query).matches(root):
+                anchor = _first_node(captures.get("symbol")) or _first_node(captures.get("assign"))
+                name_node = _first_node(captures.get("name"))
+                type_node = _first_node(captures.get("func"))
+                if not (anchor and name_node and type_node):
+                    continue
+                param = _node_text(name_node, source_bytes)
+                declared = _node_text(type_node, source_bytes)
+                if not param or not declared or param == declared:
+                    continue
+                edges.append({
+                    "edge_type": "param_type",
+                    "from_name": _find_enclosing_func(source_bytes, anchor, self.language) or "",
+                    "target_name": declared,
+                    "target_receiver": param,
+                    "file_path": file_path,
+                    "line_number": anchor.start_point[0] + 1,
+                })
+
         for query_name in ("instantiate", "instantiate_call", "annotate"):
             query = self._get_query(query_name)
             if query is None:
@@ -909,6 +934,9 @@ _FUNCTION_NODE_TYPES = frozenset(
         "async_function_definition", "async_method_definition", "arrow_function",
         "function_signature", "fun_decl", "routine", "value_definition",
         "function_declaration_left", "bind",
+        # Go keeps methods in their own node rather than nesting them under a
+        # class, so omitting it left every Go caller unattributed.
+        "method_declaration",
     }
 )
 
@@ -955,6 +983,7 @@ _NAME_NODE_TYPES = {
     "fsharp": ("identifier", "long_identifier"),
     "haskell": ("variable", "name", "constructor"),
     "zig": ("IDENTIFIER", "identifier"),
+    "go": ("identifier", "field_identifier", "type_identifier"),
 }
 _NAME_FALLBACKS = ("identifier", "simple_identifier", "IDENTIFIER", "atom", "name", "value_name", "bareword")
 
