@@ -429,6 +429,11 @@ class CodeParser:
             ("function", "function"),
             ("class", "class"),
             ("method", "method"),
+            # `obj.method = function () {}` / `= () => {}`. This is the dominant
+            # idiom in CommonJS and prototype-style JS, and without it a whole
+            # codebase's methods are invisible to the index.
+            ("method", "assigned_method"),
+            ("method", "assigned_method_literal"),
             ("method_signature", "method_signature"),
             ("interface", "interface"),
             ("type_alias", "type_alias"),

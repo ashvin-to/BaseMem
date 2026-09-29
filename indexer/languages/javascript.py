@@ -19,6 +19,24 @@ JS_QUERIES = {
             name: (property_identifier) @name
             body: (statement_block) @body) @symbol
     """,
+    # `app.use = function (fn) {}` and `app.use = () => {}`. The function here is
+    # anonymous, so it can only be named by the property it is assigned to.
+    # Without this, express's lib/ yields no symbols at all.
+    "assigned_method": """
+        (assignment_expression
+            left: (member_expression
+                object: (_)
+                property: (property_identifier) @name)
+            right: [(function_expression) (arrow_function)]) @symbol
+    """,
+    # `{ init: function () {}, close: () => {} }` -- a function-valued object key
+    # is named by that key. Very common in exports and option objects.
+    "assigned_method_literal": """
+        (object
+            (pair
+                key: (property_identifier) @name
+                value: [(function_expression) (arrow_function)]) @symbol) @pair
+    """,
     "instantiate": """
         (variable_declarator
             name: (identifier) @name
