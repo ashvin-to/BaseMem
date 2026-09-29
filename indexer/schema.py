@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS code_symbols (
     docstring TEXT DEFAULT '',
     parent_id INTEGER DEFAULT NULL,
     content_hash TEXT DEFAULT '',
+    body_hash TEXT DEFAULT '',
     created_at TEXT DEFAULT (datetime('now')),
     updated_at TEXT DEFAULT (datetime('now'))
 );
@@ -57,6 +58,23 @@ CREATE INDEX IF NOT EXISTS idx_ce_to ON code_edges(to_symbol_id);
 CREATE INDEX IF NOT EXISTS idx_ce_project ON code_edges(project_id);
 CREATE INDEX IF NOT EXISTS idx_ce_type ON code_edges(edge_type);
 
+-- Inventory of every file the indexer has walked, including files that
+-- contain zero symbols (empty __init__.py, plain .sh, config-style .js).
+-- Staleness cannot be derived from code_symbols: a symbol-free file would
+-- always look "new" and force a re-sync on every query.
+CREATE TABLE IF NOT EXISTS code_files (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id TEXT NOT NULL,
+    file_path TEXT NOT NULL,
+    mtime REAL NOT NULL DEFAULT 0,
+    size INTEGER NOT NULL DEFAULT 0,
+    symbol_count INTEGER NOT NULL DEFAULT 0,
+    indexed_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(project_id, file_path)
+);
+
+CREATE INDEX IF NOT EXISTS idx_cf_project ON code_files(project_id);
+
 CREATE TABLE IF NOT EXISTS code_projects (
     id TEXT PRIMARY KEY,
     root_path TEXT NOT NULL,
@@ -89,5 +107,13 @@ def ensure_code_schema(conn):
             conn.execute("INSERT INTO code_symbols_fts(code_symbols_fts) VALUES('rebuild')")
     except Exception:
         pass  # pragma: no cover — first-run tables always have correct columns
+
+    # Migration: body_hash (name-insensitive) added after content_hash
+    try:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(code_symbols)").fetchall()}
+        if "body_hash" not in cols:
+            conn.execute("ALTER TABLE code_symbols ADD COLUMN body_hash TEXT DEFAULT ''")
+    except Exception:
+        pass
 
     conn.commit()

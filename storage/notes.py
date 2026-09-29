@@ -482,6 +482,85 @@ class NoteMixin:
             result["_suggest"] = f"This planet has {count} notes. Consider summarizing via `kb planet summarize {topic}` or the summarize_planet MCP tool."
         return result
 
+    def link_symbol_refs(self, note_id: str, topic: str, refs: list, project_root: str = "") -> int:
+        """Attach code symbols to a memory note.
+
+        `refs` is a list of (file_path, symbol_name, content_hash) tuples. The
+        content_hash is what lets a link survive a rename: if the body is unchanged
+        at a new path, notes_for_symbol still finds it.
+        """
+        if not note_id or not note_id.startswith("note-"):
+            return 0
+        try:
+            numeric = int(note_id.split("-", 1)[1])
+        except (ValueError, IndexError):
+            return 0
+        topic_slug = self.normalize_topic(topic)
+        linked = 0
+        for file_path, symbol_name, content_hash in refs:
+            if not file_path:
+                continue
+            exec_stmt(
+                self.storage.connection,
+                "INSERT OR IGNORE INTO code_symbol_refs "
+                "(note_id, topic, file_path, symbol_name, content_hash, project_root) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (numeric, topic_slug, file_path, symbol_name or "", content_hash or "", project_root or ""),
+            )
+            linked += 1
+        return linked
+
+    def notes_for_symbol(self, file_path: str = "", symbol_name: str = "", topic: str = "", content_hash: str = "") -> list[dict]:
+        """Memory notes referencing a symbol, a file, or a content hash."""
+        where, params = [], []
+        if file_path:
+            where.append("r.file_path = ?")
+            params.append(file_path)
+        if symbol_name:
+            where.append("r.symbol_name = ?")
+            params.append(symbol_name)
+        if content_hash:
+            where.append("r.content_hash = ?")
+            params.append(content_hash)
+        if topic:
+            where.append("r.topic = ?")
+            params.append(self.normalize_topic(topic))
+        if not where:
+            return []
+        sql = (
+            "SELECT r.note_id, r.file_path, r.symbol_name, r.created_at, "
+            "n.kind, n.title, substr(n.content, 1, 400) AS content, n.topic "
+            "FROM code_symbol_refs r LEFT JOIN notes n ON n.id = r.note_id "
+            f"WHERE {' AND '.join(where)} ORDER BY r.created_at DESC LIMIT 100"
+        )
+        rows = self.storage.connection.cursor().execute(sql, tuple(params)).fetchall()
+        return [dict(r) for r in rows]
+
+    def symbol_refs_for_note(self, note_id: str) -> list[dict]:
+        try:
+            numeric = int(note_id.split("-", 1)[1])
+        except (ValueError, IndexError):
+            return []
+        rows = self.storage.connection.cursor().execute(
+            "SELECT file_path, symbol_name, content_hash, created_at FROM code_symbol_refs "
+            "WHERE note_id = ? ORDER BY file_path",
+            (numeric,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def unlink_symbol_ref(self, note_id: str, file_path: str, symbol_name: str = "") -> int:
+        try:
+            numeric = int(note_id.split("-", 1)[1])
+        except (ValueError, IndexError):
+            return 0
+        if symbol_name:
+            sql = "DELETE FROM code_symbol_refs WHERE note_id = ? AND file_path = ? AND symbol_name = ?"
+            params = (numeric, file_path, symbol_name)
+        else:
+            sql = "DELETE FROM code_symbol_refs WHERE note_id = ? AND file_path = ?"
+            params = (numeric, file_path)
+        return exec_stmt(self.storage.connection, sql, params)
+
     def log_chat_to_planet(self, _folder_name: str, topic: str, content: str, agent_id: str, _sender: str = "ai") -> str | None:
         from .planets import _get_planet_row
 

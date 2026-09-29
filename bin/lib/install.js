@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { execSync } = require('child_process');
+const { execSync, execFileSync } = require('child_process');
 const { MARKER_START, MARKER_END, getAgentPaths, FLAG_FILENAME, getClaudeDir } = require('./constants.js');
 
 const MARKER_COMMENT_START = `<!-- ${MARKER_START} -->`;
@@ -609,10 +609,68 @@ function copyWithRewrite(srcFile, destFile) {
     content = content.replace(/require\(['"]\.\.\/\.\.\/hooks\/lib\/([^'"]+)['"]\)/g, `require('${BASEMEM_ROOT}/src/hooks/lib/$1')`);
     content = content.replace(/require\(['"]\.\.\/\.\.\/\.\.\/\.\.\/bin\/lib\/rules\.js['"]\)/g, `require('${BASEMEM_ROOT}/bin/lib/rules.js')`);
     content = content.replace(/require\(['"]\.\.\/\.\.\/\.\.\/bin\/lib\/rules\.js['"]\)/g, `require('${BASEMEM_ROOT}/bin/lib/rules.js')`);
+    content = content.split('__BASEMEM_ROOT__').join(BASEMEM_ROOT);
     fs.writeFileSync(destFile, content, 'utf-8');
   } else {
     fs.copyFileSync(srcFile, destFile);
   }
+}
+
+// v1 plugins are named-export hook factories; v2 validates the module against
+// { default: ({ id, effect }) | ({ id, setup }) } and rejects anything else.
+function detectOpencodeMajor() {
+  const override = process.env.BASEMEM_OPENCODE_MAJOR;
+  if (override && /^\d+$/.test(override)) return parseInt(override, 10);
+  for (const bin of ['opencode', 'opencode-ai']) {
+    try {
+      const out = execFileSync(bin, ['--version'], {
+        timeout: 5000,
+        encoding: 'utf-8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+      const match = out.match(/(\d+)\./);
+      if (match) return parseInt(match[1], 10);
+    } catch (_) {}
+  }
+  // Nothing to probe: v1 is the safer default, since v1 tolerates a default export
+  // while v2 hard-fails on a named-export-only module.
+  return 1;
+}
+
+const OPENCODE_PLUGIN_TEMPLATES = {
+  1: 'plugin.js',
+  2: 'plugin.v2.js',
+};
+
+function opencodePluginTemplate() {
+  const major = detectOpencodeMajor();
+  return { major, file: OPENCODE_PLUGIN_TEMPLATES[major] || OPENCODE_PLUGIN_TEMPLATES[1] };
+}
+
+function validateOpencodePlugin(pluginPath, major) {
+  if (!fs.existsSync(pluginPath)) return { ok: false, reason: 'plugin not written' };
+  const content = fs.readFileSync(pluginPath, 'utf-8');
+  if (content.includes('__BASEMEM_ROOT__')) {
+    return { ok: false, reason: 'unsubstituted __BASEMEM_ROOT__ placeholder' };
+  }
+  if (major >= 2 && !/export\s+default\b/.test(content)) {
+    return { ok: false, reason: 'OpenCode v2 requires an `export default { id, setup }` plugin definition' };
+  }
+  if (major >= 2 && !/\bid\s*:/.test(content)) {
+    return { ok: false, reason: 'OpenCode v2 plugin definition is missing an id' };
+  }
+  return { ok: true };
+}
+
+// True when the installed copy does not match the shape the current major needs.
+function isStaleOpencodePlugin(pluginPath, expectedFile) {
+  if (!fs.existsSync(pluginPath)) return true;
+  const content = fs.readFileSync(pluginPath, 'utf-8');
+  if (content.includes('__BASEMEM_ROOT__')) return true;
+  const hasDefault = /export\s+default\b/.test(content);
+  if (expectedFile === 'plugin.v2.js') return !hasDefault;
+  if (expectedFile === 'plugin.js') return hasDefault;
+  return false;
 }
 
 function deployAgyPluginTo(pluginRoot) {
@@ -1001,12 +1059,26 @@ function install(name) {
 
   if (effectiveCaps.includes('plugin')) {
     if (name === 'opencode') {
-      const pluginSrc = path.join(BASEMEM_ROOT, 'src', 'agents', 'opencode', 'plugin.js');
+      const { major, file } = opencodePluginTemplate();
+      const pluginSrc = path.join(BASEMEM_ROOT, 'src', 'agents', 'opencode', file);
+      const pluginDest = path.join(hookInstallDir(name), 'basemem.js');
       if (fs.existsSync(pluginSrc)) {
-        const pluginDest = path.join(hookInstallDir(name), 'basemem.js');
         fs.mkdirSync(path.dirname(pluginDest), { recursive: true });
         copyWithRewrite(pluginSrc, pluginDest);
-        settingsResult = { merged: true, path: pluginDest };
+        const check = validateOpencodePlugin(pluginDest, major);
+        settingsResult = {
+          merged: true,
+          path: pluginDest,
+          opencodeMajor: major,
+          template: file,
+          valid: check.ok,
+          ...(check.ok ? {} : { error: check.reason }),
+        };
+      } else {
+        settingsResult = {
+          merged: false,
+          error: `opencode plugin template missing: ${path.relative(BASEMEM_ROOT, pluginSrc)}`,
+        };
       }
     }
     if (name === 'devin') {
@@ -1218,6 +1290,13 @@ function installAll() {
   return results;
 }
 
+// Files BaseMem writes into an agent's hook/plugin dir. null = the whole dir is ours.
+function basememOwnedEntries(name) {
+  if (name === 'opencode' || name === 'devin') return ['basemem.js'];
+  if (name === 'cline' || name === 'kilo') return ['basemem.js', 'package.json'];
+  return null; // null = whole directory is ours (hook dirs we create)
+}
+
 function uninstall(name) {
   const agent = getAgent(name);
   const paths = getAgentPaths()[name];
@@ -1246,10 +1325,19 @@ function uninstall(name) {
     } else {
       const installDir = hookInstallDir(name);
       if (fs.existsSync(installDir)) {
+        // ~/.config/opencode/plugins is shared with other tools (nodeterm,
+        // codebase-memory-mcp, npm plugins) — only remove what we installed.
+        const owned = basememOwnedEntries(name);
         const entries = fs.readdirSync(installDir);
+        let remaining = 0;
         for (const entry of entries) {
           const full = path.join(installDir, entry);
           const stat = fs.statSync(full);
+          const ours = owned === null || (!stat.isDirectory() && owned.includes(entry));
+          if (!ours) {
+            remaining += 1;
+            continue;
+          }
           if (stat.isDirectory()) {
             fs.rmSync(full, { recursive: true });
           } else {
@@ -1257,7 +1345,9 @@ function uninstall(name) {
           }
           removed.push(full);
         }
-        try { fs.rmdirSync(installDir); } catch (_) {}
+        if (remaining === 0) {
+          try { fs.rmdirSync(installDir); } catch (_) {}
+        }
       }
     }
 
@@ -1413,6 +1503,11 @@ module.exports = {
   deployOpencodeCommands,
   removeOpencodeCommands,
   cleanAgyStaleGlobalSkills,
+  detectOpencodeMajor,
+  opencodePluginTemplate,
+  validateOpencodePlugin,
+  isStaleOpencodePlugin,
+  basememOwnedEntries,
 };
 
 if (require.main === module || process.argv[2]) {
@@ -1550,6 +1645,13 @@ if (require.main === module || process.argv[2]) {
     if (res.mcp && res.mcp.written) parts.push('mcp');
     if (res.skills && res.skills.copied) parts.push('skills');
     console.log(`${agentName}: ${parts.length ? parts.join(', ') : 'no action'}`);
+    if (res.settings && res.settings.error) {
+      console.error(`${agentName}: plugin error — ${res.settings.error}`);
+      process.exit(1);
+    }
+    if (res.settings && res.settings.opencodeMajor) {
+      console.log(`  plugin: opencode v${res.settings.opencodeMajor} template ${res.settings.template}`);
+    }
     process.exit(0);
   }
 
@@ -1575,6 +1677,8 @@ if (require.main === module || process.argv[2]) {
       let missingRules = false;
       let missingImport = false;
       let missingFile = false;
+      let stalePlugin = false;
+      let pluginReason = '';
 
       if (!fs.existsSync(rulesFilePath)) {
         missingFile = true;
@@ -1582,6 +1686,21 @@ if (require.main === module || process.argv[2]) {
         const content = fs.readFileSync(rulesFilePath, 'utf-8');
         if (!content.includes(MARKER_COMMENT_START)) {
           missingRules = true;
+        }
+      }
+
+      if (agent.name === 'opencode') {
+        const { file } = opencodePluginTemplate();
+        const pluginPath = path.join(hookInstallDir('opencode'), 'basemem.js');
+        if (isStaleOpencodePlugin(pluginPath, file)) {
+          stalePlugin = true;
+          pluginReason = `opencode plugin shape mismatch (expected ${file})`;
+        } else {
+          const check = validateOpencodePlugin(pluginPath, detectOpencodeMajor());
+          if (!check.ok) {
+            stalePlugin = true;
+            pluginReason = `opencode plugin invalid: ${check.reason}`;
+          }
         }
       }
 
@@ -1597,30 +1716,33 @@ if (require.main === module || process.argv[2]) {
         }
       }
 
-      const intact = !missingFile && !missingRules && !missingImport;
+      const intact = !missingFile && !missingRules && !missingImport && !stalePlugin;
       const detail = [];
       if (missingFile) detail.push('rules file not found');
       if (missingRules) detail.push('marker missing from rules');
       if (missingImport) detail.push('import line missing from CLAUDE.md');
+      if (stalePlugin) detail.push(pluginReason);
 
-      install(agent.name);
-      
+      const res = install(agent.name);
+
       if (!intact) {
         results.push({ agent: agent.name, status: 'repaired', detail: detail.join(', ') });
       } else {
         results.push({ agent: agent.name, status: 'intact (synced)', detail: '' });
       }
+      if (agent.name === 'opencode' && res && res.settings && res.settings.error) {
+        results.push({ agent: 'opencode (plugin)', status: 'error', detail: res.settings.error });
+      } else if (agent.name === 'opencode' && res && res.settings && res.settings.valid) {
+        results.push({
+          agent: 'opencode (plugin)',
+          status: 'ok',
+          detail: `v${res.settings.opencodeMajor} template ${res.settings.template}`,
+        });
+      }
     }
-    if (process.argv.includes('--dry-run')) {
-      console.log('Agent\t\tStatus\t\tDetail');
-      for (const r of results) {
-        console.log(`${r.agent}\t\t${r.status}\t\t${r.detail}`);
-      }
-    } else {
-      console.log('Agent\t\tStatus\t\tDetail');
-      for (const r of results) {
-        console.log(`${r.agent}\t\t${r.status}\t\t${r.detail}`);
-      }
+    console.log('Agent\t\tStatus\t\tDetail');
+    for (const r of results) {
+      console.log(`${r.agent}\t\t${r.status}\t\t${r.detail}`);
     }
     process.exit(0);
   }

@@ -186,6 +186,54 @@ const first = install('opencode');
 assert.ok(first.rule.written !== undefined, 'rule.written exists');
 assert.ok(first.mcp.written !== undefined, 'mcp.written exists');
 
+// ── OpenCode plugin module shape ──────────────────────────────────
+// v2 validates the module against { default: ({ id, effect }) | ({ id, setup }) }.
+// A v1-shaped plugin silently fails to load on every startup.
+const { detectOpencodeMajor, opencodePluginTemplate, validateOpencodePlugin, isStaleOpencodePlugin, uninstall } =
+  require('../install.js');
+const ocPlugin = path.join(paths_oc.detect, 'plugins', 'basemem.js');
+assert.ok(fs.existsSync(ocPlugin), 'install(opencode): plugin written');
+const ocPluginSrc = fs.readFileSync(ocPlugin, 'utf-8');
+assert.ok(!ocPluginSrc.includes('__BASEMEM_ROOT__'), 'plugin: BASEMEM_ROOT placeholder substituted');
+assert.ok(ocPluginSrc.includes('"id": "basemem"') || /id\s*:/.test(ocPluginSrc), 'plugin: has an id');
+assert.ok(first.settings.opencodeMajor, 'install(opencode): reports detected major');
+assert.strictEqual(first.settings.valid, true, 'install(opencode): plugin passes validation');
+
+const major = detectOpencodeMajor();
+const expectedTemplate = major >= 2 ? 'plugin.v2.js' : 'plugin.js';
+assert.strictEqual(opencodePluginTemplate().file, expectedTemplate, `template for v${major}`);
+assert.strictEqual(
+  /export\s+default\b/.test(ocPluginSrc),
+  major >= 2,
+  `default export present exactly when v${major} requires it`,
+);
+assert.strictEqual(validateOpencodePlugin(ocPlugin, major).ok, true, 'validateOpencodePlugin: ok');
+assert.strictEqual(isStaleOpencodePlugin(ocPlugin, expectedTemplate), false, 'isStaleOpencodePlugin: fresh');
+console.log(`PASS opencode plugin: v${major} template ${expectedTemplate}, module shape valid`);
+
+// A v1-shaped plugin under v2 is reported stale, not silently accepted.
+if (major >= 2) {
+  const v1Shape = path.join(path.dirname(ocPlugin), 'basemem-v1-probe.js');
+  fs.writeFileSync(v1Shape, 'export const BaseMemPlugin = async () => ({})\n', 'utf-8');
+  assert.strictEqual(isStaleOpencodePlugin(v1Shape, 'plugin.v2.js'), true, 'v1 shape flagged stale under v2');
+  assert.strictEqual(validateOpencodePlugin(v1Shape, 2).ok, false, 'v1 shape fails v2 validation');
+  assert.strictEqual(validateOpencodePlugin(v1Shape, 1).ok, true, 'v1 shape passes v1 validation');
+  fs.unlinkSync(v1Shape);
+}
+
+// uninstall must not remove plugins owned by other tools
+fs.writeFileSync(path.join(path.dirname(ocPlugin), 'nodeterm-status.js'), '// other tool\n', 'utf-8');
+uninstall('opencode');
+assert.ok(!fs.existsSync(ocPlugin), 'uninstall(opencode): basemem plugin removed');
+assert.ok(
+  fs.existsSync(path.join(path.dirname(ocPlugin), 'nodeterm-status.js')),
+  'uninstall(opencode): foreign plugin preserved',
+);
+assert.ok(fs.existsSync(path.dirname(ocPlugin)), 'uninstall(opencode): shared plugin dir preserved');
+console.log('PASS uninstall(opencode): leaves foreign plugins intact');
+
+install('opencode');
+
 // Verify tier 2 rules were written
 const ocContent = fs.readFileSync(paths_oc.install, 'utf-8');
 assert.ok(ocContent.includes('Memory context injected'),
