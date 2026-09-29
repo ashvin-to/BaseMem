@@ -31,6 +31,12 @@ JS_QUERIES = {
             value: (call_expression
                 function: (identifier) @func) @call) @assign
     """,
+    "inherits": """
+        (class_declaration
+            name: (identifier) @name
+            (class_heritage
+                (identifier) @base)) @symbol
+    """,
     "call": """
         (call_expression
             function: (identifier) @func) @call
