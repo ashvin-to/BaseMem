@@ -12,9 +12,10 @@ from indexer.language_matrix import (
     BLOCKED,
     CURATED,
     FIXTURES,
+    LOCAL_MAPPED_EXTS,
     NEW_QUERY_LANGUAGES,
-    SYMBOLS_ONLY_LANGUAGES,
     RESOURCE_LANGUAGES,
+    SYMBOLS_ONLY_LANGUAGES,
     UNMAPPED_EXTS,
     coverage,
     summary,
@@ -25,13 +26,19 @@ def rows():
     return coverage()
 
 
-def test_unmapped_extensions_are_known(rows):
-    """Extensions the pack does not map are a known, tracked set.
+def test_every_fixture_resolves_a_parser(rows):
+    unparsed = [r["language"] for r in rows if not r["parsed"]]
+    assert not unparsed, f"no parser resolved for: {unparsed}"
 
-    If a new one appears it means the pack changed and the matrix needs updating.
-    """
-    unparsed = {r["language"] for r in rows if not r["parsed"]}
-    assert unparsed == {r["language"] for r in rows if r["ext"] in UNMAPPED_EXTS}
+
+def test_locally_mapped_extensions_resolve(rows):
+    """Extensions we map ourselves must produce a parser and extract something."""
+    by_ext = {r["ext"]: r for r in rows}
+    for ext in (".sql", ".graphql", ".yaml", ".toml", "Dockerfile"):
+        row = by_ext.get(ext)
+        assert row is not None, f"matrix has no fixture for {ext}"
+        assert row["parsed"], f"{ext} maps to a language but got no parser"
+    assert not UNMAPPED_EXTS, f"pack gaps reappeared: {UNMAPPED_EXTS}"
 
 
 def test_curated_languages_always_extract(rows):
