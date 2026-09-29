@@ -88,10 +88,14 @@ BLOCKED = {
     "groovy": "bundled grammar parses Groovy as shell (command/unit/block)",
 }
 
-# Extensions tree_sitter_language_pack does not map to a language at all, so no
-# parser is built and no query would help. Wiring one up is an extension-mapping
-# change, not a query file.
-UNMAPPED_EXTS = {".sql", ".graphql", ".yaml", ".toml", "Dockerfile"}
+# Extensions the bundled language pack does not map. These are now covered by
+# EXTRA_EXTENSION_LANGUAGES in indexer/parser.py, so the list should stay empty —
+# a non-empty set means the pack changed and the matrix needs revisiting.
+UNMAPPED_EXTS: set[str] = set()
+
+# Mapped here rather than by the pack, so they are watched explicitly.
+LOCAL_MAPPED_EXTS = {".sql", ".graphql", ".gql", ".yaml", ".yml", ".toml",
+                     "Dockerfile", ".tf", ".tfvars"}
 
 # Config/infra formats where a "function" is the wrong unit: cbm models these as
 # resource nodes with cross-references rather than callables.
