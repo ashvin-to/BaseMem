@@ -19,6 +19,15 @@ TS_QUERIES = {
             name: (property_identifier) @name
             body: (statement_block) @body) @symbol
     """,
+    # `app.use = function (fn) {}` and `app.use = () => {}`. The function here is
+    # anonymous, so it can only be named by the property it is assigned to.
+    "assigned_method": """
+        (assignment_expression
+            left: (member_expression
+                object: (_)
+                property: (property_identifier) @name)
+            right: [(function_expression) (arrow_function)]) @symbol
+    """,
     "method_signature": """
         (method_signature
             name: (property_identifier) @name) @symbol
@@ -37,6 +46,14 @@ TS_QUERIES = {
         (enum_declaration
             name: (identifier) @name
             body: (enum_body) @body) @symbol
+    """,
+    # `{ init: function () {}, close: () => {} }` -- a function-valued object key
+    # is named by that key. Very common in exports and option objects.
+    "assigned_method_literal": """
+        (object
+            (pair
+                key: (property_identifier) @name
+                value: [(function_expression) (arrow_function)]) @symbol) @pair
     """,
     "instantiate": """
         (variable_declarator
