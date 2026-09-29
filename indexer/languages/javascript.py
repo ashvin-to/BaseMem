@@ -19,6 +19,24 @@ JS_QUERIES = {
             name: (property_identifier) @name
             body: (statement_block) @body) @symbol
     """,
+    "instantiate": """
+        (variable_declarator
+            name: (identifier) @name
+            value: (new_expression
+                constructor: (identifier) @func) @call) @assign
+    """,
+    "instantiate_call": """
+        (variable_declarator
+            name: (identifier) @name
+            value: (call_expression
+                function: (identifier) @func) @call) @assign
+    """,
+    "inherits": """
+        (class_declaration
+            name: (identifier) @name
+            (class_heritage
+                (identifier) @base)) @symbol
+    """,
     "call": """
         (call_expression
             function: (identifier) @func) @call
@@ -26,11 +44,13 @@ JS_QUERIES = {
     "method_call": """
         (call_expression
             function: (member_expression
+                object: (_) @obj
                 property: (property_identifier) @method)) @call
     """,
     "optional_call": """
         (optional_call_expression
             function: (member_expression
+                object: (_) @obj
                 property: (property_identifier) @method)) @call
     """,
     "new": """

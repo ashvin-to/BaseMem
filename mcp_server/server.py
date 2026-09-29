@@ -804,6 +804,44 @@ def code_sync(projectRoot: str = "") -> str:
         index.close()
 
 
+@server.tool(description="Query the code graph directly. One composable primitive instead of a tool per question. Read-only. Run code_status_query for the supported syntax.")
+def code_query(query: str, projectRoot: str = "") -> str:
+    import os
+
+    if not projectRoot:
+        projectRoot = _detect_project_root()
+    if not os.path.isdir(projectRoot):
+        return f"code_query: directory not found: {projectRoot}"
+    from indexer.lifecycle import open_or_create_index
+    from indexer.query import QueryError, describe
+    from indexer.query_execute import run as _run_query
+
+    index = open_or_create_index(projectRoot, max_workers=1)
+    try:
+        try:
+            index.ensure_fresh()
+            rows = _run_query(index, query)
+        except QueryError as e:
+            return f"code_query: {e}\n\n{describe()}"
+        except Exception as e:
+            return f"code_query: {type(e).__name__}: {e}"
+        if not rows:
+            return "code_query: no matches"
+        lines = []
+        for row in rows:
+            lines.append("  " + ", ".join(f"{k}={v}" for k, v in row.items()))
+        return f"code_query: {len(rows)} row(s)\n" + "\n".join(lines)
+    finally:
+        index.close()
+
+
+@server.tool(description="Show the supported code_query syntax.")
+def code_status_query() -> str:
+    from indexer.query import describe
+
+    return describe()
+
+
 @server.tool(description="Code index freshness and inventory. Use when a symbol lookup returns nothing, or to confirm the index covers what you expect.")
 def code_status(projectRoot: str = "") -> str:
     import os
