@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS code_edges (
     to_symbol_id INTEGER NOT NULL DEFAULT 0,
     from_name TEXT DEFAULT '',
     to_name TEXT DEFAULT '',
+    to_receiver TEXT DEFAULT '',
     edge_type TEXT NOT NULL,
     file_path TEXT DEFAULT '',
     line_number INTEGER DEFAULT 0,
@@ -113,6 +114,14 @@ def ensure_code_schema(conn):
         cols = {r[1] for r in conn.execute("PRAGMA table_info(code_symbols)").fetchall()}
         if "body_hash" not in cols:
             conn.execute("ALTER TABLE code_symbols ADD COLUMN body_hash TEXT DEFAULT ''")
+    except Exception:
+        pass
+
+    # Migration: to_receiver added so member calls keep their object expression
+    try:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(code_edges)").fetchall()}
+        if "to_receiver" not in cols:
+            conn.execute("ALTER TABLE code_edges ADD COLUMN to_receiver TEXT DEFAULT ''")
     except Exception:
         pass
 

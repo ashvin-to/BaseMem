@@ -431,7 +431,7 @@ class CodeIndexer:
                       ce.line_number, ce.file_path AS edge_file, ce.from_name
                FROM code_edges ce
                JOIN code_symbols cs ON cs.id = ce.from_symbol_id
-               WHERE ce.edge_type = 'calls'
+               WHERE ce.edge_type IN ('calls', 'member_calls')
                  AND ce.to_name = ?
                  AND ce.from_symbol_id > 0
                LIMIT 50""",
@@ -446,7 +446,7 @@ class CodeIndexer:
                 """SELECT ce.*
                    FROM code_edges ce
                    JOIN code_symbols cs ON cs.id = ce.from_symbol_id
-                   WHERE ce.edge_type = 'calls'
+                   WHERE ce.edge_type IN ('calls', 'member_calls')
                      AND ce.file_path = ?
                      AND cs.symbol_name = ?
                      AND ce.from_symbol_id > 0
@@ -458,7 +458,7 @@ class CodeIndexer:
                 """SELECT ce.*
                    FROM code_edges ce
                    JOIN code_symbols cs ON cs.id = ce.from_symbol_id
-                   WHERE ce.edge_type = 'calls'
+                   WHERE ce.edge_type IN ('calls', 'member_calls')
                      AND cs.symbol_name = ?
                      AND ce.from_symbol_id > 0
                    LIMIT 50""",
@@ -604,11 +604,23 @@ class CodeIndexer:
                 (self.project_id,),
             )
         ]
-        unresolved = self.conn.execute(
+        unresolved_free = self.conn.execute(
             "SELECT COUNT(*) AS c FROM code_edges "
             "WHERE project_id = ? AND edge_type = 'calls' AND to_symbol_id = 0",
             (self.project_id,),
         ).fetchone()
+        unresolved_member = self.conn.execute(
+            "SELECT COUNT(*) AS c FROM code_edges "
+            "WHERE project_id = ? AND edge_type = 'member_calls' AND to_symbol_id = 0",
+            (self.project_id,),
+        ).fetchone()
+        edge_counts = {
+            r["edge_type"]: r["c"]
+            for r in self.conn.execute(
+                "SELECT edge_type, COUNT(*) AS c FROM code_edges WHERE project_id = ? GROUP BY 1",
+                (self.project_id,),
+            )
+        }
         indexed_files = self.conn.execute(
             "SELECT COUNT(DISTINCT file_path) AS c FROM code_symbols WHERE project_id = ?",
             (self.project_id,),
@@ -619,7 +631,9 @@ class CodeIndexer:
             "last_indexed": stats.get("last_indexed"),
             "files": indexed_files["c"] if indexed_files else 0,
             "languages": languages,
-            "unresolved_calls": unresolved["c"] if unresolved else 0,
+            "unresolved_calls": unresolved_free["c"] if unresolved_free else 0,
+            "unresolved_member_calls": unresolved_member["c"] if unresolved_member else 0,
+            "edges": edge_counts,
         }
 
     # ── Internal ──────────────────────────────────────────────────
@@ -675,7 +689,7 @@ class CodeIndexer:
                       cs.docstring, cs.kind, cs.body_hash
                FROM code_symbols cs
                LEFT JOIN code_edges ce ON ce.to_name = cs.symbol_name
-                AND ce.edge_type = 'calls'
+                AND ce.edge_type IN ('calls', 'member_calls')
                 AND ce.project_id = cs.project_id
                WHERE ce.id IS NULL
                  AND cs.project_id = ?
@@ -711,7 +725,7 @@ class CodeIndexer:
                 """SELECT 1 FROM code_edges ce
                    JOIN code_symbols cs ON ce.to_name = cs.symbol_name
                    WHERE cs.project_id = ? AND cs.file_path = ?
-                     AND ce.file_path != ? AND ce.edge_type = 'calls'
+                     AND ce.file_path != ? AND ce.edge_type IN ('calls', 'member_calls')
                    LIMIT 1""",
                 (self.project_id, fp, fp),
             ).fetchone()
@@ -777,7 +791,7 @@ class CodeIndexer:
                           cs.start_line, ce.line_number, ce.file_path AS edge_file
                    FROM code_edges ce
                    JOIN code_symbols cs ON cs.id = ce.from_symbol_id
-                   WHERE ce.edge_type = 'calls'
+                   WHERE ce.edge_type IN ('calls', 'member_calls')
                      AND ce.to_name = ?
                      AND ce.from_symbol_id > 0
                      AND cs.project_id = ?
@@ -1008,42 +1022,189 @@ class CodeIndexer:
         return {"status": "synced", "files_changed": len(changed), "symbols_added": added_symbols,
                 "edges_added": added_edges, "files_removed": len(removed)}
 
-    def _resolve_cross_file_references(self):
-        """Post-indexing pass: resolve to_symbol_id=0 and from_symbol_id=0 edges.
+    def _build_resolution_maps(self):
+        """In-memory maps for scope-aware edge resolution.
 
-        Per-file sym_id_map means cross-file calls get to_symbol_id=0.
-        Uses bulk UPDATE for efficiency.
+        Loaded once, because the previous resolver ran a correlated subquery per
+        edge. Returns (symbols_by_name, methods_by_parent, file_imports).
         """
-        resolved = 0
-        for col in ("to_symbol_id", "from_symbol_id"):
-            name_col = "to_name" if col == "to_symbol_id" else "from_name"
-            cur = self.conn.execute(
-                f"""UPDATE code_edges SET {col} = (
-                        COALESCE((SELECT cs.id FROM code_symbols cs
-                        WHERE cs.symbol_name = code_edges.{name_col}
-                          AND cs.project_id = code_edges.project_id
-                          AND (
-                              code_edges.from_symbol_id = 0
-                              OR cs.language = (
-                                  SELECT caller.language FROM code_symbols caller
-                                  WHERE caller.id = code_edges.from_symbol_id
-                              )
-                          )
-                        ORDER BY CASE WHEN cs.symbol_type IN ('method', 'class', 'interface', 'struct') THEN 0 ELSE 1 END,
-                                 cs.id
-                        LIMIT 1), 0))
-                    WHERE code_edges.{col} = 0
-                      AND code_edges.project_id = ?
-                      AND code_edges.{name_col} IN (
-                          SELECT symbol_name FROM code_symbols
-                          WHERE project_id = code_edges.project_id
-                      )""",
-                (self.project_id,),
-            )
-            resolved += cur.rowcount
-        if resolved:
+        symbols_by_name: dict[str, list[dict]] = {}
+        for row in self.conn.execute(
+            "SELECT id, file_path, symbol_name, symbol_type, language FROM code_symbols "
+            "WHERE project_id = ?",
+            (self.project_id,),
+        ):
+            symbols_by_name.setdefault(row["symbol_name"], []).append(dict(row))
+
+        methods_by_parent: dict[tuple[str, str], list[dict]] = {}
+        methods_by_name: dict[str, list[dict]] = {}
+        for row in self.conn.execute(
+            """SELECT cs.id, cs.file_path, cs.symbol_name, cs.symbol_type, cs.language,
+                      p.symbol_name AS parent
+               FROM code_symbols cs JOIN code_symbols p ON cs.parent_id = p.id
+               WHERE cs.project_id = ?""",
+            (self.project_id,),
+        ):
+            rec = dict(row)
+            methods_by_parent.setdefault((row["parent"], row["symbol_name"]), []).append(rec)
+            methods_by_name.setdefault(row["symbol_name"], []).append(rec)
+
+        # file -> {local name: dotted module}. Import edges carry the imported path
+        # in from_name, e.g. "storage.sessions.SessionManager".
+        file_imports: dict[str, dict[str, str]] = {}
+        for row in self.conn.execute(
+            "SELECT DISTINCT file_path, from_name FROM code_edges "
+            "WHERE project_id = ? AND edge_type = 'imports' "
+            "AND from_name IS NOT NULL AND from_name != ''",
+            (self.project_id,),
+        ):
+            imported = row["from_name"]
+            head, _, module = imported.rpartition(".")
+            local = head if module else imported
+            file_imports.setdefault(row["file_path"], {})[local] = module
+
+        return symbols_by_name, methods_by_parent, methods_by_name, file_imports
+
+    def _module_to_file(self, module: str, known_files: set[str]) -> str:
+        """Map a dotted module path to an indexed file, or '' when unknown."""
+        if not module:
+            return ""
+        rel = module.replace(".", "/")
+        for candidate in (
+            f"{rel}.py", f"{rel}.js", f"{rel}.ts", f"{rel}.tsx", f"{rel}.rs",
+            f"{rel}.go", f"{rel}.java", f"{rel}.rb", f"{rel}.php", f"{rel}.c", f"{rel}.cpp",
+            f"{rel}/index.js", f"{rel}/index.ts", f"{rel}/mod.rs", f"{rel}/__init__.py",
+        ):
+            if candidate in known_files:
+                return candidate
+        stem = rel.rsplit("/", 1)[-1]
+        for f in known_files:
+            if Path(f).stem == stem and "/" + stem in ("/" + f, f):
+                return f
+            if Path(f).stem == stem:
+                return f
+        return ""
+
+    def _parent_name(self, symbol_id: int) -> str:
+        row = self.conn.execute(
+            "SELECT p.symbol_name AS parent FROM code_symbols cs "
+            "LEFT JOIN code_symbols p ON cs.parent_id = p.id WHERE cs.id = ?",
+            (symbol_id,),
+        ).fetchone()
+        return (row["parent"] or "") if row else ""
+
+    @staticmethod
+    def _pick(candidates: list[dict]) -> int:
+        """Choose one candidate, preferring definitions over references."""
+        if not candidates:
+            return 0
+        ordered = sorted(
+            candidates,
+            key=lambda c: 0
+            if c["symbol_type"] in ("method", "class", "interface", "struct", "function")
+            else 1,
+        )
+        return ordered[0]["id"]
+
+    def _resolve_member_call(self, row, imports, methods_by_parent, methods_by_name,
+                              symbols_by_name, known_files) -> int:
+        """Resolve `receiver.name()` by looking for a method on that receiver."""
+        name = row["to_name"]
+        receiver = (row["to_receiver"] or "").strip()
+        head = receiver.split(".")[0] if receiver else ""
+        file_path = row["file_path"] or ""
+
+        if head and head in imports:
+            mod_file = self._module_to_file(imports[head], known_files)
+            if mod_file:
+                hit = self._pick(methods_by_parent.get((head, name), []))
+                if hit:
+                    return hit
+                hit = self._pick(
+                    [m for m in symbols_by_name.get(name, []) if m["file_path"] == mod_file]
+                )
+                if hit:
+                    return hit
+
+        # a class or receiver declared in this very file
+        hit = self._pick(methods_by_parent.get((head, name), [])) if head else 0
+        if hit:
+            return hit
+        if head:
+            hit = self._pick([m for m in symbols_by_name.get(name, []) if m["file_path"] == file_path])
+            if hit:
+                return hit
+        # self.foo() — the receiver is the caller's own class
+        if receiver == "self" and row["from_symbol_id"]:
+            parent = self._parent_name(row["from_symbol_id"])
+            if parent:
+                hit = self._pick(methods_by_parent.get((parent, name), []))
+                if hit:
+                    return hit
+        # a method of the enclosing symbol
+        if row["from_name"]:
+            hit = self._pick(methods_by_parent.get((row["from_name"], name), []))
+            if hit:
+                return hit
+        # last resort: exactly one class in the project owns a method of this name.
+        # Ambiguous names stay unresolved rather than being linked to a random owner.
+        owners = methods_by_name.get(name, [])
+        if len(owners) == 1:
+            return owners[0]["id"]
+        return 0
+
+    def _resolve_free_call(self, row, imports, symbols_by_name, known_files) -> int:
+        """Resolve a bare `name()` through local scope, imports, then the project."""
+        name = row["to_name"]
+        file_path = row["file_path"] or ""
+
+        hit = self._pick([m for m in symbols_by_name.get(name, []) if m["file_path"] == file_path])
+        if hit:
+            return hit
+
+        if name in imports:
+            mod_file = self._module_to_file(imports[name], known_files)
+            if mod_file:
+                hit = self._pick([m for m in symbols_by_name.get(name, []) if m["file_path"] == mod_file])
+                if hit:
+                    return hit
+
+        return self._pick(symbols_by_name.get(name, []))
+
+    def _resolve_cross_file_references(self):
+        """Resolve edges whose target is currently only a name string.
+
+        Resolution is scope-aware: a member call is looked for on its receiver, and
+        a free call is looked for in the same file, then through an import, then
+        project-wide. Whatever stays unresolved is a genuinely external or dynamic
+        call, which is a real answer rather than a gap to hide.
+        """
+        symbols_by_name, methods_by_parent, methods_by_name, file_imports = self._build_resolution_maps()
+        known_files = {f["file_path"] for rows in symbols_by_name.values() for f in rows}
+
+        rows = self.conn.execute(
+            "SELECT id, file_path, from_name, to_name, to_receiver, edge_type, from_symbol_id "
+            "FROM code_edges WHERE project_id = ? AND coalesce(to_symbol_id, 0) = 0 "
+            "AND to_name IS NOT NULL AND to_name != ''",
+            (self.project_id,),
+        ).fetchall()
+
+        updates: list[tuple[int, int]] = []
+        for r in rows:
+            imports = file_imports.get(r["file_path"] or "", {})
+            if r["edge_type"] == "member_calls":
+                target = self._resolve_member_call(
+                    r, imports, methods_by_parent, methods_by_name, symbols_by_name, known_files
+                )
+            else:
+                target = self._resolve_free_call(r, imports, symbols_by_name, known_files)
+            if target:
+                updates.append((target, r["id"]))
+
+        if updates:
+            self.conn.executemany("UPDATE code_edges SET to_symbol_id = ? WHERE id = ?", updates)
             self.conn.commit()
-            logger.info(f"Resolved {resolved} cross-file symbol references")
+            logger.info(f"Resolved {len(updates)} cross-file symbol references")
 
     def _record_file(self, rel_path: str, file_path: str, symbol_count: int) -> None:
         """Track a walked file in the inventory, even when it has no symbols."""
@@ -1111,14 +1272,16 @@ class CodeIndexer:
         for edge in edges:
             self.conn.execute(
                 """INSERT INTO code_edges
-                   (project_id, from_symbol_id, to_symbol_id, from_name, to_name, edge_type, file_path, line_number)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                   (project_id, from_symbol_id, to_symbol_id, from_name, to_name,
+                    to_receiver, edge_type, file_path, line_number)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     self.project_id,
                     sym_id_map.get(edge.get("from_name", ""), 0),
                     sym_id_map.get(edge.get("target_name", ""), 0),
                     edge.get("from_name", ""),
                     edge.get("target_name", ""),
+                    edge.get("target_receiver", ""),
                     edge["edge_type"],
                     edge["file_path"],
                     edge.get("line_number", 0),
