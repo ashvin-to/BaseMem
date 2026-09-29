@@ -57,7 +57,8 @@ def test_code_indexer_get_virtual_graph_nodes(temp_project):
 
     # Verify calls edges exist
     edge_types = [e["edge_type"] for e in vgraph["edges"]]
-    assert "calls" in edge_types or "imports" in edge_types
+    # method calls are member_calls now, not flattened into calls
+    assert any(t in edge_types for t in ("calls", "member_calls", "imports"))
 
 
 def test_graph_engine_virtual_code_overlay(temp_project):

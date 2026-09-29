@@ -523,10 +523,20 @@ class CodeParser:
                 if call_node and method_node:
                     caller = _find_enclosing_func(root, call_node)
                     callee = _node_text(method_node, source_bytes)
+                    receiver_node = (
+                        _first_node(captures.get("obj"))
+                        or _first_node(captures.get("object"))
+                        or _first_node(captures.get("attr"))
+                    )
+                    receiver = _node_text(receiver_node, source_bytes) if receiver_node else ""
+                    # A method call is not a call to a global named `join`; keeping
+                    # it as `calls` made every `path.join(...)` look like an
+                    # unresolvable free function and wrecked the unresolved rate.
                     edges.append({
-                        "edge_type": "calls",
+                        "edge_type": "member_calls",
                         "from_name": caller or "",
                         "target_name": callee,
+                        "target_receiver": receiver,
                         "file_path": file_path,
                         "line_number": method_node.start_point[0] + 1,
                     })
