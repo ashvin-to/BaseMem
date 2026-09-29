@@ -3,6 +3,7 @@ from .cpp import CPP_QUERIES
 from .erlang import ERLANG_QUERIES
 from .fsharp import FSHARP_QUERIES
 from .haskell import HASKELL_QUERIES
+from .go import GO_QUERIES
 from .iaccfg import DOCKERFILE_QUERIES, GRAPHQL_QUERIES, HCL_QUERIES, SQL_QUERIES, TOML_QUERIES, YAML_QUERIES
 from .java import JAVA_QUERIES
 from .javascript import JS_QUERIES
@@ -34,6 +35,7 @@ LANGUAGE_QUERIES = {
     "fsharp": FSHARP_QUERIES,
     "haskell": HASKELL_QUERIES,
     "zig": ZIG_QUERIES,
+    "go": GO_QUERIES,
     "sql": SQL_QUERIES,
     "graphql": GRAPHQL_QUERIES,
     "yaml": YAML_QUERIES,
