@@ -505,7 +505,7 @@ class CodeParser:
                 call_node = _first_node(captures.get("call"))
                 func_node = _first_node(captures.get("func"))
                 if call_node and func_node:
-                    caller = _find_enclosing_func(root, call_node)
+                    caller = _find_enclosing_func(source_bytes, call_node, self.language)
                     callee = _node_text(func_node, source_bytes)
                     edges.append({
                         "edge_type": "calls",
@@ -521,7 +521,7 @@ class CodeParser:
                 call_node = _first_node(captures.get("call"))
                 method_node = _first_node(captures.get("method"))
                 if call_node and method_node:
-                    caller = _find_enclosing_func(root, call_node)
+                    caller = _find_enclosing_func(source_bytes, call_node, self.language)
                     callee = _node_text(method_node, source_bytes)
                     receiver_node = (
                         _first_node(captures.get("obj"))
@@ -554,7 +554,7 @@ class CodeParser:
                 call_node = _first_node(captures.get("call"))
                 callee_node = _first_node(captures.get(capture_name))
                 if call_node and callee_node:
-                    caller = _find_enclosing_func(root, call_node)
+                    caller = _find_enclosing_func(source_bytes, call_node, self.language)
                     edges.append({
                         "edge_type": "calls",
                         "from_name": caller or "",
@@ -790,34 +790,77 @@ def _find_child_of_type(node, type_name):
     return None
 
 
+# Grammars disagree on what a file is called and what a class is called, so both
+# lists are shared rather than hardcoded per grammar.
+_ROOT_NODE_TYPES = frozenset(
+    {"module", "program", "source_file", "compilation_unit", "file", "haskell", "chunk"}
+)
+_CLASS_NODE_TYPES = frozenset(
+    {
+        "class_definition", "class_declaration", "impl_item", "object_declaration",
+        "interface_declaration", "trait_item", "class", "struct_item", "class_specifier",
+    }
+)
+# Declaration nodes that can enclose a call, used to attribute an edge to a caller.
+_FUNCTION_NODE_TYPES = frozenset(
+    {
+        "function_definition", "function_declaration", "function_item", "method_definition",
+        "async_function_definition", "async_method_definition", "arrow_function",
+        "function_signature", "fun_decl", "routine", "value_definition",
+        "function_declaration_left", "bind",
+    }
+)
+
+
 def _find_parent_class(_root, method_node):
     cursor = method_node.walk()
     parent = cursor.node.parent
-    while parent is not None and parent.type not in ("module", "program"):
-        if parent.type in ("class_definition", "class_declaration", "impl_item"):
+    while parent is not None and parent.type not in _ROOT_NODE_TYPES:
+        if parent.type in _CLASS_NODE_TYPES:
             return parent
         parent = parent.parent
     return None
 
 
-def _find_enclosing_func(root, node):
-    """Walk up to find the enclosing function/method name."""
+def _find_enclosing_func(source_bytes, node, language):
+    """Walk up to find the enclosing function/method name, as text.
+
+    Returns the name string (not the node) because callers store it directly on
+    the edge's from_name.
+    """
     cur = node.parent
-    while cur is not None and cur.type not in ("module", "program", "source_file"):
-        if cur.type in ("function_definition", "function_declaration", "function_item",
-                        "method_definition", "async_function_definition", "async_method_definition",
-                        "arrow_function"):
-            for c in cur.children:
-                if c.type in ("identifier", "property_identifier"):
-                    return _node_text(c, root.text)  # use root.text for the source bytes
-            return None
+    while cur is not None and cur.type not in _ROOT_NODE_TYPES:
+        if cur.type in _FUNCTION_NODE_TYPES:
+            name_node = _find_named_child(cur, language)
+            return _node_text(name_node, source_bytes) if name_node is not None else None
         cur = cur.parent
     return None
 
 
+# The child node type that holds a declaration's name, per grammar. Tried in
+# order; a shared fallback chain covers grammars that use a generic identifier.
+_NAME_NODE_TYPES = {
+    "python": ("identifier",),
+    "javascript": ("identifier", "type_identifier"),
+    "typescript": ("identifier", "type_identifier"),
+    "tsx": ("identifier", "type_identifier"),
+    "rust": ("type_identifier", "identifier"),
+    "kotlin": ("simple_identifier", "type_identifier", "identifier"),
+    "julia": ("identifier",),
+    "perl": ("bareword", "identifier"),
+    "erlang": ("atom", "variable"),
+    "ocaml": ("value_name", "type_constructor", "constructor_name", "identifier"),
+    "nim": ("ident", "identifier"),
+    "fsharp": ("identifier", "long_identifier"),
+    "haskell": ("variable", "name", "constructor"),
+    "zig": ("IDENTIFIER", "identifier"),
+}
+_NAME_FALLBACKS = ("identifier", "simple_identifier", "IDENTIFIER", "atom", "name", "value_name", "bareword")
+
+
 def _find_named_child(node, language):
-    if language == "python":
-        return _find_child_of_type(node, "identifier")
-    if language in ("javascript", "typescript") or language == "rust":
-        return _find_child_of_type(node, "type_identifier") or _find_child_of_type(node, "identifier")
-    return _find_child_of_type(node, "identifier")
+    for candidate in _NAME_NODE_TYPES.get(language, ()) + _NAME_FALLBACKS:
+        found = _find_child_of_type(node, candidate)
+        if found is not None:
+            return found
+    return None
