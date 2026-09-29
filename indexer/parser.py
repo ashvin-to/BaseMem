@@ -30,6 +30,40 @@ except ImportError:  # tree-sitter not installed: indexing is unavailable, but D
 
 _GRAMMAR_CACHE: dict = {}
 
+# The bundled language pack does not map these extensions, so a file with one was
+# never even considered for indexing. Filling them in is a mapping change, not a
+# query: each language still needs a query to extract declarations.
+EXTRA_EXTENSION_LANGUAGES = {
+    ".sql": "sql",
+    ".graphql": "graphql",
+    ".gql": "graphql",
+    ".yaml": "yaml",
+    ".yml": "yaml",
+    ".toml": "toml",
+    "dockerfile": "dockerfile",
+    ".tf": "hcl",
+    ".tfvars": "hcl",
+}
+
+_EXTENSION_OVERRIDES = {
+    **{k: v for k, v in EXTRA_EXTENSION_LANGUAGES.items() if k.startswith(".")},
+    "dockerfile": "dockerfile",
+}
+
+
+def detect_language_for_file(file_path) -> str | None:
+    """Extension -> language, preferring our own map over the pack's."""
+    p = Path(file_path)
+    name = p.name.lower()
+    if name in _EXTENSION_OVERRIDES or name.startswith("dockerfile"):
+        return "dockerfile"
+    ext = p.suffix.lower()
+    if ext in _EXTENSION_OVERRIDES:
+        return _EXTENSION_OVERRIDES[ext]
+    if not ext or ext in _SKIP_EXTENSIONS:
+        return None
+    return detect_language_from_extension(ext.lstrip("."))
+
 # Map our language names to the bundled .so filename and C export function.
 _LANGUAGE_SO = {
     "python":     ("libtree_sitter_python.so",     "tree_sitter_python"),
@@ -68,14 +102,17 @@ def ensure_grammars():
     download(needed)
 
 
+# .yaml/.toml/.graphql/.sql used to sit here and were never opened. They now have
+# real extraction (see languages/iaccfg.py) and are indexed as resources, the way
+# cbm treats Dockerfile/K8s nodes. The rest are still noise.
 _SKIP_EXTENSIONS = frozenset({
     ".md", ".markdown", ".rst", ".txt", ".tex",
     ".json", ".jsonc", ".json5",
-    ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf",
+    ".ini", ".cfg", ".conf",
     ".css", ".scss", ".less", ".sass",
     ".html", ".htm", ".xhtml",
-    ".xml", ".svg", ".graphql", ".proto",
-    ".sql", ".db", ".sqlite",
+    ".xml", ".svg", ".proto",
+    ".db", ".sqlite",
     ".csv", ".tsv",
     ".png", ".jpg", ".jpeg", ".gif", ".ico", ".webp", ".bmp",
     ".woff", ".woff2", ".ttf", ".eot",
@@ -338,10 +375,7 @@ class CodeParser:
 
     @classmethod
     def for_file(cls, file_path: str) -> CodeParser | None:
-        ext = Path(file_path).suffix.lower()
-        if not ext or ext in _SKIP_EXTENSIONS:
-            return None
-        lang = detect_language_from_extension(ext.lstrip("."))
+        lang = detect_language_for_file(file_path)
         if not lang:
             return None
         return cls(lang)
@@ -350,6 +384,8 @@ class CodeParser:
     def supported_extension(cls, ext: str) -> bool:
         if not ext or ext in _SKIP_EXTENSIONS:
             return False
+        if ext in _EXTENSION_OVERRIDES:
+            return True
         return detect_language_from_extension(ext.lstrip(".")) is not None
 
     def _get_query(self, name: str):
@@ -492,6 +528,9 @@ class CodeParser:
         imports = self._extract_imports(root, source_bytes, file_path)
         edges.extend(imports)
 
+        edges.extend(self._extract_instantiations(root, source_bytes, file_path))
+        edges.extend(self._extract_inheritance(root, source_bytes, file_path))
+
         return symbols, edges
 
     def _extract_calls(self, root: Node, source_bytes: bytes, file_path: str):
@@ -505,7 +544,7 @@ class CodeParser:
                 call_node = _first_node(captures.get("call"))
                 func_node = _first_node(captures.get("func"))
                 if call_node and func_node:
-                    caller = _find_enclosing_func(root, call_node)
+                    caller = _find_enclosing_func(source_bytes, call_node, self.language)
                     callee = _node_text(func_node, source_bytes)
                     edges.append({
                         "edge_type": "calls",
@@ -521,12 +560,22 @@ class CodeParser:
                 call_node = _first_node(captures.get("call"))
                 method_node = _first_node(captures.get("method"))
                 if call_node and method_node:
-                    caller = _find_enclosing_func(root, call_node)
+                    caller = _find_enclosing_func(source_bytes, call_node, self.language)
                     callee = _node_text(method_node, source_bytes)
+                    receiver_node = (
+                        _first_node(captures.get("obj"))
+                        or _first_node(captures.get("object"))
+                        or _first_node(captures.get("attr"))
+                    )
+                    receiver = _node_text(receiver_node, source_bytes) if receiver_node else ""
+                    # A method call is not a call to a global named `join`; keeping
+                    # it as `calls` made every `path.join(...)` look like an
+                    # unresolvable free function and wrecked the unresolved rate.
                     edges.append({
-                        "edge_type": "calls",
+                        "edge_type": "member_calls",
                         "from_name": caller or "",
                         "target_name": callee,
+                        "target_receiver": receiver,
                         "file_path": file_path,
                         "line_number": method_node.start_point[0] + 1,
                     })
@@ -544,7 +593,7 @@ class CodeParser:
                 call_node = _first_node(captures.get("call"))
                 callee_node = _first_node(captures.get(capture_name))
                 if call_node and callee_node:
-                    caller = _find_enclosing_func(root, call_node)
+                    caller = _find_enclosing_func(source_bytes, call_node, self.language)
                     edges.append({
                         "edge_type": "calls",
                         "from_name": caller or "",
@@ -553,6 +602,68 @@ class CodeParser:
                         "line_number": callee_node.start_point[0] + 1,
                     })
 
+        return edges
+
+    def _extract_inheritance(self, root: Node, source_bytes: bytes, file_path: str):
+        """Record `class D(B)` as an inherits edge, subclass -> base.
+
+        Without this a method defined on a base class can never be resolved from
+        a subclass instance, so the call graph breaks at every inheritance boundary.
+        """
+        query = self._get_query("inherits")
+        if query is None:
+            return []
+        edges: list[dict] = []
+        for _p_idx, captures in QueryCursor(query).matches(root):
+            name_node = _first_node(captures.get("name"))
+            base_node = _first_node(captures.get("base"))
+            if not (name_node and base_node):
+                continue
+            subclass = _node_text(name_node, source_bytes)
+            base = _node_text(base_node, source_bytes)
+            if not subclass or not base or subclass == base:
+                continue
+            edges.append({
+                "edge_type": "inherits",
+                "from_name": subclass,
+                "target_name": base,
+                "target_receiver": "",
+                "file_path": file_path,
+                "line_number": name_node.start_point[0] + 1,
+            })
+        return edges
+
+    def _extract_instantiations(self, root: Node, source_bytes: bytes, file_path: str):
+        """Record `x = Foo(...)` / `x = new Foo()` so `x.method()` can be typed.
+
+        Without this a receiver like `indexer` in `indexer.close()` has nothing to
+        resolve against: it is a local variable, not a class, so a method lookup
+        has no key. The variable rides in to_receiver because from_name already
+        holds the enclosing function.
+        """
+        edges: list[dict] = []
+        for query_name in ("instantiate", "instantiate_call", "annotate"):
+            query = self._get_query(query_name)
+            if query is None:
+                continue
+            for _p_idx, captures in QueryCursor(query).matches(root):
+                assign_node = _first_node(captures.get("assign"))
+                name_node = _first_node(captures.get("name"))
+                func_node = _first_node(captures.get("func"))
+                if not (assign_node and name_node and func_node):
+                    continue
+                variable = _node_text(name_node, source_bytes)
+                constructor = _node_text(func_node, source_bytes)
+                if not variable or not constructor or variable == constructor:
+                    continue
+                edges.append({
+                    "edge_type": "instantiates",
+                    "from_name": _find_enclosing_func(source_bytes, assign_node, self.language) or "",
+                    "target_name": constructor,
+                    "target_receiver": variable,
+                    "file_path": file_path,
+                    "line_number": assign_node.start_point[0] + 1,
+                })
         return edges
 
     def _extract_imports(self, root: Node, source_bytes: bytes, file_path: str):
@@ -780,34 +891,77 @@ def _find_child_of_type(node, type_name):
     return None
 
 
+# Grammars disagree on what a file is called and what a class is called, so both
+# lists are shared rather than hardcoded per grammar.
+_ROOT_NODE_TYPES = frozenset(
+    {"module", "program", "source_file", "compilation_unit", "file", "haskell", "chunk"}
+)
+_CLASS_NODE_TYPES = frozenset(
+    {
+        "class_definition", "class_declaration", "impl_item", "object_declaration",
+        "interface_declaration", "trait_item", "class", "struct_item", "class_specifier",
+    }
+)
+# Declaration nodes that can enclose a call, used to attribute an edge to a caller.
+_FUNCTION_NODE_TYPES = frozenset(
+    {
+        "function_definition", "function_declaration", "function_item", "method_definition",
+        "async_function_definition", "async_method_definition", "arrow_function",
+        "function_signature", "fun_decl", "routine", "value_definition",
+        "function_declaration_left", "bind",
+    }
+)
+
+
 def _find_parent_class(_root, method_node):
     cursor = method_node.walk()
     parent = cursor.node.parent
-    while parent is not None and parent.type not in ("module", "program"):
-        if parent.type in ("class_definition", "class_declaration", "impl_item"):
+    while parent is not None and parent.type not in _ROOT_NODE_TYPES:
+        if parent.type in _CLASS_NODE_TYPES:
             return parent
         parent = parent.parent
     return None
 
 
-def _find_enclosing_func(root, node):
-    """Walk up to find the enclosing function/method name."""
+def _find_enclosing_func(source_bytes, node, language):
+    """Walk up to find the enclosing function/method name, as text.
+
+    Returns the name string (not the node) because callers store it directly on
+    the edge's from_name.
+    """
     cur = node.parent
-    while cur is not None and cur.type not in ("module", "program", "source_file"):
-        if cur.type in ("function_definition", "function_declaration", "function_item",
-                        "method_definition", "async_function_definition", "async_method_definition",
-                        "arrow_function"):
-            for c in cur.children:
-                if c.type in ("identifier", "property_identifier"):
-                    return _node_text(c, root.text)  # use root.text for the source bytes
-            return None
+    while cur is not None and cur.type not in _ROOT_NODE_TYPES:
+        if cur.type in _FUNCTION_NODE_TYPES:
+            name_node = _find_named_child(cur, language)
+            return _node_text(name_node, source_bytes) if name_node is not None else None
         cur = cur.parent
     return None
 
 
+# The child node type that holds a declaration's name, per grammar. Tried in
+# order; a shared fallback chain covers grammars that use a generic identifier.
+_NAME_NODE_TYPES = {
+    "python": ("identifier",),
+    "javascript": ("identifier", "type_identifier"),
+    "typescript": ("identifier", "type_identifier"),
+    "tsx": ("identifier", "type_identifier"),
+    "rust": ("type_identifier", "identifier"),
+    "kotlin": ("simple_identifier", "type_identifier", "identifier"),
+    "julia": ("identifier",),
+    "perl": ("bareword", "identifier"),
+    "erlang": ("atom", "variable"),
+    "ocaml": ("value_name", "type_constructor", "constructor_name", "identifier"),
+    "nim": ("ident", "identifier"),
+    "fsharp": ("identifier", "long_identifier"),
+    "haskell": ("variable", "name", "constructor"),
+    "zig": ("IDENTIFIER", "identifier"),
+}
+_NAME_FALLBACKS = ("identifier", "simple_identifier", "IDENTIFIER", "atom", "name", "value_name", "bareword")
+
+
 def _find_named_child(node, language):
-    if language == "python":
-        return _find_child_of_type(node, "identifier")
-    if language in ("javascript", "typescript") or language == "rust":
-        return _find_child_of_type(node, "type_identifier") or _find_child_of_type(node, "identifier")
-    return _find_child_of_type(node, "identifier")
+    for candidate in _NAME_NODE_TYPES.get(language, ()) + _NAME_FALLBACKS:
+        found = _find_child_of_type(node, candidate)
+        if found is not None:
+            return found
+    return None

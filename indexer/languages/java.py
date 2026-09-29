@@ -24,6 +24,12 @@ JAVA_QUERIES = {
             name: (identifier) @name
             body: (constructor_body) @body) @symbol
     """,
+    "inherits": """
+        (class_declaration
+            name: (identifier) @name
+            superclass: (superclass
+                (type_identifier) @base)) @symbol
+    """,
     "call": """
         (method_invocation
             name: (identifier) @func) @call
