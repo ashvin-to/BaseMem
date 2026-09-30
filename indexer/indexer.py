@@ -1,5 +1,6 @@
 """Indexes a codebase into code_symbols/code_edges tables."""
 
+import fnmatch
 import logging
 import os
 import sqlite3
@@ -32,6 +33,63 @@ SKIP_EXTENSIONS = {
 
 
 CODE_DB_FILENAME = ".basemem.code.db"
+
+
+def _glob_segments(pat_segs, path_segs):
+    """Match path segments against pattern segments, honouring `**`."""
+    if not pat_segs:
+        # The pattern named an ancestor directory, so it covers everything
+        # beneath it. A file pattern reaching here is harmless, since a file
+        # cannot contain a path.
+        return True
+    if not path_segs:
+        return False
+    head = pat_segs[0]
+    rest = pat_segs[1:]
+    if head == "**":
+        for i in range(len(path_segs) + 1):
+            if _glob_segments(rest, path_segs[i:]):
+                return True
+        return False
+    if not fnmatch.fnmatch(path_segs[0], head):
+        return False
+    return _glob_segments(rest, path_segs[1:])
+
+
+def _match_gitignore_pattern(pattern: str, rel: str) -> bool:
+    """Whether one gitignore pattern covers a repo-relative path.
+
+    Follows git closely enough to matter here:
+      * a pattern containing `/` is anchored to the ignore file's directory
+      * a pattern without `/` matches at any depth
+      * `**` spans any number of path segments
+      * a leading `/**` covers the whole tree
+    """
+    pat = pattern
+    anchored = "/" in pat
+    if pat.startswith("/"):
+        pat = pat[1:]
+        anchored = True
+    if pat.startswith("**"):
+        rest = pat[2:].lstrip("/")
+        if not rest:
+            return True  # `/**` re-includes everything beneath the root
+        pat = rest
+        anchored = anchored and "/" in rest
+    if not pat:
+        return False
+
+    segs = rel.replace(os.sep, "/").strip("/").split("/")
+    pat_segs = [s for s in pat.split("/") if s]
+    if not pat_segs:
+        return False
+    if anchored:
+        return _glob_segments(pat_segs, segs)
+    # Unanchored: the pattern may match at any depth.
+    for i in range(len(segs)):
+        if _glob_segments(pat_segs, segs[i:]):
+            return True
+    return False
 
 
 def find_code_projects(search_root: str = "") -> list[dict]:
@@ -112,6 +170,9 @@ class CodeIndexer:
 
         self._ignore_patterns: list[str] = []
         self._negate_patterns: list[str] = []
+        # Same rules as the two lists above, in file order, so that evaluation
+        # can follow git's last-match-wins instead of "any negation wins".
+        self._ignore_rules: list[tuple[bool, str]] = []
         self._load_ignore_files()
 
         ensure_code_schema(self.conn)
@@ -123,6 +184,14 @@ class CodeIndexer:
         ignore, so they must be matched AFTER the positive patterns rather than
         being dropped. A repo that ignores `lib/` but re-includes `bin/lib/`
         expects those files to be tracked, and to index them.
+
+        Order is preserved in `_ignore_rules` because git's rule is last match
+        wins, not "any negation beats any ignore". Splitting them into two lists
+        and testing the negations first gets `lib/` + `!bin/lib/` right by
+        accident, but silently deletes whole source trees otherwise: nimterop
+        ships `*` then `!/**/` then `!*.*`, and testing negations first could
+        not match `!/**/` against the dotless directory `nimterop`, so the bare
+        `*` won and all 40 of its .nim files were pruned.
         """
         for filename in [".gitignore", ".basememignore"]:
             ignore_path = Path(self.project_root) / filename
@@ -132,25 +201,28 @@ class CodeIndexer:
                         line = line.strip()
                         if not line or line.startswith('#'):
                             continue
-                        if line.startswith('!'):
-                            self._negate_patterns.append(line[1:].rstrip('/'))
+                        negated = line.startswith('!')
+                        pattern = (line[1:] if negated else line).rstrip('/')
+                        if not pattern:
+                            continue
+                        if negated:
+                            self._negate_patterns.append(pattern)
                         else:
-                            self._ignore_patterns.append(line.rstrip('/'))
+                            self._ignore_patterns.append(pattern)
+                        self._ignore_rules.append((negated, pattern))
                 except Exception:
                     pass
 
     @staticmethod
     def _pattern_matches(rel: str, pattern: str) -> bool:
-        import fnmatch
-        return (
-            fnmatch.fnmatch(rel, pattern)
-            or fnmatch.fnmatch(rel, f"*/{pattern}")
-            or fnmatch.fnmatch(rel, f"{pattern}/*")
-            or fnmatch.fnmatch(rel, f"*/{pattern}/*")
-        )
+        return _match_gitignore_pattern(pattern, rel)
 
     def _is_skipped(self, filepath: str) -> bool:
-        """Check if a file should be skipped based on SKIP_DIRS or ignore patterns."""
+        """Check if a file should be skipped based on SKIP_DIRS or ignore patterns.
+
+        git's rule is last match wins, so the rules are evaluated in the order
+        they appear and each one that matches overwrites the decision.
+        """
         p = Path(filepath)
         if any(part in SKIP_DIRS for part in p.parts):
             return True
@@ -158,9 +230,13 @@ class CodeIndexer:
             rel = str(p.relative_to(self.project_root) if p.is_absolute() else p)
         except ValueError:
             return True
-        if any(self._pattern_matches(rel, pat) for pat in self._negate_patterns):
-            return False
-        return any(self._pattern_matches(rel, pat) for pat in self._ignore_patterns)
+        if p.is_absolute() or os.sep in rel:
+            rel = "/".join(Path(rel).parts)
+        decision = False
+        for negated, pattern in self._ignore_rules:
+            if _match_gitignore_pattern(pattern, rel):
+                decision = not negated
+        return decision
 
     def close(self):
         self.conn.close()
