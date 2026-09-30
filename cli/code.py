@@ -39,22 +39,83 @@ def code():
 @click.argument('project_root', required=False, default='.')
 @click.option('--workers', default=4, help='Number of parallel workers')
 @click.option('--watch', is_flag=True, help='Watch for file changes and auto-reindex')
-def code_init(project_root, workers, watch):
+@click.option('--quiet', is_flag=True, help='Suppress the progress bar and log noise')
+@click.option('--verbose', is_flag=True, help='Show the indexer log stream')
+def code_init(project_root, workers, watch, quiet, verbose):
     """Index a project into a per-project .basemem.code.db."""
+    import logging
     import signal
+    import time as _time
 
     from indexer import CodeIndexer
+
+    # The indexer logs an INFO line per phase. Those duplicate the summary
+    # printed below and land in the middle of the progress bar, so quiet them
+    # unless asked. Targeted at this logger rather than basicConfig so no other
+    # subcommand's diagnostics change. Set explicitly in both directions, since
+    # the logger is a process-wide singleton and a second call in the same
+    # process would otherwise inherit whatever the first one chose.
+    logging.getLogger("basemem.indexer").setLevel(
+        logging.INFO if verbose else logging.WARNING
+    )
+
     root = os.path.abspath(project_root)
     if not os.path.isdir(root):
-        click.echo(f"[!] Not a directory: {root}")
+        click.echo(click.style("  ✗ not a directory  ", fg="red", bold=True) + root)
         return
     indexer = CodeIndexer(root)
+
+    # A live count is only possible once discovery has run, which is why the
+    # indexer reports a "scan" phase before "indexing".
+    state = {"total": 0, "reported": 0}
+
+    def on_progress(phase, done, total):
+        if phase == "scan":
+            # Discovery has finished, so the real total is known and the bar can
+            # be resized from its placeholder to the actual file count.
+            state["total"] = total
+            if bar is not None:
+                bar.length = total
+                bar.label = click.style("  indexing  ", fg="cyan", bold=True) + click.style(
+                    os.path.basename(root), fg="white"
+                )
+        elif bar is not None:
+            # Advance by the delta rather than by one, so a missed or repeated
+            # callback cannot desynchronise the bar.
+            delta = done - state["reported"]
+            if delta > 0:
+                bar.update(delta)
+                state["reported"] = done
+
     try:
-        with click.progressbar(length=1, label='Indexing...') as bar:
-            result = indexer.index_project(_max_workers=workers)
-            bar.update(1)
-        click.echo(f"[ok] Indexed {result['files']} files, {result['symbols']} symbols, {result['edges']} edges in {result['elapsed']:.1f}s")
-        click.echo(f"     DB: {indexer.db_path}")
+        t0 = _time.time()
+        if quiet:
+            bar = None
+            result = indexer.index_project(_max_workers=workers, progress_cb=on_progress)
+        else:
+            with click.progressbar(
+                length=1, label=click.style("  scanning   ", fg="cyan", bold=True), file=click.get_text_stream("stderr")
+            ) as bar:
+                result = indexer.index_project(_max_workers=workers, progress_cb=on_progress)
+        elapsed = result["elapsed"]
+
+        if not quiet:
+            click.echo()
+            n = result["files"]
+            rate = f"{n / elapsed:.0f} files/s" if elapsed > 0.01 else ""
+            parts = [
+                f"{n:,} files",
+                f"{result['symbols']:,} symbols",
+                f"{result['edges']:,} edges",
+                f"{elapsed:.1f}s",
+            ]
+            if rate:
+                parts.append(click.style(f"({rate})", fg="bright_black"))
+            click.echo(
+                click.style("  ✔  ", fg="green", bold=True)
+                + click.style(" · ", fg="bright_black").join(parts)
+            )
+        click.echo("  " + click.style("→ ", fg="bright_black") + click.style(str(indexer.db_path), fg="bright_black"))
 
         if watch:
             from indexer.watcher import CodeGraphWatcher
