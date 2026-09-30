@@ -433,7 +433,14 @@ class CodeParser:
         edges: list[dict] = []
         _seen_ranges = set()
 
-        if root is None or root.has_error:
+        if root is None:
+            return symbols, edges
+        # tree-sitter is error-tolerant: one unrecognised token does not spoil
+        # the rest of the file, it just makes that region opaque to queries.
+        # Bailing on has_error therefore threw away whole files over a single
+        # unknown token -- in zlib, `#define local static` alone cost 50% of the
+        # repository, including all 83KB of deflate.c.
+        if root.has_error and _too_broken_to_index(root):
             return symbols, edges
 
         text_lines = source_bytes.decode("utf-8", errors="replace").split("\n")
@@ -989,6 +996,24 @@ def _find_child_of_type(node, type_name):
         if c.type == type_name:
             return c
     return None
+
+
+def _too_broken_to_index(root) -> bool:
+    """Whether a file is too damaged to be worth extracting anything from.
+
+    Measured by counting errored *top-level* children rather than bytes. Once
+    tree-sitter loses sync it swallows a large span into one ERROR node, so a
+    byte share badly understates what is still recoverable: zlib's deflate.c has
+    one ERROR child out of fifty, and that error covers 70% of the file's bytes
+    while the other 49 top-level declarations parse perfectly.
+    """
+    if root.type == "ERROR":
+        return True
+    children = root.children
+    if not children:
+        return False
+    bad = sum(1 for c in children if c.type == "ERROR" or c.is_missing)
+    return bad * 2 > len(children)
 
 
 # Grammars disagree on what a file is called and what a class is called, so both
