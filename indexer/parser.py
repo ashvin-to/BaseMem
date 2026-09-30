@@ -702,7 +702,8 @@ class CodeParser:
         edges: list[dict] = []
         # Parameters and receivers are typed at their declaration, which is what
         # lets a call on a parameter or a method receiver resolve.
-        for query_name in ("param", "param_value", "self_type"):
+        for query_name in ("param", "param_value", "param_signature", "param_method",
+                            "param_abstract", "self_type"):
             query = self._get_query(query_name)
             if query is None:
                 continue
