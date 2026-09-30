@@ -1,10 +1,10 @@
 OCAML_QUERIES = {
-    "function": """
+    "function_toplevel": """
         (value_definition
             (let_binding
                 pattern: (value_name) @name)) @symbol
     """,
-    "type_alias": """
+    "type_alias_toplevel": """
         (type_definition
             (type_binding
                 name: (type_constructor) @name)) @symbol

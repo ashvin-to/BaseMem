@@ -1,11 +1,13 @@
 from .c import C_QUERIES
 from .cpp import CPP_QUERIES
+from .dart import DART_QUERIES
 from .erlang import ERLANG_QUERIES
 from .fsharp import FSHARP_QUERIES
 from .haskell import HASKELL_QUERIES
 from .csharp import CSHARP_QUERIES
 from .go import GO_QUERIES
 from .r import R_QUERIES
+from .scala import SCALA_QUERIES
 from .iaccfg import DOCKERFILE_QUERIES, GRAPHQL_QUERIES, HCL_QUERIES, SQL_QUERIES, TOML_QUERIES, YAML_QUERIES
 from .java import JAVA_QUERIES
 from .javascript import JS_QUERIES
@@ -46,10 +48,12 @@ LANGUAGE_QUERIES = {
     "php": PHP_QUERIES,
     "r": R_QUERIES,
     "ruby": RUBY_QUERIES,
+    "scala": SCALA_QUERIES,
     "sql": SQL_QUERIES,
     "graphql": GRAPHQL_QUERIES,
     "yaml": YAML_QUERIES,
     "toml": TOML_QUERIES,
+    "dart": DART_QUERIES,
     "dockerfile": DOCKERFILE_QUERIES,
     "hcl": HCL_QUERIES,
 }
