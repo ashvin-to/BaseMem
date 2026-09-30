@@ -2,6 +2,7 @@
 
 import fnmatch
 import logging
+import multiprocessing
 import os
 import sqlite3
 import time
@@ -33,6 +34,44 @@ SKIP_EXTENSIONS = {
 
 
 CODE_DB_FILENAME = ".basemem.code.db"
+
+# Below this many files the process pool costs more in start-up than it saves.
+_PARALLEL_MIN_FILES = 24
+_PARALLEL_CHUNK = 8
+
+
+def _worker_init():
+    """Runs once per worker process.
+
+    A tree-sitter Parser must not be shared across processes, and inheriting the
+    parent's compiled-query cache across fork would make a worker's behaviour
+    depend on what the parent happened to parse first. Rebuild it locally.
+    """
+    CodeParser.reset_cache()
+
+
+def _parse_one(payload):
+    """Read and parse one file. Runs in a worker process, so it must be
+    module-level and must not touch the indexer's sqlite connection.
+
+    Returns (rel_path, symbols, edges), or None when the file cannot be parsed
+    at all. `CodeParser` keeps its own per-language query cache, so each worker
+    process pays query compilation once rather than once per file.
+    """
+    root_path, file_path = payload
+    try:
+        rel_path = os.path.relpath(file_path, root_path)
+        parser = CodeParser.for_file(file_path)
+        if parser is None:
+            return None
+        with open(file_path, "rb") as f:
+            source_bytes = f.read()
+        if not source_bytes.strip():
+            return rel_path, [], []
+        symbols, edges = parser.parse(source_bytes, rel_path)
+        return rel_path, symbols, edges
+    except Exception:
+        return None
 
 
 def _glob_segments(pat_segs, path_segs):
@@ -277,16 +316,56 @@ class CodeIndexer:
         all_symbols = 0
         all_edges = 0
 
-        for f in files:
-            try:
-                sym_count, edge_count = self._index_file(str(root), str(f))
-                indexed += 1
-                all_symbols += sym_count
-                all_edges += edge_count
-            except Exception as e:
-                logger.warning(f"Failed to index {f}: {e}")
-            if progress_cb:
-                progress_cb("indexing", indexed, total)
+        # Reading and parsing is ~85% of the work and touches no shared state,
+        # so it is farmed out to processes. Threads would not help: after the
+        # query-compilation fix only ~40% of the remaining time is in
+        # tree-sitter's C code, and the rest is Python holding the GIL.
+        # Storing stays here, serialised on the one sqlite connection.
+        payloads = [(str(root), str(f)) for f in files]
+        workers = max(1, int(_max_workers or 1))
+        use_pool = workers > 1 and len(files) >= _PARALLEL_MIN_FILES
+
+        if use_pool:
+            from concurrent.futures import ProcessPoolExecutor
+
+            # Python 3.14 defaults to the forkserver start method, which
+            # re-imports __main__ in every worker. That breaks for any caller
+            # whose entry point is not an importable file (a heredoc, an
+            # interactive session, some plugin hosts), and it re-compiles every
+            # tree-sitter query per worker. fork has neither problem here: the
+            # parent is single-threaded at this point, and the worker's own
+            # initialiser rebuilds the parser cache so nothing is inherited.
+            ctx = None
+            if "fork" in multiprocessing.get_all_start_methods():
+                ctx = multiprocessing.get_context("fork")
+            with ProcessPoolExecutor(
+                max_workers=workers, mp_context=ctx, initializer=_worker_init
+            ) as pool:
+                results = pool.map(_parse_one, payloads, chunksize=_PARALLEL_CHUNK)
+                for f, parsed in zip(files, results):
+                    indexed += 1
+                    if parsed is not None:
+                        try:
+                            sym_count, edge_count = self._store_parsed(
+                                str(root), str(f), *parsed
+                            )
+                            all_symbols += sym_count
+                            all_edges += edge_count
+                        except Exception as e:
+                            logger.warning(f"Failed to index {f}: {e}")
+                    if progress_cb:
+                        progress_cb("indexing", indexed, total)
+        else:
+            for f in files:
+                try:
+                    sym_count, edge_count = self._index_file(str(root), str(f))
+                    indexed += 1
+                    all_symbols += sym_count
+                    all_edges += edge_count
+                except Exception as e:
+                    logger.warning(f"Failed to index {f}: {e}")
+                if progress_cb:
+                    progress_cb("indexing", indexed, total)
 
         # Rebuild FTS index
         self.conn.execute("INSERT INTO code_symbols_fts(code_symbols_fts) VALUES('rebuild')")
@@ -1379,18 +1458,19 @@ class CodeIndexer:
         )
 
     def _index_file(self, root_path: str, file_path: str) -> tuple[int, int]:
-        rel_path = os.path.relpath(file_path, root_path)
-        parser = CodeParser.for_file(file_path)
-        if parser is None:
+        parsed = _parse_one((root_path, file_path))
+        if parsed is None:
             return 0, 0
-        with open(file_path, "rb") as f:
-            source_bytes = f.read()
+        return self._store_parsed(root_path, file_path, *parsed)
 
-        if not source_bytes.strip():
-            self._record_file(rel_path, file_path, 0)
-            return 0, 0
+    def _store_parsed(self, root_path: str, file_path: str, rel_path: str,
+                      symbols: list[dict], edges: list[dict]) -> tuple[int, int]:
+        """Write one file's already-parsed symbols and edges. Must stay serial.
 
-        symbols, edges = parser.parse(source_bytes, rel_path)
+        Every statement here runs on the single shared sqlite connection, and
+        the same-file symbol-id map is only valid within one file, so this half
+        of the work cannot be split across workers.
+        """
         if not symbols and not edges:
             self._record_file(rel_path, file_path, 0)
             return 0, 0

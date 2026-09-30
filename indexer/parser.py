@@ -395,6 +395,15 @@ class CodeParser:
         return parser
 
     @classmethod
+    def reset_cache(cls):
+        """Drop the per-language parser cache.
+
+        Used by worker processes so each one owns its parsers rather than
+        inheriting a parent's across fork.
+        """
+        _PARSER_CACHE.clear()
+
+    @classmethod
     def supported_extension(cls, ext: str) -> bool:
         if not ext or ext in _SKIP_EXTENSIONS:
             return False
