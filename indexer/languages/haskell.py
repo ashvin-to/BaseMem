@@ -1,5 +1,8 @@
 HASKELL_QUERIES = {
-    "function": """
+    # `bind` is used for every binding, including a `let` inside a do-block or
+    # where-clause, so the plain form put 1,454 symbols in one Analytics.hs.
+    # `_toplevel` drops bindings nested inside another binding of the same kind.
+    "function_toplevel": """
         (bind
             name: (variable) @name) @symbol
     """,

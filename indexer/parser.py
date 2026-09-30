@@ -469,6 +469,15 @@ class CodeParser:
             # range, so this must stay ahead of type_alias or HCL starts
             # reporting the block keyword instead of the resource name.
             ("resource", "resource"),
+            # A query name ending in `_toplevel` matches only when the declared
+            # node has no ancestor of the same type, i.e. it is not shadowed by
+            # another declaration of the same kind. OCaml nests a `let` inside
+            # another `let` for every local binding, and matching all of them put
+            # 8,620 symbols in one types.ml -- including locals and C enum
+            # constants. Opt-in rather than a blanket rule, which would wrongly
+            # drop Java inner classes.
+            ("function", "function_toplevel"),
+            ("type_alias", "type_alias_toplevel"),
             ("method", "method"),
             # `obj.method = function () {}` / `= () => {}`. This is the dominant
             # idiom in CommonJS and prototype-style JS, and without it a whole
@@ -497,6 +506,8 @@ class CodeParser:
                 sym_node = _first_node(cap_map.get("symbol"))
                 name_node = _first_node(cap_map.get("name"))
                 if sym_node is None or name_node is None:
+                    continue
+                if query_name.endswith("_toplevel") and _is_shadowed(sym_node):
                     continue
                 range_key = (sym_node.start_byte, sym_node.end_byte)
                 if range_key in _seen_ranges:
@@ -1035,6 +1046,16 @@ def _find_child_of_type(node, type_name):
         if c.type == type_name:
             return c
     return None
+
+
+def _is_shadowed(node) -> bool:
+    """Whether a declaration is nested inside another of the same kind."""
+    cur = node.parent
+    while cur is not None:
+        if cur.type == node.type:
+            return True
+        cur = cur.parent
+    return False
 
 
 def _too_broken_to_index(root) -> bool:
