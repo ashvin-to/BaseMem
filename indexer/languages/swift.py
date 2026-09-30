@@ -46,6 +46,16 @@ SWIFT_QUERIES = {
             (call_expression
                 (simple_identifier) @func)) @assign
     """,
+    # `func m(w: Widget)`. Match positionally: the parameter's children are
+    # `name:`, a literal `:` token, then the type under a second `name:` field,
+    # and repeating a field like that is an impossible pattern.
+    "param": """
+        (function_declaration
+            (parameter
+                (simple_identifier) @name
+                (user_type (_) @func)) @call
+            body: (function_body) @body) @symbol
+    """,
     "inherits": """
         (class_declaration
             name: (type_identifier) @name

@@ -100,4 +100,64 @@ TS_QUERIES = {
     "export": """
         (export_statement) @export
     """,
+    # `function m(w: Widget)`. Without this the receiver of `w.go()` has no type
+    # and the call cannot resolve.
+    #
+    # Four forms are needed, not one. A parameter may be required or optional,
+    # and the carrier may be a function, a method, or -- in a .d.ts, which is
+    # most of a published package's surface -- a method_signature or an abstract
+    # method_declaration. Covering only function_declaration/required_parameter
+    # found 56 parameter types across all of axios.
+    "param": """
+        (function_declaration
+            parameters: (formal_parameters
+                [(required_parameter
+                    pattern: (identifier) @name
+                    type: (type_annotation (_) @func))
+                 (optional_parameter
+                    pattern: (identifier) @name
+                    type: (type_annotation (_) @func))] @call) @assign) @symbol
+    """,
+    "param_signature": """
+        (method_signature
+            parameters: (formal_parameters
+                [(required_parameter
+                    pattern: (identifier) @name
+                    type: (type_annotation (_) @func))
+                 (optional_parameter
+                    pattern: (identifier) @name
+                    type: (type_annotation (_) @func))] @call) @assign) @symbol
+    """,
+    "param_method": """
+        (method_definition
+            parameters: (formal_parameters
+                [(required_parameter
+                    pattern: (identifier) @name
+                    type: (type_annotation (_) @func))
+                 (optional_parameter
+                    pattern: (identifier) @name
+                    type: (type_annotation (_) @func))] @call) @assign) @symbol
+    """,
+    "param_abstract": """
+        (method_declaration
+            parameters: (formal_parameters
+                [(required_parameter
+                    pattern: (identifier) @name
+                    type: (type_annotation (_) @func))
+                 (optional_parameter
+                    pattern: (identifier) @name
+                    type: (type_annotation (_) @func))] @call) @assign) @symbol
+    """,
+    # `const f = (w: Widget) => w.go()` -- the same for an arrow function. The
+    # anchor is the declarator so the enclosing-function walk reaches the
+    # function the arrow is *defined* in, not the arrow itself.
+    "param_value": """
+        (variable_declarator
+            name: (identifier) @fname
+            value: (arrow_function
+                parameters: (formal_parameters
+                    (required_parameter
+                        pattern: (identifier) @name
+                        type: (type_annotation (_) @func)) @call))) @assign
+    """,
 }

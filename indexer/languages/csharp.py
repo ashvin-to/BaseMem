@@ -50,25 +50,40 @@ CSHARP_QUERIES = {
         (invocation_expression
             function: (identifier) @func) @call
     """,
-    # `var w = new Widget()` types w.
+    # `var v = new Widget()` types v. There is no `value:` field on
+    # variable_declarator in this grammar; the initialiser is just a child.
     "instantiate": """
         (variable_declaration
             (variable_declarator
                 name: (identifier) @name
-                value: (object_creation_expression
+                (object_creation_expression
                     type: (identifier) @func))) @assign
+    """,
+    # `var v = other.Thing()` types v from a factory call.
+    "instantiate_call": """
+        (variable_declaration
+            (variable_declarator
+                name: (identifier) @name
+                (invocation_expression
+                    function: (identifier) @func))) @assign
     """,
     "new": """
         (object_creation_expression
             type: (identifier) @func) @call
     """,
     # `void Go(Widget w)` -- parameter types.
+    #
+    # Two things bite here. The type node varies (identifier, predefined_type,
+    # generic_name), so match any node and let _normalize_type reduce it. And
+    # tree-sitter requires fields in the node's own child order: `parameter` has
+    # type as child 0 and name as child 1, so writing name before type is an
+    # "impossible pattern" and the whole query silently compiles to nothing.
     "param": """
         (method_declaration
             parameters: (parameter_list
                 (parameter
-                    name: (identifier) @name
-                    type: (identifier) @func) @call) @assign) @symbol
+                    type: (_) @func
+                    name: (identifier) @name) @call) @assign) @symbol
     """,
     "inherits": """
         (class_declaration
