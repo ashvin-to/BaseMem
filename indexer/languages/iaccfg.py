@@ -51,7 +51,7 @@ GRAPHQL_QUERIES = {
 
 YAML_QUERIES = {
     # only top-level keys are resources; nested keys are structure
-    "class": """
+    "resource": """
         (block_mapping_pair
             key: (flow_node (plain_scalar (string_scalar) @name))
             value: (block_node)) @symbol
@@ -59,7 +59,7 @@ YAML_QUERIES = {
 }
 
 TOML_QUERIES = {
-    "class": """
+    "resource": """
         (table (bare_key) @name) @symbol
     """,
     "type_alias": """
@@ -68,7 +68,7 @@ TOML_QUERIES = {
 }
 
 DOCKERFILE_QUERIES = {
-    "struct": """
+    "resource": """
         (from_instruction
             (image_spec name: (image_name) @name)) @symbol
     """,
@@ -76,7 +76,7 @@ DOCKERFILE_QUERIES = {
 
 HCL_QUERIES = {
     # resource "aws_s3_bucket" "b" { ... } — the label identifies the instance.
-    "class": """
+    "resource": """
         (block
             (string_lit
                 (template_literal) @name)) @symbol
