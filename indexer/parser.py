@@ -660,7 +660,25 @@ class CodeParser:
                         "line_number": callee_node.start_point[0] + 1,
                     })
 
-        return edges
+        # Several languages need two patterns for the same call form -- php
+        # matches a `variable_name` receiver by its bare name and anything else
+        # by its whole text -- and both can match one node. Without this the
+        # same call is stored twice and the counts are inflated.
+        unique: list[dict] = []
+        seen: set[tuple] = set()
+        for edge in edges:
+            key = (
+                edge["edge_type"],
+                edge.get("from_name", ""),
+                edge.get("target_name", ""),
+                edge.get("target_receiver", ""),
+                edge.get("line_number", 0),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(edge)
+        return unique
 
     def _extract_inheritance(self, root: Node, source_bytes: bytes, file_path: str):
         """Record `class D(B)` as an inherits edge, subclass -> base.
