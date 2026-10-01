@@ -14,6 +14,7 @@ from .kotlin import KOTLIN_QUERIES
 from .nim import NIM_QUERIES
 from .ocaml import OCAML_QUERIES
 from .perl import PERL_QUERIES
+from .php import PHP_QUERIES
 from .ruby import RUBY_QUERIES
 from .python import PYTHON_QUERIES
 from .rust import RUST_QUERIES
@@ -42,6 +43,7 @@ LANGUAGE_QUERIES = {
     "swift": SWIFT_QUERIES,
     "zig": ZIG_QUERIES,
     "go": GO_QUERIES,
+    "php": PHP_QUERIES,
     "r": R_QUERIES,
     "ruby": RUBY_QUERIES,
     "sql": SQL_QUERIES,
