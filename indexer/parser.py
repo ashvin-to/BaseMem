@@ -458,6 +458,17 @@ class CodeParser:
         for kind, query_name in [
             ("function", "function"),
             ("class", "class"),
+            # Config and IaC keys are structure, not code. Filing them under
+            # `class` or `struct` put a CI workflow's top-level keys into class
+            # search, where they outnumbered the real symbols beside them: in
+            # ansible, .yml files produced 23,850 symbols against 12,888 from
+            # 1,843 Python files.
+            #
+            # Order matters. Several languages have two queries that capture the
+            # same @symbol node, and the parser keeps the first match by byte
+            # range, so this must stay ahead of type_alias or HCL starts
+            # reporting the block keyword instead of the resource name.
+            ("resource", "resource"),
             ("method", "method"),
             # `obj.method = function () {}` / `= () => {}`. This is the dominant
             # idiom in CommonJS and prototype-style JS, and without it a whole
