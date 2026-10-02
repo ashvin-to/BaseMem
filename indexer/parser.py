@@ -102,6 +102,20 @@ def ensure_grammars():
     download(needed)
 
 
+# Trained models and binary data blobs. The language pack maps almost none of
+# these, so they were skipped by accident; `.pkl` and `.pbtxt` are mapped, and a
+# repository's `models/` directory would otherwise have every checkpoint read
+# into memory on each index. Listed explicitly so a future pack version that maps
+# more of them does not silently reintroduce the cost.
+_MODEL_ARTIFACT_EXTENSIONS = frozenset({
+    ".pkl", ".pickle", ".pbtxt", ".keras", ".h5", ".hdf5", ".ckpt",
+    ".pt", ".pth", ".onnx", ".safetensors", ".tflite", ".engine",
+    ".mlmodel", ".caffemodel", ".params", ".gguf", ".ggml", ".pb",
+    ".npy", ".npz", ".parquet", ".feather", ".arrow", ".msgpack",
+    ".db", ".mdb", ".lmdb", ".rdb", ".bin", ".dat",
+})
+
+
 # .yaml/.toml/.graphql/.sql used to sit here and were never opened. They now have
 # real extraction (see languages/iaccfg.py) and are indexed as resources, the way
 # cbm treats Dockerfile/K8s nodes. The rest are still noise.
@@ -405,7 +419,7 @@ class CodeParser:
 
     @classmethod
     def supported_extension(cls, ext: str) -> bool:
-        if not ext or ext in _SKIP_EXTENSIONS:
+        if not ext or ext in _SKIP_EXTENSIONS or ext in _MODEL_ARTIFACT_EXTENSIONS:
             return False
         if ext in _EXTENSION_OVERRIDES:
             return True
