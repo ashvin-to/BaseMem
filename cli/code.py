@@ -253,7 +253,9 @@ def code_callers(symbol_name, root):
         if not results:
             click.echo(f"No callers for '{symbol_name}'.")
             return
-        results_str = ", ".join(f"{r['symbol_name']}:{r['line_number']}" for r in results[:20])
+        results_str = ", ".join(
+            f"{r['symbol_name']} ({r['file_path']}:{r['line_number']})" for r in results[:20]
+        )
         click.echo(f"callers of {symbol_name}: {results_str}")
     finally:
         indexer.close()
@@ -273,7 +275,9 @@ def code_callees(symbol_name, root, file_path):
         if not results:
             click.echo(f"No callees for '{symbol_name}'.")
             return
-        results_str = ", ".join(f"{r['to_name']}:{r['line_number']}" for r in results[:20])
+        results_str = ", ".join(
+            f"{r['to_name']} ({r['file_path']}:{r['line_number']})" for r in results[:20]
+        )
         click.echo(f"callees of {symbol_name}: {results_str}")
     finally:
         indexer.close()
