@@ -508,6 +508,20 @@ class CodeParser:
             ("constructor", "constructor"),
             ("namespace", "namespace"),
             ("arrow", "arrow"),
+            # C's query file has always defined a `macro` slot, but the slot was
+            # never in this list, so it was never evaluated: the Linux kernel's
+            # macros produced exactly zero symbols. Same for a file-scope
+            # variable, which had no slot at all.
+            ("macro", "macro"),
+            ("variable", "variable"),
+            # Both were query-file keys that the kind list never asked for.
+            ("decorator", "decorator"),
+            ("variable", "variable_assignment"),
+            ("struct", "struct_toplevel"),
+            ("struct", "struct_typedef"),
+            ("enum", "enum_toplevel"),
+            ("enum", "enumerator"),
+            ("variable", "variable_toplevel"),
         ]:
             if query_name not in self.queries:
                 continue
@@ -775,7 +789,8 @@ class CodeParser:
                     "line_number": anchor.start_point[0] + 1,
                 })
 
-        for query_name in ("instantiate", "instantiate_call", "annotate"):
+        for query_name in ("instantiate", "instantiate_call", "instantiate_new",
+                            "annotate"):
             query = self._get_query(query_name)
             if query is None:
                 continue
@@ -1063,10 +1078,17 @@ def _find_child_of_type(node, type_name):
 
 
 def _is_shadowed(node) -> bool:
-    """Whether a declaration is nested inside another of the same kind."""
+    """Whether a declaration is nested inside another of the same kind, or
+    inside a function at all.
+
+    The function check is what makes a C file-scope variable filterable, since
+    a local `int x = 1;` is a `declaration` too, just not a top-level one. It
+    also catches a Haskell `let` in a do-block, which is not nested inside
+    another binding and so was previously missed.
+    """
     cur = node.parent
     while cur is not None:
-        if cur.type == node.type:
+        if cur.type == node.type or cur.type in _FUNCTION_NODE_TYPES:
             return True
         cur = cur.parent
     return False
