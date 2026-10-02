@@ -9,7 +9,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from .parser import CodeParser
+from .parser import CodeParser, _MODEL_ARTIFACT_EXTENSIONS
 from .schema import ensure_code_schema
 
 logger = logging.getLogger("basemem.indexer")
@@ -23,6 +23,9 @@ SKIP_DIRS = {
 }
 
 SKIP_EXTENSIONS = {
+    # Trained models and binary blobs. See parser._MODEL_ARTIFACT_EXTENSIONS for
+    # why these are listed rather than relying on the pack not mapping them.
+    *_MODEL_ARTIFACT_EXTENSIONS,
     ".pyc", ".pyo", ".so", ".o", ".a", ".lib", ".dll", ".dylib",
     ".exe", ".bin", ".class", ".jar", ".war",
     ".min.js", ".min.css",
