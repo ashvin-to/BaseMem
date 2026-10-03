@@ -45,6 +45,7 @@ _TOKEN = re.compile(
     | (?P<colon>:)
     | (?P<dot>\.)
     | (?P<semi>;)
+    | (?P<star>\*)
     | (?P<str>'[^']*'|"[^"]*")
     | (?P<word>[A-Za-z_][A-Za-z0-9_]*)
     | (?P<num>\d+)
@@ -89,7 +90,7 @@ class _Parser:
 
     def accept_word(self, word: str) -> bool:
         tok = self.peek()
-        if tok and tok[0] == "word" and tok[1].upper() == word:
+        if tok and tok[0] == "word" and tok[1].upper() == word.upper():
             self.i += 1
             return True
         return False
@@ -188,26 +189,65 @@ class _Parser:
         return v[1][1:-1] if v[0] == "str" else v[1]
 
     # ── return ─────────────────────────────────────────────────────
-    def parse_return(self) -> tuple[list[tuple[str, str]], int]:
+    def parse_return(self) -> tuple[list[dict], int, tuple[str, str] | None]:
         if not self.accept_word("RETURN"):
             raise QueryError("RETURN is required")
-        items: list[tuple[str, str]] = []
+        items: list[dict] = []
         while True:
-            ident = self.expect_kind("word")
-            if self.accept_kind("dot"):
-                prop = self.expect_kind("word")
-            else:
-                prop = "name" if ident in ("a", "b") else ident
-            items.append((ident, prop))
+            item = self._return_item()
+            items.append(item)
             if not self.accept_kind("comma"):
                 break
+        order = self.parse_order_by()
         limit = 50
         if self.accept_word("LIMIT"):
             n = self.next()
             if n[0] != "num":
                 raise QueryError("LIMIT expects a number")
             limit = max(1, min(int(n[1]), 1000))
-        return items, limit
+        return items, limit, order
+
+    def _return_item(self) -> dict:
+        """One RETURN term: a field, or an aggregate over a node."""
+        if self.accept_word("count"):
+            if not self.accept_kind("lparen"):
+                raise QueryError("count expects (a) or (b)")
+            if self.accept_kind("star"):
+                target = "*"
+            else:
+                target = self.expect_kind("word")
+            if not self.accept_kind("rparen"):
+                raise QueryError("count(...) is missing its closing parenthesis")
+            prop = self.expect_kind("word") if self.accept_kind("dot") else "count"
+            if not self.accept_word("AS"):
+                raise QueryError(f"count(...) needs an alias: AS name")
+            alias = self.expect_kind("word")
+            return {"ident": target, "prop": prop, "agg": "count", "alias": alias}
+        ident = self.expect_kind("word")
+        if self.accept_kind("dot"):
+            prop = self.expect_kind("word")
+        else:
+            prop = "name" if ident in ("a", "b") else ident
+        alias = None
+        if self.accept_word("AS"):
+            alias = self.expect_kind("word")
+        return {"ident": ident, "prop": prop, "agg": None, "alias": alias}
+
+    def parse_order_by(self) -> tuple[str, str] | None:
+        """`ORDER BY name [ASC|DESC]`, naming a returned column or an alias."""
+        if not self.accept_word("ORDER"):
+            return None
+        if not self.accept_word("BY"):
+            raise QueryError("ORDER must be followed by BY")
+        col = self.next()
+        if col[0] != "word":
+            raise QueryError("ORDER BY expects a column name or alias")
+        direction = "ASC"
+        if self.accept_word("DESC"):
+            direction = "DESC"
+        elif self.accept_word("ASC"):
+            direction = "ASC"
+        return col[1], direction
 
 
 def parse(query: str) -> dict:
@@ -221,7 +261,7 @@ def parse(query: str) -> dict:
     pattern = p.parse_pattern()
     where_a = p.parse_where("a")
     where_b = p.parse_where("b") if "b" in pattern else None
-    returns, limit = p.parse_return()
+    returns, limit, order = p.parse_return()
     leftover = p.peek()
     if leftover is not None:
         raise QueryError(f"unsupported trailing input near {leftover[1]!r}")
@@ -230,6 +270,7 @@ def parse(query: str) -> dict:
         "where": [w for w in (where_a, where_b) if w],
         "returns": returns,
         "limit": limit,
+        "order": order,
     }
 
 
@@ -239,7 +280,11 @@ def describe() -> str:
         "  MATCH (a) [WHERE a.name = 'x' | a.name =~ 're' | a.name ~ 'x']\n"
         "  MATCH (a:Label) RETURN a.name, a.file LIMIT n\n"
         "  MATCH (a)-[:REL]->(b) [WHERE ...] RETURN a.name, b.name\n"
+        "  MATCH (a)-[:REL]->(b) RETURN b.name, count(a) AS callers ORDER BY callers DESC\n"
+        "      (the plain field is the subject; count() names the other side)\n"
+        "  MATCH (a:Label) RETURN count(*) AS total\n"
         f"  labels:   {', '.join(LABELS)}\n"
         f"  relations: {', '.join(EDGES)}\n"
-        "  fields:   name, file, type, language, line, parent"
+        "  fields:   name, file, type, language, line, kind\n"
+        "  labels and relations are case-sensitive; an unknown one matches nothing"
     )

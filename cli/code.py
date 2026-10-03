@@ -449,6 +449,45 @@ def code_find_cli(query, root, dead, verbose, file_path, limit, regex):
         indexer.close()
 
 
+@code.command("gquery")
+@click.argument('search')
+@click.option('--root', default='.', help='Project root directory')
+@click.option('--json', 'as_json', is_flag=True, help='Output as JSON')
+def code_graph_query(search, root, as_json):
+    """Query the code graph. Run `code gquery --help` or code_status_query for syntax."""
+    from indexer import CODE_DB_FILENAME
+    from indexer.indexer import CodeIndexer
+    from indexer.query import QueryError, describe
+    from indexer.query_execute import run as run_query
+
+    db_path = os.path.join(os.path.abspath(root), CODE_DB_FILENAME)
+    if not os.path.exists(db_path):
+        click.echo(f"[!] No code index found at {db_path}. Run `mem code init {os.path.abspath(root)}` first.")
+        return
+    indexer = CodeIndexer(os.path.abspath(root))
+    try:
+        try:
+            rows = run_query(indexer, search)
+        except QueryError as e:
+            click.echo(f"code gquery: {e}\n\n{describe()}")
+            return
+        except Exception as e:
+            click.echo(f"code gquery: {type(e).__name__}: {e}")
+            return
+        if not rows:
+            click.echo("code gquery: no matches")
+            return
+        if as_json:
+            import json
+            click.echo(json.dumps(rows, indent=2, default=str))
+            return
+        click.echo(f"code gquery: {len(rows)} row(s)")
+        for row in rows:
+            click.echo("  " + ", ".join(f"{k}={v}" for k, v in row.items()))
+    finally:
+        indexer.close()
+
+
 @code.command("query")
 @click.argument('search')
 @click.option('--root', default='.', help='Project root directory')
