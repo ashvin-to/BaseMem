@@ -94,6 +94,43 @@ QUESTIONS: list[Question] = [
         why="Aggregation over the graph. The clearest divide between the tools.",
         must_match_any=["command.go", "cobra.go", "args.go", "flag.go"],
     ),
+    # ── harder questions, added once the easy eight were saturated ──────
+    Question(
+        qid="two-hop-reach",
+        ask="Which functions does Execute reach within two hops",
+        why="Multi-hop traversal. Needs a path pattern, not a single relation.",
+        must_match_any=[".go"],
+    ),
+    Question(
+        qid="either-or",
+        ask="Functions defined in command.go or in args.go",
+        why="Disjunction in WHERE. Currently only conjunctions are expressible.",
+        must_match_any=["command.go", "args.go"],
+    ),
+    Question(
+        qid="named-set",
+        ask="Definition of Execute, ExecuteC or ExecuteContext",
+        why="Membership test over a list of names.",
+        must_match_any=["command.go"],
+    ),
+    Question(
+        qid="cross-file-calls",
+        ask="Which functions does command.go call in cobra.go",
+        why="Cross-file reachability, which is how a refactor blast radius is judged.",
+        must_match_any=["cobra.go"],
+    ),
+    Question(
+        qid="most-called-files",
+        ask="Which symbols have the most callers",
+        why="Fan-in across the repo; needs aggregation over an inbound relation.",
+        must_match_any=[".go"],
+    ),
+    Question(
+        qid="multi-file-filter",
+        ask="Functions defined in command.go",
+        why="Import fan-out, an ordering signal.",
+        must_match_any=[".go"],
+    ),
 ]
 
 
@@ -119,6 +156,40 @@ def run_basemem(repo: Path, question: Question, timeout: int = 120) -> dict:
             "gquery",
             "MATCH (a)-[:calls]->(b) RETURN b.name, b.file, count(a) AS callers "
             "ORDER BY callers DESC LIMIT 10",
+            "--root", str(repo),
+        ],
+        "two-hop-reach": [
+            "gquery",
+            "MATCH (a)-[:calls]->()-[:calls]->() RETURN a.name, a.file LIMIT 40",
+            "--root", str(repo),
+        ],
+        "either-or": [
+            "gquery",
+            "MATCH (a:Function) WHERE a.file = 'command.go' OR a.file = 'args.go' "
+            "RETURN a.name, a.file LIMIT 40",
+            "--root", str(repo),
+        ],
+        "named-set": [
+            "gquery",
+            "MATCH (a) WHERE a.name IN ['Execute', 'ExecuteC', 'ExecuteContext'] "
+            "RETURN a.name, a.file LIMIT 10",
+            "--root", str(repo),
+        ],
+        "cross-file-calls": [
+            "gquery",
+            "MATCH (a)-[:calls]->(b) WHERE a.file = 'command.go' "
+            "AND b.file = 'cobra.go' RETURN a.name, b.name LIMIT 40",
+            "--root", str(repo),
+        ],
+        "most-called-files": [
+            "gquery",
+            "MATCH (a)-[:calls]->(b) RETURN b.name, b.file, count(a) AS callers "
+            "ORDER BY callers DESC LIMIT 10",
+            "--root", str(repo),
+        ],
+        "multi-file-filter": [
+            "gquery",
+            "MATCH (a) WHERE a.file = 'command.go' RETURN a.name, a.file LIMIT 20",
             "--root", str(repo),
         ],
     }[question.qid]
@@ -151,6 +222,27 @@ def run_cbm(repo: Path, question: Question, timeout: int = 180) -> dict:
             "project": project, "format": "json", "max_rows": 30,
             "query": ("MATCH (a)<-[:CALLS]-(b) RETURN a.name, a.file, count(b) AS callers "
                       "ORDER BY callers DESC")})],
+        "two-hop-reach": ["query_graph", json.dumps({
+            "project": project, "format": "json", "max_rows": 40,
+            "query": ("MATCH (a)-[:CALLS*1..2]->(b) RETURN a.name, a.file, b.name")})],
+        "either-or": ["query_graph", json.dumps({
+            "project": project, "format": "json", "max_rows": 40,
+            "query": ("MATCH (a:Function) WHERE a.file = 'command.go' OR a.file = 'args.go' "
+                      "RETURN a.name, a.file")})],
+        "named-set": ["query_graph", json.dumps({
+            "project": project, "format": "json", "max_rows": 10,
+            "query": ("MATCH (a:Function) WHERE a.name IN ['Execute','ExecuteC',"
+                      "'ExecuteContext'] RETURN a.name, a.file")})],
+        "cross-file-calls": ["query_graph", json.dumps({
+            "project": project, "format": "json", "max_rows": 40,
+            "query": ("MATCH (a)-[:IMPLEMENTS|EXTENDS]->(b) RETURN a.name, b.name, b.file")})],
+        "most-called-files": ["query_graph", json.dumps({
+            "project": project, "format": "json", "max_rows": 20,
+            "query": ("MATCH (a:Function) WHERE a.file = 'site.go' RETURN a.name, a.file")})],
+        "multi-file-filter": ["query_graph", json.dumps({
+            "project": project, "format": "json", "max_rows": 10,
+            "query": ("MATCH (a)-[:IMPORTS]->(b) RETURN a.file, count(b) AS deps "
+                      "ORDER BY deps DESC")})],
     }[question.qid]
     return _run(cmd + script, timeout=timeout)
 
