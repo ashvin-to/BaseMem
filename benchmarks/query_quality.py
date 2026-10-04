@@ -78,8 +78,9 @@ QUESTIONS: list[Question] = [
     Question(
         qid="unused-or-orphan",
         ask="Find a function defined in this repo but never called from within it",
-        why="Negative query. Hard for a name-matching tool, trivial for a graph.",
-        must_match_any=["command.go", "args.go", "shell_completions.go", "completions.go"],
+        why="Negative query. Needs NOT, which neither tool expressed before this.",
+        must_match_any=[".go"],
+        forbid=[],
     ),
     Question(
         qid="file-inventory",
@@ -110,8 +111,7 @@ def run_basemem(repo: Path, question: Question, timeout: int = 120) -> dict:
         "locate-definition": ["search", "OutOrStdout", "--root", str(repo), "--limit", "10"],
         "unused-or-orphan": [
             "gquery",
-            "MATCH (a)-[:calls]->(b) RETURN b.name, count(a) AS callers "
-            "ORDER BY callers DESC LIMIT 40",
+            "MATCH (a:Function) WHERE NOT (a)<-[:calls]-() RETURN a.name, a.file LIMIT 40",
             "--root", str(repo),
         ],
         "file-inventory": ["files", "--root", str(repo), "--tree"],

@@ -63,6 +63,30 @@ def _where(where: dict, alias: str) -> tuple[str, list]:
     return f" AND {col} = ?", [where["value"]]
 
 
+def _negation(where: dict, anchor_col: str, project: str) -> tuple[str, list]:
+    """`NOT (a)<-[:rel]-()` as a NOT EXISTS subquery.
+
+    Negative questions are the one thing the positive syntax cannot express, and
+    an orphan is the obvious case: a defined symbol with no inbound calls. Using
+    NOT EXISTS rather than a LEFT JOIN ... IS NULL keeps the row count honest
+    when an edge exists but points at an unindexed symbol.
+    """
+    spec = where["not"]
+    rel = spec["rel"]
+    direction = spec["direction"]
+    if rel is None:
+        raise ValueError("NOT needs a relationship, e.g. NOT (a)<-[:calls]-()")
+    if direction == "none":
+        raise ValueError("NOT needs a direction: -(a)->()- or <-[:rel]-()")
+    # inbound means "this symbol is the target of an edge"; outbound, the source.
+    column = "to_symbol_id" if direction == "in" else "from_symbol_id"
+    sql = (
+        f" AND NOT EXISTS (SELECT 1 FROM code_edges ne "
+        f"WHERE ne.{column} = {anchor_col} AND ne.project_id = ? AND ne.edge_type = ?)"
+    )
+    return sql, [project, rel]
+
+
 def _label(label: str | None, alias: str) -> tuple[str, list]:
     from .query import LABELS
 
@@ -98,7 +122,9 @@ def _project(alias: str, ident: str, returns: list[dict], reverse: bool) -> list
     return out
 
 
-def _aggregates(returns: list[dict], reverse: bool) -> list[tuple[str, str]]:
+def _aggregates(
+    returns: list[dict], reverse: bool, near: str = "e1", far: str = "e2"
+) -> list[tuple[str, str]]:
     """(sql, output_name) for each aggregate term.
 
     The traversal joins `from_symbol_id = a`, so the projected rows run caller to
@@ -106,6 +132,9 @@ def _aggregates(returns: list[dict], reverse: bool) -> list[tuple[str, str]]:
     round — "how many callers does each of these have" — so the same join is
     inverted and grouped on the callee. Counting is DISTINCT so a caller that
     references its target twice is not counted twice.
+
+    `near` is the table the rows are anchored to and `far` the other side, which
+    for a single-node query are the same alias.
     """
     out = []
     for item in returns:
@@ -119,10 +148,9 @@ def _aggregates(returns: list[dict], reverse: bool) -> list[tuple[str, str]]:
                 f"count({target}) is not available; use count(a) or count(b)"
             )
         elif (target == "b") == reverse:
-            # group on the symbol the rows are anchored to
-            expr = f"count(DISTINCT {'e2' if reverse else 'e1'}.id)"
+            expr = f"count(DISTINCT {near}.id)"
         else:
-            expr = f"count(DISTINCT {'e1' if reverse else 'e2'}.id)"
+            expr = f"count(DISTINCT {far}.id)"
         out.append((expr, item["alias"]))
     return out
 
@@ -165,11 +193,14 @@ def run(indexer, query: str) -> list[dict]:
     if b is None:
         where_sql, params = "", []
         for clause in plan["where"]:
-            sql, ps = _where(clause, "cs")
+            if "not" in clause:
+                sql, ps = _negation(clause, "cs.id", indexer.project_id)
+            else:
+                sql, ps = _where(clause, "cs")
             where_sql += sql
             params += ps
         sel = _project("cs", "a", plan["returns"], False)
-        aggs = _aggregates(plan["returns"], False)
+        aggs = _aggregates(plan["returns"], False, near="cs", far="cs")
         sql_a, ps_a = _label(pattern["a"].get("label"), "cs")
         if aggs:
             for expr, name in aggs:
@@ -206,7 +237,11 @@ def run(indexer, query: str) -> list[dict]:
     # two-node traversal
     where_sql, params = "", []
     for clause in plan["where"]:
-        sql, ps = _where(clause, "e1")
+        if "not" in clause:
+            # the anchor is whichever node the traversal runs from
+            sql, ps = _negation(clause, "e1.id", indexer.project_id)
+        else:
+            sql, ps = _where(clause, "e1")
         where_sql += sql
         params += ps
     aggs = _aggregates(plan["returns"], reverse=False)

@@ -37,6 +37,7 @@ _TOKEN = re.compile(
     | (?P<rbrack>\])
     | (?P<lbrace>\{)
     | (?P<rbrace>\})
+    | (?P<leftarrow><-)
     | (?P<arrow>->)
     | (?P<dash>--)
     | (?P<dash1>-)
@@ -152,6 +153,8 @@ class _Parser:
     def parse_where(self, default_ident: str) -> dict | None:
         if not self.accept_word("WHERE"):
             return None
+        if self.accept_word("NOT"):
+            return {"not": self._negated_pattern(default_ident)}
         ident = self.expect_kind("word")
         if self.accept_kind("dot"):
             field = self.expect_kind("word")
@@ -187,6 +190,57 @@ class _Parser:
         if v[0] not in ("str", "word", "num"):
             raise QueryError("expected a value after :=")
         return v[1][1:-1] if v[0] == "str" else v[1]
+
+    def _negated_pattern(self, default_ident: str) -> dict:
+        """`NOT (a)<-[:rel]-()` — a relation the node must not have.
+
+        This is the only way to ask a negative question: nothing in the positive
+        syntax can express "has no callers" or "calls nothing".
+        """
+        self.expect_kind("lparen")
+        tok = self.next()
+        if tok[0] != "word":
+            raise QueryError("NOT needs a node, e.g. NOT (a)<-[:calls]-()")
+        anchor = tok[1]
+        if anchor not in ("a", "b"):
+            raise QueryError(
+                f"NOT anchors on {anchor!r}, which is not a pattern node; "
+                f"use 'a' or 'b'"
+            )
+        if self.accept_kind("colon"):
+            label = self.expect_kind("word").lower()
+            if label not in LABELS:
+                raise QueryError(f"unknown label {label!r}; supported: {', '.join(LABELS)}")
+        self.expect_kind("rparen")
+
+        tok = self.peek()
+        if not (tok and tok[0] in ("leftarrow", "arrow", "dash", "dash1")):
+            return {"anchor": anchor, "rel": None, "direction": "none"}
+        self.next()
+        if not self.accept_kind("lbrack"):
+            raise QueryError(
+                "NOT needs a relationship, e.g. NOT (a)<-[:calls]-()"
+            )
+        self.accept_kind("colon")
+        rel = self.expect_kind("word").lower()
+        if rel not in EDGES:
+            raise QueryError(f"unknown relationship {rel!r}; supported: {', '.join(EDGES)}")
+        self.expect_kind("rbrack")
+
+        direction = "out"
+        if self.accept_kind("leftarrow"):
+            direction = "in"
+        elif self.accept_kind("arrow"):
+            direction = "out"
+        elif self.accept_kind("dash") or self.accept_kind("dash1"):
+            direction = "in"
+        # the far side is anonymous: `()` or `(x)`
+        self.expect_kind("lparen")
+        nxt = self.peek()
+        if nxt and nxt[0] == "word":
+            self.next()
+        self.expect_kind("rparen")
+        return {"anchor": anchor, "rel": rel, "direction": direction}
 
     # ── return ─────────────────────────────────────────────────────
     def parse_return(self) -> tuple[list[dict], int, tuple[str, str] | None]:
@@ -283,6 +337,8 @@ def describe() -> str:
         "  MATCH (a)-[:REL]->(b) RETURN b.name, count(a) AS callers ORDER BY callers DESC\n"
         "      (the plain field is the subject; count() names the other side)\n"
         "  MATCH (a:Label) RETURN count(*) AS total\n"
+        "  MATCH (a:Function) WHERE NOT (a)<-[:calls]-() RETURN a.name, a.file\n"
+        "      (NOT negates a relation: no inbound calls, no outbound calls)\n"
         f"  labels:   {', '.join(LABELS)}\n"
         f"  relations: {', '.join(EDGES)}\n"
         "  fields:   name, file, type, language, line, kind\n"
