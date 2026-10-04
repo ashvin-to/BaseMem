@@ -125,12 +125,13 @@ def _multi_hop(indexer, plan, pattern) -> tuple[str, list]:
     for i, h in enumerate(hops):
         ed, nxt = f"ed{i}", aliases[h["node"]["ident"]]
         prev = aliases["a"] if i == 0 else aliases[hops[i - 1]["node"]["ident"]]
+        rel_sql, rel_ps = _edge_filter(h.get("rels") or [h["rel"]])
         from_parts.append(
             f"JOIN code_edges {ed} ON {ed}.from_symbol_id = {prev}.id "
-            f"AND {ed}.project_id = ? AND {ed}.edge_type = ?"
+            f"AND {ed}.project_id = ? AND {ed}.{rel_sql}"
         )
         from_parts.append(f"JOIN code_symbols {nxt} ON {nxt}.id = {ed}.to_symbol_id")
-        join_params += [indexer.project_id, h["rel"]]
+        join_params += [indexer.project_id] + rel_ps
 
     lab_sql, lab_params = "", []
     for ident, n in (pattern.get("nodes") or {}).items():
@@ -174,6 +175,14 @@ def _multi_hop(indexer, plan, pattern) -> tuple[str, list]:
         + " ORDER BY e1.file_path, e1.start_line LIMIT ?"
     )
     return sql, join_params + [indexer.project_id] + lab_params + where_params + [plan["limit"]]
+
+
+def _edge_filter(rels: list[str]) -> tuple[str, list]:
+    """`edge_type = ?` for one relation, or `IN (...)` for an alternation."""
+    if len(rels) == 1:
+        return "edge_type = ?", [rels[0]]
+    marks = ", ".join("?" for _ in rels)
+    return f"edge_type IN ({marks})", list(rels)
 
 
 def _label(label: str | None, alias: str) -> tuple[str, list]:
@@ -357,6 +366,7 @@ def run(indexer, query: str) -> list[dict]:
             seen.add(col)
             uniq.append(col)
     rel = pattern["rel"]
+    rel_sql, rel_ps = _edge_filter((pattern.get("hops") or [{}])[0].get("rels") or [rel])
     lab_a, ps_a = _label(pattern["a"].get("label"), "e1")
     lab_b, ps_b = _label(b.get("label"), "e2")
     sql_a = f" AND {lab_a}" if lab_a else ""
@@ -375,7 +385,7 @@ def run(indexer, query: str) -> list[dict]:
             "FROM code_symbols e1 "
             f"JOIN code_edges ed ON ed.{join_col} = e1.id "
             "JOIN code_symbols e2 ON e2.id = ed." + ("from_symbol_id" if reverse else "to_symbol_id") + " "
-            "WHERE e1.project_id = ? AND ed.project_id = ? AND ed.edge_type = ?"
+            "WHERE e1.project_id = ? AND ed.project_id = ? AND ed." + rel_sql + " "
             + sql_a + sql_b + where_sql
             + f" GROUP BY {group}{tail} LIMIT ?"
         )
@@ -385,12 +395,12 @@ def run(indexer, query: str) -> list[dict]:
             "FROM code_symbols e1 "
             f"JOIN code_edges ed ON ed.{join_col} = e1.id "
             "JOIN code_symbols e2 ON e2.id = ed." + ("from_symbol_id" if reverse else "to_symbol_id") + " "
-            "WHERE e1.project_id = ? AND ed.project_id = ? AND ed.edge_type = ?"
+            "WHERE e1.project_id = ? AND ed.project_id = ? AND ed." + rel_sql + " "
             + sql_a + sql_b + where_sql
             + (tail or " ORDER BY e1.file_path, e1.start_line")
             + " LIMIT ?"
         )
     rows = indexer.conn.execute(
-        sql, [indexer.project_id, indexer.project_id, rel] + ps_a + ps_b + params + [limit]
+        sql, [indexer.project_id, indexer.project_id] + rel_ps + ps_a + ps_b + params + [limit]
     ).fetchall()
     return [dict(r) for r in rows]

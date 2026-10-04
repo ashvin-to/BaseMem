@@ -42,6 +42,7 @@ _TOKEN = re.compile(
     | (?P<dash>--)
     | (?P<dash1>-)
     | (?P<comma>,)
+    | (?P<pipe>\|)
     | (?P<op>:=~|=~|!=|>=|<=|=|>|<|~)
     | (?P<colon>:)
     | (?P<dot>\.)
@@ -131,6 +132,17 @@ class _Parser:
             if rel not in EDGES:
                 raise QueryError(
                     f"unknown relationship {rel!r}; supported: {', '.join(EDGES)}")
+            # `[:calls|member_calls]` — a real call chain alternates between the
+            # two, so pinning one relation per hop usually finds nothing.
+            while self.accept_kind("pipe"):
+                nxt = self.next()
+                if nxt[0] == "rbrack":
+                    raise QueryError("a trailing '|' has no relationship after it")
+                if nxt[0] != "word" or nxt[1].lower() not in EDGES:
+                    got = nxt[1] if nxt[0] == "word" else nxt[0]
+                    raise QueryError(
+                        f"unknown relationship {got!r}; supported: {', '.join(EDGES)}")
+                rel = f"{rel}|{nxt[1].lower()}"
             self.expect_kind("rbrack")
             if not (self.accept_kind("arrow") or self.accept_kind("dash")
                     or self.accept_kind("dash1") or self.accept_kind("leftarrow")):
@@ -150,6 +162,8 @@ class _Parser:
 
         node["hops"] = hops
         node["rel"] = hops[0]["rel"]
+        for h in hops:
+            h["rels"] = h["rel"].split("|")
         node["b"] = hops[-1]["node"]
         node["nodes"] = {"a": a}
         for i, h in enumerate(hops):
@@ -410,6 +424,10 @@ def describe() -> str:
         "  MATCH (a)-[:REL]->(b) RETURN b.name, count(a) AS callers ORDER BY callers DESC\n"
         "      (the plain field is the subject; count() names the other side)\n"
         "  MATCH (a:Label) RETURN count(*) AS total\n"
+        "  MATCH (a)-[:calls|member_calls]->(m)-[:calls|member_calls]->(b) RETURN a.name\n"
+        "      (a call chain alternates relation types; | lists the allowed ones)\n"
+        "  MATCH (a:Function) WHERE a.file = 'x' OR a.file = 'y' RETURN a.name\n"
+        "  MATCH (a) WHERE a.name IN ['Execute', 'ExecuteC'] RETURN a.name, a.file\n"
         "  MATCH (a:Function) WHERE NOT (a)<-[:calls]-() RETURN a.name, a.file\n"
         "      (NOT negates a relation: no inbound calls, no outbound calls)\n"
         f"  labels:   {', '.join(LABELS)}\n"
