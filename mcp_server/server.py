@@ -196,6 +196,22 @@ def _ensure_code_index(project_root: str, sync: bool = True):
     return index
 
 
+class _NoIndex(RuntimeError):
+    """No index for this root, and building one was refused or failed."""
+
+
+def _open_index_or_message(project_root: str, sync: bool = True):
+    """Open the index, or return None with a message worth showing the caller."""
+    from indexer.lifecycle import AutoIndexRefused
+
+    try:
+        return _ensure_code_index(project_root, sync=sync), ""
+    except AutoIndexRefused as e:
+        return None, str(e)
+    except Exception as e:  # index build failed for any other reason
+        return None, f"code index unavailable for {project_root}: {e}"
+
+
 def _code_freshness(project_root: str) -> str:
     """One-line index freshness, or '' when the index is current."""
     try:
@@ -574,7 +590,9 @@ def code_files(projectRoot: str = "", prefix: str = "", pattern: str = "", limit
             parts.append(f"capped: requested {requested_limit}")
         return "\n".join(parts)
 
-    indexer = _ensure_code_index(projectRoot)
+    indexer, refusal = _open_index_or_message(projectRoot)
+    if refusal:
+        return f"code_files: {refusal}"
     try:
         files = indexer.list_files(prefix=prefix, limit=limit)
         parts = [f"code_files prefix={prefix!r} shown={len(files)} limit={limit}"]
@@ -888,7 +906,9 @@ def code_context(query: str, projectRoot: str = "", limit: int = 10) -> str:
     if not os.path.isdir(projectRoot):
         return f"code_context: directory not found: {projectRoot}"
     limit = _bounded_limit(limit)
-    indexer = _ensure_code_index(projectRoot)
+    indexer, refusal = _open_index_or_message(projectRoot)
+    if refusal:
+        return f"code_context: {refusal}"
     try:
         symbols = []
         try:
