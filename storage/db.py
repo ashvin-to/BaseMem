@@ -18,6 +18,7 @@ Thread-safety: Enabled (check_same_thread=False) for Flask/async use.
 
 import json
 import logging
+import os
 import re
 import sqlite3
 from datetime import datetime
@@ -44,7 +45,7 @@ class StorageManager:
     - Schema versioning: Implicit (schema updates only add new columns/tables)
 
     Typical usage:
-        storage = StorageManager()  # Uses ~/.basemem/basemem.db by default
+        storage = StorageManager()  # Uses $XDG_DATA_HOME/basemem/basemem.db by default
         node = Node(title="Concept", content="...", keywords=["tag1", "tag2"])
         storage.add_node(node)
         results = storage.search_nodes_fts("tag1")
@@ -75,10 +76,10 @@ class StorageManager:
             OSError: If unable to create database directory or file
             sqlite3.DatabaseError: If schema initialization fails
         """
-        # DEFAULT: Use a hidden folder in the user home directory
+        # DEFAULT: XDG data location, matching mcp_server._env_path and the installer
         if db_path is None:
-            home = Path.home()
-            db_dir = home / ".basemem"
+            data_home = os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share")
+            db_dir = Path(data_home) / "basemem"
             db_dir.mkdir(parents=True, exist_ok=True)
             resolved: str | Path = db_dir / "basemem.db"
         else:
