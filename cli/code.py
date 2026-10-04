@@ -449,6 +449,55 @@ def code_find_cli(query, root, dead, verbose, file_path, limit, regex):
         indexer.close()
 
 
+@code.command("unreferenced")
+@click.option('--root', default='.', help='Project root directory')
+@click.option('--limit', default=200, type=int, help='Scan at most this many candidates')
+@click.option('--include-tests', is_flag=True, help='Keep symbols in test paths')
+@click.option('--include-entry-points', is_flag=True, help='Keep main/init/Test style names')
+@click.option('--json', 'as_json', is_flag=True, help='Output as JSON')
+def code_unreferenced(root, limit, include_tests, include_entry_points, as_json):
+    """List symbols with no caller found in this repository.
+
+    Reports absence of a static caller, not deadness: exported library API and
+    reflection are invisible to this check.
+    """
+    from indexer import CODE_DB_FILENAME
+    from indexer.deadcode import unreferenced
+    from indexer.indexer import CodeIndexer
+
+    db_path = os.path.join(os.path.abspath(root), CODE_DB_FILENAME)
+    if not os.path.exists(db_path):
+        click.echo(f"[!] No code index found at {db_path}. Run `mem code init {os.path.abspath(root)}` first.")
+        return
+    indexer = CodeIndexer(os.path.abspath(root))
+    try:
+        result = unreferenced(
+            indexer, limit=limit, include_tests=include_tests,
+            include_entry_points=include_entry_points,
+        )
+    finally:
+        indexer.close()
+
+    if as_json:
+        import json
+        click.echo(json.dumps(result, indent=2))
+        return
+
+    click.echo(
+        f"unreferenced: {result['kept']} symbol(s) "
+        f"from {result['candidates_scanned']} candidate(s)"
+        f"{' [capped]' if result['capped'] else ''}"
+    )
+    click.echo(
+        f"  skipped: {result['skipped_test_paths']} in test paths, "
+        f"{result['skipped_standalone_paths']} in standalone dirs, "
+        f"{result['skipped_entry_points']} entry points"
+    )
+    for s in result["sample"]:
+        click.echo(f"  {s}")
+    click.echo(f"  confidence: {result['confidence']}")
+
+
 @code.command("gquery")
 @click.argument('search')
 @click.option('--root', default='.', help='Project root directory')
