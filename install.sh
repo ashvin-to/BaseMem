@@ -2,7 +2,7 @@
 #
 # BaseMem — standalone installer
 # Usage: curl -fsSL https://example.com/install.sh | bash
-#        bash install.sh --dir ~/.basemem
+#        bash install.sh --dir ~/.local/share/basemem
 #        bash install.sh --version v0.1.0
 #
 set -euo pipefail
@@ -39,6 +39,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/share/basemem}"
+DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/basemem"
 REF="${REQUESTED_VERSION:-main}"
 
 # ── Resolve source directory ──────────────────────────────────────
@@ -84,7 +85,6 @@ fi
 $PYTHON -c 'import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)' ||
   { echo "ERROR: Python 3.10+ required"; exit 1; }
 
-DATA_DIR="$HOME/.basemem"
 mkdir -p "$DATA_DIR/sessions"
 
 if [[ ! -d "$BASE_DIR/venv" ]]; then
