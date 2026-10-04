@@ -11,8 +11,4 @@ PERL_QUERIES = {
         (function_call_expression
             function: (scoped_call_expression) @method) @call
     """,
-    "package": """
-        (package_statement
-            (package)) @symbol
-    """,
 }

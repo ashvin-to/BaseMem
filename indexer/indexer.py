@@ -5,12 +5,17 @@ import logging
 import multiprocessing
 import os
 import sqlite3
+import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
 
-from .parser import CodeParser
-from .schema import ensure_code_schema
+from .parser import CodeParser, _MODEL_ARTIFACT_EXTENSIONS
+from .schema import (
+    create_code_symbol_indexes,
+    drop_code_symbol_indexes,
+    ensure_code_schema,
+)
 
 logger = logging.getLogger("basemem.indexer")
 
@@ -23,6 +28,9 @@ SKIP_DIRS = {
 }
 
 SKIP_EXTENSIONS = {
+    # Trained models and binary blobs. See parser._MODEL_ARTIFACT_EXTENSIONS for
+    # why these are listed rather than relying on the pack not mapping them.
+    *_MODEL_ARTIFACT_EXTENSIONS,
     ".pyc", ".pyo", ".so", ".o", ".a", ".lib", ".dll", ".dylib",
     ".exe", ".bin", ".class", ".jar", ".war",
     ".min.js", ".min.css",
@@ -325,47 +333,52 @@ class CodeIndexer:
         workers = max(1, int(_max_workers or 1))
         use_pool = workers > 1 and len(files) >= _PARALLEL_MIN_FILES
 
-        if use_pool:
-            from concurrent.futures import ProcessPoolExecutor
+        drop_code_symbol_indexes(self.conn)
+        try:
+            if use_pool:
+                from concurrent.futures import ProcessPoolExecutor
 
-            # Python 3.14 defaults to the forkserver start method, which
-            # re-imports __main__ in every worker. That breaks for any caller
-            # whose entry point is not an importable file (a heredoc, an
-            # interactive session, some plugin hosts), and it re-compiles every
-            # tree-sitter query per worker. fork has neither problem here: the
-            # parent is single-threaded at this point, and the worker's own
-            # initialiser rebuilds the parser cache so nothing is inherited.
-            ctx = None
-            if "fork" in multiprocessing.get_all_start_methods():
-                ctx = multiprocessing.get_context("fork")
-            with ProcessPoolExecutor(
-                max_workers=workers, mp_context=ctx, initializer=_worker_init
-            ) as pool:
-                results = pool.map(_parse_one, payloads, chunksize=_PARALLEL_CHUNK)
-                for f, parsed in zip(files, results):
-                    indexed += 1
-                    if parsed is not None:
-                        try:
-                            sym_count, edge_count = self._store_parsed(
-                                str(root), str(f), *parsed
-                            )
-                            all_symbols += sym_count
-                            all_edges += edge_count
-                        except Exception as e:
-                            logger.warning(f"Failed to index {f}: {e}")
+                # Python 3.14 defaults to the forkserver start method, which
+                # re-imports __main__ in every worker. That breaks for any caller
+                # whose entry point is not an importable file (a heredoc, an
+                # interactive session, some plugin hosts), and it re-compiles every
+                # tree-sitter query per worker. fork has neither problem here: the
+                # parent is single-threaded at this point, and the worker's own
+                # initialiser rebuilds the parser cache so nothing is inherited.
+                ctx = None
+                if "fork" in multiprocessing.get_all_start_methods():
+                    ctx = multiprocessing.get_context("fork")
+                with ProcessPoolExecutor(
+                    max_workers=workers, mp_context=ctx, initializer=_worker_init
+                ) as pool:
+                    results = pool.map(_parse_one, payloads, chunksize=_PARALLEL_CHUNK)
+                    for f, parsed in zip(files, results):
+                        indexed += 1
+                        if parsed is not None:
+                            try:
+                                sym_count, edge_count = self._store_parsed(
+                                    str(root), str(f), *parsed
+                                )
+                                all_symbols += sym_count
+                                all_edges += edge_count
+                            except Exception as e:
+                                logger.warning(f"Failed to index {f}: {e}")
+                        if progress_cb:
+                            progress_cb("indexing", indexed, total)
+            else:
+                for f in files:
+                    try:
+                        sym_count, edge_count = self._index_file(str(root), str(f))
+                        indexed += 1
+                        all_symbols += sym_count
+                        all_edges += edge_count
+                    except Exception as e:
+                        logger.warning(f"Failed to index {f}: {e}")
                     if progress_cb:
                         progress_cb("indexing", indexed, total)
-        else:
-            for f in files:
-                try:
-                    sym_count, edge_count = self._index_file(str(root), str(f))
-                    indexed += 1
-                    all_symbols += sym_count
-                    all_edges += edge_count
-                except Exception as e:
-                    logger.warning(f"Failed to index {f}: {e}")
-                if progress_cb:
-                    progress_cb("indexing", indexed, total)
+        finally:
+            # Also on the failure path, so a crash never leaves a db without indexes.
+            create_code_symbol_indexes(self.conn)
 
         # Rebuild FTS index
         self.conn.execute("INSERT INTO code_symbols_fts(code_symbols_fts) VALUES('rebuild')")
@@ -1179,20 +1192,25 @@ class CodeIndexer:
 
     def _build_resolution_maps(self):
         """In-memory maps for scope-aware edge resolution.
-
-        Loaded once, because the previous resolver ran a correlated subquery per
-        edge. Returns (symbols_by_name, methods_by_parent, file_imports).
         """
+        # Interning the repeated columns: 2.6 GiB instead of 4.2 GiB on the kernel.
         symbols_by_name: dict[str, list[dict]] = {}
         for row in self.conn.execute(
             "SELECT id, file_path, symbol_name, symbol_type, language FROM code_symbols "
             "WHERE project_id = ?",
             (self.project_id,),
         ):
-            symbols_by_name.setdefault(row["symbol_name"], []).append(dict(row))
+            symbols_by_name.setdefault(row["symbol_name"], []).append({
+                "id": row["id"],
+                "file_path": sys.intern(row["file_path"]),
+                "symbol_type": sys.intern(row["symbol_type"]),
+                "language": sys.intern(row["language"]),
+            })
 
         methods_by_parent: dict[tuple[str, str], list[dict]] = {}
         methods_by_name: dict[str, list[dict]] = {}
+        # id -> enclosing class name, free from the JOIN already being run.
+        parent_of: dict[int, str] = {}
         for row in self.conn.execute(
             """SELECT cs.id, cs.file_path, cs.symbol_name, cs.symbol_type, cs.language,
                       p.symbol_name AS parent
@@ -1200,7 +1218,14 @@ class CodeIndexer:
                WHERE cs.project_id = ?""",
             (self.project_id,),
         ):
-            rec = dict(row)
+            rec = {
+                "id": row["id"],
+                "file_path": sys.intern(row["file_path"]),
+                "symbol_name": sys.intern(row["symbol_name"]),
+                "symbol_type": sys.intern(row["symbol_type"]),
+                "language": sys.intern(row["language"]),
+            }
+            parent_of[row["id"]] = row["parent"]
             methods_by_parent.setdefault((row["parent"], row["symbol_name"]), []).append(rec)
             methods_by_name.setdefault(row["symbol_name"], []).append(rec)
 
@@ -1252,7 +1277,7 @@ class CodeIndexer:
             file_imports.setdefault(row["file_path"], {})[local] = module
 
         return (symbols_by_name, methods_by_parent, methods_by_name, file_imports,
-                var_types, bases, param_types)
+                var_types, bases, param_types, parent_of)
 
     def _module_to_file(self, module: str, known_files: set[str]) -> str:
         """Map a dotted module path to an indexed file, or '' when unknown."""
@@ -1267,20 +1292,20 @@ class CodeIndexer:
             if candidate in known_files:
                 return candidate
         stem = rel.rsplit("/", 1)[-1]
-        for f in known_files:
-            if Path(f).stem == stem and "/" + stem in ("/" + f, f):
-                return f
-            if Path(f).stem == stem:
-                return f
-        return ""
+        hits = self._files_by_stem(known_files).get(stem)
+        return hits[0] if hits else ""
 
-    def _parent_name(self, symbol_id: int) -> str:
-        row = self.conn.execute(
-            "SELECT p.symbol_name AS parent FROM code_symbols cs "
-            "LEFT JOIN code_symbols p ON cs.parent_id = p.id WHERE cs.id = ?",
-            (symbol_id,),
-        ).fetchone()
-        return (row["parent"] or "") if row else ""
+    def _files_by_stem(self, known_files: set[str]) -> dict[str, tuple[str, ...]]:
+        """Index known files by basename stem, built once per resolve pass."""
+        cache = getattr(self, "_stem_cache", None)
+        if cache is not None and cache[0] is known_files:
+            return cache[1]
+        index: dict[str, list[str]] = {}
+        for f in known_files:
+            index.setdefault(f.rsplit("/", 1)[-1].rsplit(".", 1)[0], []).append(f)
+        out = {k: tuple(v) for k, v in index.items()}
+        self._stem_cache = (known_files, out)
+        return out
 
     @staticmethod
     def _pick(candidates: list[dict]) -> int:
@@ -1313,7 +1338,8 @@ class CodeIndexer:
         return 0
 
     def _resolve_member_call(self, row, imports, methods_by_parent, methods_by_name,
-                              symbols_by_name, known_files, var_types, bases, param_types) -> int:
+                              symbols_by_name, known_files, var_types, bases, param_types,
+                              parent_of) -> int:
         """Resolve `receiver.name()` by looking for a method on that receiver."""
         name = row["to_name"]
         receiver = (row["to_receiver"] or "").strip()
@@ -1359,7 +1385,7 @@ class CodeIndexer:
                 return hit
         # self.foo() — the receiver is the caller's own class
         if receiver == "self" and row["from_symbol_id"]:
-            parent = self._parent_name(row["from_symbol_id"])
+            parent = parent_of.get(row["from_symbol_id"], "")
             if parent:
                 hit = self._method_on_class(parent, name, methods_by_parent, methods_by_name, bases)
                 if hit:
@@ -1403,8 +1429,14 @@ class CodeIndexer:
         call, which is a real answer rather than a gap to hide.
         """
         (symbols_by_name, methods_by_parent, methods_by_name, file_imports,
-         var_types, bases, param_types) = self._build_resolution_maps()
-        known_files = {f["file_path"] for rows in symbols_by_name.values() for f in rows}
+         var_types, bases, param_types, parent_of) = self._build_resolution_maps()
+        # One DISTINCT scan, rather than walking all of symbols_by_name.
+        known_files = {
+            r[0] for r in self.conn.execute(
+                "SELECT DISTINCT file_path FROM code_symbols WHERE project_id = ?",
+                (self.project_id,),
+            )
+        }
 
         rows = self.conn.execute(
             "SELECT id, file_path, from_name, to_name, to_receiver, edge_type, from_symbol_id "
@@ -1421,7 +1453,7 @@ class CodeIndexer:
             if r["edge_type"] == "member_calls":
                 target = self._resolve_member_call(
                     r, imports, methods_by_parent, methods_by_name, symbols_by_name,
-                    known_files, var_types, bases, param_types
+                    known_files, var_types, bases, param_types, parent_of
                 )
             else:
                 target = self._resolve_free_call(r, imports, symbols_by_name, known_files)
