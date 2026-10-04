@@ -51,6 +51,6 @@ PYTHON_QUERIES = {
             name: (relative_import) @name) @import_from
     """,
     "decorator": """
-        (decorator (identifier) @name) @decorator
+        (decorator (identifier) @name) @symbol
     """,
 }
