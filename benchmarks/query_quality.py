@@ -109,14 +109,16 @@ def run_basemem(repo: Path, question: Question, timeout: int = 120) -> dict:
         "types-of-symbol": ["node", "Command", "--root", str(repo)],
         "locate-definition": ["search", "OutOrStdout", "--root", str(repo), "--limit", "10"],
         "unused-or-orphan": [
-            "query",
-            "MATCH (a:Function) WHERE a.caller_count = 0 RETURN a.name, a.file LIMIT 400",
+            "gquery",
+            "MATCH (a)-[:calls]->(b) RETURN b.name, count(a) AS callers "
+            "ORDER BY callers DESC LIMIT 40",
             "--root", str(repo),
         ],
         "file-inventory": ["files", "--root", str(repo), "--tree"],
         "most-connected": [
-            "query",
-            "MATCH (a)-[:calls]->(b) RETURN a.name, a.file LIMIT 400",
+            "gquery",
+            "MATCH (a)-[:calls]->(b) RETURN b.name, b.file, count(a) AS callers "
+            "ORDER BY callers DESC LIMIT 10",
             "--root", str(repo),
         ],
     }[question.qid]
