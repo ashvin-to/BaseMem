@@ -11,7 +11,12 @@ const { mergeSettings, removeHookEntries } = require('./settings.js');
 const BASEMEM_ROOT = process.env.BASEMEM_ROOT || path.resolve(__dirname, '../..');
 const DEFAULT_MCP_PYTHON = path.join(BASEMEM_ROOT, 'venv', 'bin', 'python3');
 const DEFAULT_MCP_SCRIPT = path.join(BASEMEM_ROOT, 'mem-mcp.py');
-const DEFAULT_MCP_DB = path.join(os.homedir(), '.basemem', 'basemem.db');
+// Data lives under XDG, not in a dot-directory in $HOME. Matches the fallback
+// order in mcp_server._env_path so both agree on where the database is.
+const DEFAULT_MCP_DB = path.join(
+  process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share'),
+  'basemem', 'basemem.db'
+);
 
 const INTEGRATION_MANIFEST = JSON.parse(fs.readFileSync(path.join(__dirname, 'integrations.json'), 'utf8'));
 const AGENTS = INTEGRATION_MANIFEST.integrations.map(agent => ({
