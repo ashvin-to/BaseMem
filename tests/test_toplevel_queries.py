@@ -49,20 +49,20 @@ def test_ocaml_locals_are_not_symbols(tmp_path):
     assert "local2" not in got, f"a local let leaked into the symbol table: {sorted(got)}"
 
 
-def test_haskell_do_block_lets_still_leak(tmp_path):
-    """Two known gaps in haskell, pinned so they stay visible.
+def test_haskell_do_block_lets_are_filtered(tmp_path):
+    """A do-block `let` was leaking as a symbol and still is pinned here.
 
-    A do-block `let` is a `bind` not nested inside another `bind`, so the
-    shadowing rule does not catch it -- measured on shellcheck this moved the
-    count only 3,829 -> 3,534, against OCaml's 18,262 -> 6,383. And a
-    parameterised function like `g x = do` is not matched at all, which
-    predates this change.
+    It is a `bind` not nested inside another `bind`, so the shadowing rule did
+    not catch it -- measured on shellcheck this moved the count only 3,829 ->
+    3,534, against OCaml's 18,262 -> 6,383. It was also mis-attributing the
+    calls inside it to the local binding instead of the enclosing function,
+    because `bind` is haskell's only declaration node.
     """
     got = _names("a.hs", HASKELL, tmp_path)
     assert "topLevel" in got, f"top-level binding missing: {sorted(got)}"
-    assert "inner" in got, (
-        "haskell do-block lets are now filtered, so update this test and the "
-        f"notes; got {sorted(got)}"
+    assert "inner" not in got, (
+        "haskell do-block lets are filtered again; if this is deliberate, "
+        f"update the notes. got {sorted(got)}"
     )
 
 
