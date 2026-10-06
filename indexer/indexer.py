@@ -4,6 +4,7 @@ import fnmatch
 import logging
 import multiprocessing
 import os
+import re
 import sqlite3
 import sys
 import time
@@ -46,6 +47,28 @@ CODE_DB_FILENAME = ".basemem.code.db"
 # Below this many files the process pool costs more in start-up than it saves.
 _PARALLEL_MIN_FILES = 24
 _PARALLEL_CHUNK = 8
+
+_REGEXP_CACHE: dict[str, re.Pattern] = {}
+
+
+def _regexp(pattern: str, value) -> int:
+    """SQLite's `X REGEXP Y` calls this as (pattern, value).
+
+    Compiled patterns are cached because a query evaluates the same one once
+    per row, and re.search caches nothing.
+    """
+    if value is None:
+        return 0
+    compiled = _REGEXP_CACHE.get(pattern)
+    if compiled is None:
+        try:
+            compiled = re.compile(pattern)
+        except re.error:
+            return 0
+        if len(_REGEXP_CACHE) > 256:
+            _REGEXP_CACHE.clear()
+        _REGEXP_CACHE[pattern] = compiled
+    return 1 if compiled.search(value) else 0
 
 
 def _worker_init():
@@ -214,6 +237,9 @@ class CodeIndexer:
                 return 1
             return 0
         self.conn.create_function("is_generated", 1, is_generated)
+        # `=~` in a query is a real regex match, not a substring search: a
+        # pattern like '_test\.go$' has to fail on 'contest.go'.
+        self.conn.create_function("regexp", 2, _regexp)
 
         self._ignore_patterns: list[str] = []
         self._negate_patterns: list[str] = []

@@ -43,7 +43,7 @@ _TOKEN = re.compile(
     | (?P<dash1>-)
     | (?P<comma>,)
     | (?P<pipe>\|)
-    | (?P<op>:=~|=~|!=|>=|<=|=|>|<|~)
+    | (?P<op>:=~|=~|!~|!=|>=|<=|=|>|<|~)
     | (?P<colon>:)
     | (?P<dot>\.)
     | (?P<semi>;)
@@ -260,7 +260,7 @@ class _Parser:
             if not self.accept_kind("rbrack"):
                 raise QueryError("IN list is missing its closing bracket")
             return {"ident": ident, "prop": prop, "op": "IN", "values": values}
-        if op in ("=~", "!="):
+        if op in ("=~", "!~", "!="):
             v = self.next()
             if v[0] != "str":
                 raise QueryError(f"{op} expects a quoted string")
@@ -418,7 +418,7 @@ def parse(query: str) -> dict:
 def describe() -> str:
     return (
         "code_query subset:\n"
-        "  MATCH (a) [WHERE a.name = 'x' | a.name =~ 're' | a.name ~ 'x']\n"
+        "  MATCH (a) [WHERE a.name = 'x' | a.name =~ 're' | a.name !~ 're' | a.name ~ 'x']\n"
         "  MATCH (a:Label) RETURN a.name, a.file LIMIT n\n"
         "  MATCH (a)-[:REL]->(b) [WHERE ...] RETURN a.name, b.name\n"
         "  MATCH (a)-[:REL]->(b) RETURN b.name, count(a) AS callers ORDER BY callers DESC\n"
