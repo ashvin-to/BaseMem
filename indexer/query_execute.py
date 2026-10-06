@@ -31,12 +31,6 @@ _SHORTHAND = {
 _REL_COLUMN = {"a": "from_symbol_id", "b": "to_symbol_id"}
 
 
-def _regex_core(pattern: str) -> str:
-    """Longest literal run in a regex, used to pre-filter with LIKE."""
-    parts = [p for p in re.split(r"[.*+?^$()\[\]{}|\\]", pattern) if len(p) >= 2]
-    return max(parts, key=len) if parts else pattern.strip(".*")
-
-
 def _join(index: int, joiner: str) -> str:
     """Leading operator for each WHERE clause.
 
@@ -75,7 +69,9 @@ def _where(where: dict, alias: str) -> tuple[str, list]:
         marks = ", ".join("?" for _ in values)
         return f"{col} IN ({marks})", list(values)
     if op == "=~":
-        return f"{col} LIKE ?", [f"%{_regex_core(where['value'])}%"]
+        return f"{col} REGEXP ?", [where["value"]]
+    if op == "!~":
+        return f"{col} NOT REGEXP ?", [where["value"]]
     if op == "~":
         return f"{col} LIKE ?", [f"%{where['value']}%"]
     if op == "!=":
