@@ -79,7 +79,9 @@ QUESTIONS: list[Question] = [
         qid="unused-or-orphan",
         ask="Find a function defined in this repo but never called from within it",
         why="Negative query. Needs NOT, which neither tool expressed before this.",
-        must_match_any=[".go"],
+        # Verified by grep: these have a doc comment and a definition, no call
+        # site. Upstream even carries "FIXME Gt is unused by cobra" on some.
+        must_match_any=["OnInitialize", "OnFinalize", "appendIfNotPresent", "Gt"],
         forbid=[],
     ),
     Question(
@@ -99,7 +101,7 @@ QUESTIONS: list[Question] = [
         qid="two-hop-reach",
         ask="Which functions does Execute reach within two hops",
         why="Multi-hop traversal. Needs a path pattern, not a single relation.",
-        must_match_any=[".go"],
+        must_match_any=["HasParent", "Traverse", "checkCommandGroups", "Find"],
     ),
     Question(
         qid="either-or",
@@ -148,7 +150,8 @@ def run_basemem(repo: Path, question: Question, timeout: int = 120) -> dict:
         "locate-definition": ["search", "OutOrStdout", "--root", str(repo), "--limit", "10"],
         "unused-or-orphan": [
             "gquery",
-            "MATCH (a:Function) WHERE NOT (a)<-[:calls]-() RETURN a.name, a.file LIMIT 40",
+            r"MATCH (a:Function) WHERE NOT (a)<-[:calls]-() "
+            r"AND a.file !~ '_test\.go$' RETURN a.name, a.file LIMIT 40",
             "--root", str(repo),
         ],
         "file-inventory": ["files", "--root", str(repo), "--tree"],
@@ -160,7 +163,8 @@ def run_basemem(repo: Path, question: Question, timeout: int = 120) -> dict:
         ],
         "two-hop-reach": [
             "gquery",
-            "MATCH (a)-[:calls]->()-[:calls]->() RETURN a.name, a.file LIMIT 40",
+            "MATCH (a)-[:calls|member_calls]->(m)-[:calls|member_calls]->(b) "
+            "WHERE a.name = 'Execute' RETURN a.name, a.file, m.name, b.name LIMIT 40",
             "--root", str(repo),
         ],
         "either-or": [
@@ -178,7 +182,7 @@ def run_basemem(repo: Path, question: Question, timeout: int = 120) -> dict:
         "cross-file-calls": [
             "gquery",
             "MATCH (a)-[:calls]->(b) WHERE a.file = 'command.go' "
-            "AND b.file = 'cobra.go' RETURN a.name, b.name LIMIT 40",
+            "AND b.file = 'cobra.go' RETURN a.name, b.name, b.file LIMIT 40",
             "--root", str(repo),
         ],
         "most-called-files": [
@@ -208,7 +212,8 @@ def run_cbm(repo: Path, question: Question, timeout: int = 180) -> dict:
             {"project": project, "name_pattern": "Execute", "include_connected": True, "limit": 30})],
         "types-of-symbol": ["query_graph", json.dumps({
             "project": project, "format": "json", "max_rows": 40,
-            "query": "MATCH (c:Class)-[:DEFINES]->(m) RETURN c.name, m.name, m.file"})],
+            "query": ("MATCH (s:Struct)-[:DEFINES_METHOD]->(m) WHERE s.name = 'Command' "
+                      "RETURN s.name, m.name, m.file")})],
         "locate-definition": ["search_graph", json.dumps(
             {"project": project, "name_pattern": "OutOrStdout", "limit": 10})],
         "unused-or-orphan": ["query_graph", json.dumps({
@@ -224,25 +229,27 @@ def run_cbm(repo: Path, question: Question, timeout: int = 180) -> dict:
                       "ORDER BY callers DESC")})],
         "two-hop-reach": ["query_graph", json.dumps({
             "project": project, "format": "json", "max_rows": 40,
-            "query": ("MATCH (a)-[:CALLS*1..2]->(b) RETURN a.name, a.file, b.name")})],
+            "query": ("MATCH (a)-[:CALLS*1..2]->(b) WHERE a.name = 'Execute' "
+                      "RETURN a.name, a.file, b.name")})],
         "either-or": ["query_graph", json.dumps({
             "project": project, "format": "json", "max_rows": 40,
             "query": ("MATCH (a:Function) WHERE a.file = 'command.go' OR a.file = 'args.go' "
                       "RETURN a.name, a.file")})],
         "named-set": ["query_graph", json.dumps({
             "project": project, "format": "json", "max_rows": 10,
-            "query": ("MATCH (a:Function) WHERE a.name IN ['Execute','ExecuteC',"
+            "query": ("MATCH (a) WHERE a.name IN ['Execute','ExecuteC',"
                       "'ExecuteContext'] RETURN a.name, a.file")})],
         "cross-file-calls": ["query_graph", json.dumps({
             "project": project, "format": "json", "max_rows": 40,
-            "query": ("MATCH (a)-[:IMPLEMENTS|EXTENDS]->(b) RETURN a.name, b.name, b.file")})],
+            "query": ("MATCH (a)-[:CALLS]->(b) WHERE a.file = 'command.go' "
+                      "AND b.file = 'cobra.go' RETURN a.name, b.name, b.file")})],
         "most-called-files": ["query_graph", json.dumps({
             "project": project, "format": "json", "max_rows": 20,
-            "query": ("MATCH (a:Function) WHERE a.file = 'site.go' RETURN a.name, a.file")})],
+            "query": ("MATCH (a)<-[:CALLS]-(b) RETURN a.file, count(b) AS callers "
+                      "ORDER BY callers DESC")})],
         "multi-file-filter": ["query_graph", json.dumps({
             "project": project, "format": "json", "max_rows": 10,
-            "query": ("MATCH (a)-[:IMPORTS]->(b) RETURN a.file, count(b) AS deps "
-                      "ORDER BY deps DESC")})],
+            "query": "MATCH (a:Function) WHERE a.file = 'command.go' RETURN a.name, a.file"})],
     }[question.qid]
     return _run(cmd + script, timeout=timeout)
 
