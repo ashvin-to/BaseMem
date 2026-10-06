@@ -117,25 +117,52 @@ class _Parser:
         node: dict = {"a": a}
 
         tok = self.peek()
-        if not (tok and tok[0] in ("arrow", "dash", "dash1")):
+        if not (tok and tok[0] in ("arrow", "dash", "dash1", "leftarrow")):
             return node
 
-        self.next()  # the tokenizer already matched the whole '--' where present
-        self.expect_kind("lbrack")
-        self.accept_kind("colon")  # both [:REL] and [REL] are written in practice
-        rel = self.expect_kind("word").lower()
-        if rel not in EDGES:
-            raise QueryError(f"unknown relationship {rel!r}; supported: {', '.join(EDGES)}")
-        self.expect_kind("rbrack")
-        self.expect_kind("arrow")
-        self.expect_kind("lparen")
-        b = self._node()
-        self.expect_kind("rparen")
-        node["rel"] = rel
-        node["b"] = b
+        # A chain: (a)-[:calls]->(b)-[:calls]->(c). A node may be anonymous, `()`,
+        # in which case it gets a synthetic name so RETURN can still address it.
+        hops: list[dict] = []
+        while True:
+            self.next()
+            self.expect_kind("lbrack")
+            self.accept_kind("colon")  # both [:REL] and [REL] are written in practice
+            rel = self.expect_kind("word").lower()
+            if rel not in EDGES:
+                raise QueryError(
+                    f"unknown relationship {rel!r}; supported: {', '.join(EDGES)}")
+            self.expect_kind("rbrack")
+            if not (self.accept_kind("arrow") or self.accept_kind("dash")
+                    or self.accept_kind("dash1") or self.accept_kind("leftarrow")):
+                raise QueryError(
+                    "a relationship needs an arrow, as in -[:calls]->()")
+            self.expect_kind("lparen")
+            target = self._node()
+            self.expect_kind("rparen")
+            hops.append({"rel": rel, "node": target})
+            if not target["ident"]:
+                target["ident"] = f"h{len(hops)}"
+                target["anon"] = True
+            nxt = self.peek()
+            if nxt and nxt[0] in ("arrow", "dash", "dash1", "leftarrow"):
+                continue
+            break
+
+        node["hops"] = hops
+        node["rel"] = hops[0]["rel"]
+        node["b"] = hops[-1]["node"]
+        node["nodes"] = {"a": a}
+        for i, h in enumerate(hops):
+            node["nodes"][h["node"]["ident"]] = h["node"]
         return node
 
     def _node(self) -> dict:
+        """A pattern node: `(name)`, `(name:Label)`, or the anonymous `()`."""
+        tok = self.peek()
+        if tok is None:
+            raise QueryError("unexpected end of query")
+        if tok[0] == "rparen":
+            return {"ident": None, "anon": True}
         ident = self.expect_kind("word")
         node: dict = {"ident": ident}
         if self.accept_kind("colon"):
@@ -150,9 +177,35 @@ class _Parser:
         return node
 
     # ── where ──────────────────────────────────────────────────────
-    def parse_where(self, default_ident: str) -> dict | None:
+    def parse_where(self, default_ident: str) -> tuple[list[dict], str] | None:
+        """`WHERE a AND b OR c` into (clauses, joiner).
+
+        Only one joiner may appear. Mixing them needs parentheses, which this
+        subset does not have, so it is rejected rather than resolved by a
+        precedence the author did not intend.
+        """
         if not self.accept_word("WHERE"):
             return None
+        clauses = [self._where_clause(default_ident)]
+        joiner = None
+        while True:
+            if self.accept_word("AND"):
+                found = "AND"
+            elif self.accept_word("OR"):
+                found = "OR"
+            else:
+                break
+            if joiner is None:
+                joiner = found
+            elif found != joiner:
+                raise QueryError(
+                    "mixing AND with OR needs parentheses, which this subset "
+                    "does not support; use one joiner"
+                )
+            clauses.append(self._where_clause(default_ident))
+        return clauses, joiner or "AND"
+
+    def _where_clause(self, default_ident: str) -> dict:
         if self.accept_word("NOT"):
             return {"not": self._negated_pattern(default_ident)}
         ident = self.expect_kind("word")
@@ -168,11 +221,31 @@ class _Parser:
                 raise QueryError(":= expects a property name")
             prop, op, value = field, ":=", tok[1]
         else:
-            if tok[0] not in ("eq", "op"):
+            # `IN` arrives as a word rather than an operator token, since the
+            # tokenizer has no keyword class; accept it as one here.
+            if tok[0] == "word" and tok[1].upper() == "IN":
+                tok = ("op", "IN")
+            elif tok[0] not in ("eq", "op"):
                 raise QueryError(f"expected a comparison, got {tok[1]!r}")
             prop, op = field, tok[1]
         if op == ":=":
             return {"ident": ident, "prop": prop, "op": op, "value": self._literal()}
+        if op == "IN":
+            if not self.accept_kind("lbrack"):
+                raise QueryError("IN expects a list, e.g. IN ['a', 'b']")
+            if self.accept_kind("rbrack"):
+                raise QueryError("IN needs at least one value, e.g. IN ['a', 'b']")
+            values = []
+            while True:
+                v = self.next()
+                if v[0] not in ("str", "word", "num"):
+                    raise QueryError(f"IN expects quoted values, got {v[1]!r}")
+                values.append(v[1][1:-1] if v[0] == "str" else v[1])
+                if not self.accept_kind("comma"):
+                    break
+            if not self.accept_kind("rbrack"):
+                raise QueryError("IN list is missing its closing bracket")
+            return {"ident": ident, "prop": prop, "op": "IN", "values": values}
         if op in ("=~", "!="):
             v = self.next()
             if v[0] != "str":
@@ -313,15 +386,15 @@ def parse(query: str) -> dict:
     if not p.accept_word("MATCH"):
         raise QueryError("query must start with MATCH")
     pattern = p.parse_pattern()
-    where_a = p.parse_where("a")
-    where_b = p.parse_where("b") if "b" in pattern else None
+    where = p.parse_where("a")
     returns, limit, order = p.parse_return()
     leftover = p.peek()
     if leftover is not None:
         raise QueryError(f"unsupported trailing input near {leftover[1]!r}")
     return {
         "pattern": pattern,
-        "where": [w for w in (where_a, where_b) if w],
+        "where": where[0] if where else [],
+        "where_joiner": where[1] if where else "AND",
         "returns": returns,
         "limit": limit,
         "order": order,
