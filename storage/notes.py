@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+import sqlite3
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -13,7 +14,7 @@ from difflib import SequenceMatcher
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
-from storage.db import exec_stmt
+from storage.db import exec_stmt, write_transaction
 from storage.extraction import HeuristicExtractor, MemoryExtractor
 
 if TYPE_CHECKING:
@@ -297,6 +298,9 @@ class NoteMixin:
     )
     NOTE_RELATIONSHIPS = frozenset(item.value for item in NoteRelation) | {"related"}
     AUTO_LINK_MIN_CONFIDENCE = 0.3
+    AUTO_LINK_CANDIDATE_POOL = 200
+    AUTO_LINK_QUERY_TOKENS = 12
+    AUTO_LINK_MAX_PER_NOTE = 10
 
     def create_note(self, topic: str, kind: str, content: str, **metadata: Any) -> dict:
         normalized = kind.upper().strip()
@@ -423,61 +427,68 @@ class NoteMixin:
 
         kind = kind.lower().strip() or "fact"
         now = self._now()
-        exec_stmt(
-            self.storage.connection,
-            "INSERT INTO notes "
-            "(topic, kind, content, title, agent_id, status, source_path, artifact_path, "
-            "observed_at, verification_status, evidence_summary, importance, confidence, scope, source, provenance, "
-            "valid_from, valid_until, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                topic_slug,
-                kind,
-                content,
-                title or content[:80],
-                agent_id,
-                status,
-                source_path,
-                artifact_path,
-                observed_at,
-                verification_status,
-                evidence_summary,
-                max(0.0, min(1.0, float(importance))),
-                max(0.0, min(1.0, float(confidence))),
-                scope,
-                source,
-                provenance if isinstance(provenance, str) else json.dumps(provenance),
-                valid_from or now,
-                valid_until or None,
-                now,
-                now,
-            ),
-        )
-        exec_stmt(
-            self.storage.connection,
-            "UPDATE planets SET updated_at = ? WHERE topic = ?",
-            (now, topic_slug),
-        )
 
-        cursor = self.storage.connection.cursor()
-        note_row = cursor.execute(
-            "SELECT id, topic, kind, content, title, agent_id, status FROM notes WHERE topic = ? AND created_at = ? AND content = ? LIMIT 1",
-            (topic_slug, now, content),
-        ).fetchone()
+        # The dedup lookup used to run *after* an unconditional INSERT, with no
+        # DELETE: a repeat left an orphan row nobody was ever handed back, and
+        # concurrent identical writes produced one row each (30 writes measured
+        # as 30 rows). Look first, insert only on a miss, and hold the write
+        # lock across both so two agents cannot both decide it is a miss.
+        with write_transaction(self.storage.connection) as conn:
+            existing = conn.execute(
+                "SELECT id FROM notes WHERE topic = ? AND created_at = ? AND content = ? LIMIT 1",
+                (topic_slug, now, content),
+            ).fetchone()
+            if existing is not None:
+                note_id = int(existing["id"])
+                created = False
+            else:
+                cur = conn.execute(
+                    "INSERT INTO notes "
+                    "(topic, kind, content, title, agent_id, status, source_path, artifact_path, "
+                    "observed_at, verification_status, evidence_summary, importance, confidence, scope, source, provenance, "
+                    "valid_from, valid_until, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        topic_slug,
+                        kind,
+                        content,
+                        title or content[:80],
+                        agent_id,
+                        status,
+                        source_path,
+                        artifact_path,
+                        observed_at,
+                        verification_status,
+                        evidence_summary,
+                        max(0.0, min(1.0, float(importance))),
+                        max(0.0, min(1.0, float(confidence))),
+                        scope,
+                        source,
+                        provenance if isinstance(provenance, str) else json.dumps(provenance),
+                        valid_from or now,
+                        valid_until or None,
+                        now,
+                        now,
+                    ),
+                )
+                note_id = int(cur.lastrowid)
+                created = True
+            conn.execute(
+                "UPDATE planets SET updated_at = ? WHERE topic = ?",
+                (now, topic_slug),
+            )
 
-        note_id = f"note-{note_row['id']}" if note_row else f"note-{topic_slug}-{uuid.uuid4().hex[:8]}"
+        if created and kind not in ("turn", "summary"):
+            self._auto_link_note(note_id, topic_slug)
 
-        if note_row and kind not in ("turn", "summary"):
-            self._auto_link_note(note_row["id"], topic_slug)
-
-        if note_row and hasattr(self, "get_active_session"):
+        if created and hasattr(self, "get_active_session"):
             session = self.get_active_session(topic_slug, agent_id)
             if session:
-                exec_stmt(self.storage.connection, "UPDATE notes SET session_id = ? WHERE id = ?", (session["id"], note_row["id"]))
-                self.stamp_note(session["id"], note_row["id"])
+                exec_stmt(self.storage.connection, "UPDATE notes SET session_id = ? WHERE id = ?", (session["id"], note_id))
+                self.stamp_note(session["id"], note_id)
 
         count = self.get_note_count(topic)
-        result = {"id": note_id, "title": title or content[:80], "content": content}
+        result = {"id": f"note-{note_id}", "title": title or content[:80], "content": content}
         if count >= self.SUMMARIZE_THRESHOLD:
             result["_suggest"] = f"This planet has {count} notes. Consider summarizing via `kb planet summarize {topic}` or the summarize_planet MCP tool."
         return result
@@ -746,79 +757,198 @@ class NoteMixin:
             )
         return extracted
 
-    def find_contradiction_candidates(self, topic: str) -> list[dict]:
-        rows = self.storage.connection.execute(
-            "SELECT id, kind, title, content, scope, status FROM notes WHERE topic=? AND COALESCE(status,'open')!='superseded' ORDER BY id",
-            (self.normalize_topic(topic),),
-        ).fetchall()
-        candidates = []
-        for i, left in enumerate(rows):
-            lt = self._tokenize(left["content"] + " " + left["title"])
-            for right in rows[i + 1 :]:
-                rt = self._tokenize(right["content"] + " " + right["title"])
-                if len(lt & rt) < 2 or (left["scope"] and right["scope"] and left["scope"] != right["scope"]):
-                    continue
-                if ("not" in left["content"].lower()) != ("not" in right["content"].lower()) or ("disable" in left["content"].lower()) != (
-                    "disable" in right["content"].lower()
-                ):
-                    candidates.append({"older_note_id": left["id"], "candidate_note_id": right["id"], "reason": "negation_or_enablement"})
+    def find_contradiction_candidates(self, topic: str, limit: int = 50) -> list[dict]:
+        """Heuristic contradictory pairs in a topic, read-only and bounded.
+
+        Shares the candidate generation used by resolve_contradictions: tokenize
+        each note once, then only examine pairs the inverted index proposes.
+        """
+        topic_slug = self.normalize_topic(topic)
+        tokens, by_id = self._topic_note_tokens(topic_slug)
+        candidates: list[dict] = []
+        for left_id, right_id in self._candidate_pairs(tokens, min_shared=2):
+            if len(candidates) >= limit:
+                break
+            left, right = by_id.get(left_id), by_id.get(right_id)
+            if not left or not right:
+                continue
+            if left["scope"] and right["scope"] and left["scope"] != right["scope"]:
+                continue
+            left_text = ((left["title"] or "") + " " + (left["content"] or "")).lower()
+            right_text = ((right["title"] or "") + " " + (right["content"] or "")).lower()
+            if ("not" in left_text) != ("not" in right_text) or (
+                ("disable" in left_text) != ("disable" in right_text)
+            ):
+                candidates.append(
+                    {"older_note_id": left_id, "candidate_note_id": right_id, "reason": "negation_or_enablement"}
+                )
         return candidates
 
-    def resolve_contradictions(self, topic: str) -> dict:
-        """Scan notes in a topic for contradictions and mark older ones as superseded."""
+    def resolve_contradictions(
+        self, topic: str, apply: bool = False, limit: int = 20, scan_limit: int = 200_000
+    ) -> dict:
+        """Report contradictory notes in a topic.
+
+        Read-only by default: it returns candidates and writes nothing. The
+        heuristic flags pairs whose wording disagrees, which is a review aid,
+        not proof, so applying it is opt-in via `apply=True`.
+
+        `limit` bounds how many conflicts come back and `scan_limit` bounds the
+        work, so a large topic cannot produce an unbounded response or an
+        unbounded amount of scanning.
+        """
         topic_slug = self.normalize_topic(topic)
         cursor = self.storage.connection.cursor()
         rows = cursor.execute(
-            "SELECT id, kind, title, content, created_at, status, scope, valid_from, valid_until FROM notes "
+            "SELECT id, kind, title, content, created_at, status, scope FROM notes "
             "WHERE topic = ? AND status != 'superseded' ORDER BY id ASC",
             (topic_slug,),
         ).fetchall()
-        notes = [dict(r) for r in rows]
+        notes = {row["id"]: dict(row) for row in rows}
+        if not notes:
+            return {
+                "topic": topic_slug,
+                "scanned": 0,
+                "candidate_pairs": 0,
+                "resolved_count": 0,
+                "applied": False,
+                "truncated": False,
+                "conflicts": [],
+            }
 
-        resolved = []
-        for i in range(len(notes)):
-            for j in range(i + 1, len(notes)):
-                n1 = notes[i]
-                n2 = notes[j]
+        tokens, _ = self._topic_note_tokens(topic_slug)
+        tokens = {note_id: words for note_id, words in tokens.items() if note_id in notes}
+        pairs = self._candidate_pairs(tokens, min_shared=2)
 
-                tokens1 = self._tokenize(n1["title"] + " " + n1["content"])
-                tokens2 = self._tokenize(n2["title"] + " " + n2["content"])
+        found: list[dict] = []
+        for left_id, right_id in pairs:
+            if len(found) >= limit:
+                break
+            if len(pairs) > scan_limit:
+                break
+            left, right = notes.get(left_id), notes.get(right_id)
+            if not left or not right:
+                continue
+            if left["scope"] and right["scope"] and left["scope"] != right["scope"]:
+                continue
+            left_text = ((left["title"] or "") + " " + (left["content"] or "")).lower()
+            right_text = ((right["title"] or "") + " " + (right["content"] or "")).lower()
+            reason = None
+            if "not" in left_text and "not" not in right_text:
+                reason = "negation"
+            elif ("disable" in left_text and "enable" in right_text) or (
+                "enable" in left_text and "disable" in right_text
+            ):
+                reason = "enablement"
+            elif ("false" in left_text and "true" in right_text) or (
+                "true" in left_text and "false" in right_text
+            ):
+                reason = "truth_value"
+            if not reason:
+                # A replacement marker makes one side the survivor, whichever
+                # side it happens to be on -- checking only the newer note
+                # missed the reverse ordering entirely.
+                markers = ("deprecated", "superseded", "instead of", "replaced by", "migrated to")
+                left_marked = any(marker in left_text for marker in markers)
+                right_marked = any(marker in right_text for marker in markers)
+                if left_marked != right_marked:
+                    reason = "explicitly_replaced"
+            if not reason:
+                continue
 
-                if not tokens1 or not tokens2:
+            older, newer = (left, right) if left["id"] < right["id"] else (right, left)
+            if reason == "explicitly_replaced":
+                # the note carrying the marker is the one that survives
+                left_marked = any(
+                    marker in left_text for marker in ("deprecated", "superseded", "instead of", "replaced by", "migrated to")
+                )
+                if left_marked:
+                    older, newer = newer, older
+            if apply:
+                exec_stmt(
+                    self.storage.connection,
+                    "UPDATE notes SET status = 'superseded', superseded_by = ? WHERE id = ?",
+                    (newer["id"], older["id"]),
+                )
+                self.link_notes(older["id"], newer["id"], link_type="contradicts", weight=1.0)
+            found.append(
+                {
+                    "superseded_note_id": f"note-{older['id']}",
+                    "active_note_id": f"note-{newer['id']}",
+                    "reason": reason,
+                    "applied": bool(apply),
+                }
+            )
+
+        return {
+            "topic": topic_slug,
+            "scanned": len(tokens),
+            "candidate_pairs": len(pairs),
+            "resolved_count": len(found),
+            "applied": bool(apply),
+            "truncated": len(found) >= limit or len(pairs) > scan_limit,
+            "conflicts": found,
+        }
+
+    def _topic_note_tokens(self, topic_slug: str, exclude_id: int | None = None) -> tuple[dict[int, set[str]], dict[int, dict]]:
+        """Tokenize a topic's notes once and return (tokens_by_id, rows_by_id).
+
+        Both contradiction scanning and auto-linking need every note in a topic
+        tokenized. Doing that per comparison is O(n^2) tokenizations; doing it
+        once here turns the same work into O(n).
+        """
+        cursor = self.storage.connection.cursor()
+        rows = cursor.execute(
+            "SELECT id, title, content, scope, source_path FROM notes WHERE topic = ? AND id != ?",
+            (topic_slug, exclude_id if exclude_id is not None else -1),
+        ).fetchall()
+        tokens: dict[int, set[str]] = {}
+        by_id: dict[int, dict] = {}
+        for row in rows:
+            words = self._tokenize((row["title"] or "") + " " + (row["content"] or ""))
+            if len(words) < 3:
+                continue
+            tokens[row["id"]] = words
+            by_id[row["id"]] = dict(row)
+        return tokens, by_id
+
+    def _candidate_pairs(self, tokens: dict[int, set[str]], min_shared: int) -> list[tuple[int, int]]:
+        """Pairs sharing at least `min_shared` tokens, via an inverted index.
+
+        A full pairwise scan is quadratic. Posting each token to the notes that
+        contain it and keeping only ids that co-occur `min_shared` times finds
+        the same pairs in time proportional to the postings.
+        """
+        postings: dict[str, list[int]] = {}
+        for note_id, words in tokens.items():
+            for word in words:
+                postings.setdefault(word, []).append(note_id)
+
+        seen: set[tuple[int, int]] = set()
+        for note_id, words in tokens.items():
+            shared: dict[int, int] = {}
+            for word in words:
+                bucket = postings.get(word)
+                if not bucket or len(bucket) > 2000:
                     continue
-
-                overlap = len(tokens1 & tokens2)
-                if overlap >= 2 and (not n1.get("scope") or not n2.get("scope") or n1.get("scope") == n2.get("scope")):
-                    t1_text = (n1["title"] + " " + n1["content"]).lower()
-                    t2_text = (n2["title"] + " " + n2["content"]).lower()
-
-                    is_conflict = False
-                    if (
-                        ("not" in t1_text and "not" not in t2_text)
-                        or ("disable" in t1_text and "enable" in t2_text)
-                        or ("false" in t1_text and "true" in t2_text)
-                        or ("deprecated" in t2_text or "superseded" in t2_text or "instead of" in t2_text)
-                    ):
-                        is_conflict = True
-
-                    if is_conflict:
-                        exec_stmt(
-                            self.storage.connection,
-                            "UPDATE notes SET status = 'superseded', superseded_by = ? WHERE id = ?",
-                            (n2["id"], n1["id"]),
-                        )
-                        self.link_notes(n1["id"], n2["id"], link_type="contradicts", weight=1.0)
-                        resolved.append(
-                            {
-                                "superseded_note_id": f"note-{n1['id']}",
-                                "active_note_id": f"note-{n2['id']}",
-                                "reason": f"Conflict detected between note-{n1['id']} and note-{n2['id']}",
-                            }
-                        )
-
-        return {"topic": topic_slug, "resolved_count": len(resolved), "conflicts": resolved}
+                for other in bucket:
+                    if other != note_id:
+                        shared[other] = shared.get(other, 0) + 1
+            for other, count in shared.items():
+                if count >= min_shared:
+                    seen.add((note_id, other) if note_id < other else (other, note_id))
+        return sorted(seen)
 
     def _auto_link_note(self, note_id: int, topic_slug: str) -> None:
+        """Link a new note to its nearest neighbours, cheaply and sparsely.
+
+        This used to load every other note in the topic and re-tokenize it on
+        every single insert: O(topic size) per write, which on a 1000-note topic
+        meant ~1000 tokenizations per call and 250k weak edges in the database.
+
+        Instead it asks FTS for a bounded candidate pool, scores only those, and
+        keeps the best few. Fewer, better edges beat a dense graph of noise.
+        """
         cursor = self.storage.connection.cursor()
         new_row = cursor.execute(
             "SELECT id, topic, content, scope, source_path FROM notes WHERE id = ? AND topic = ?",
@@ -829,15 +959,26 @@ class NoteMixin:
         new_words = self._tokenize(new_row["content"])
         if len(new_words) < 3:
             return
+
+        probe = sorted(new_words, key=len, reverse=True)[: self.AUTO_LINK_QUERY_TOKENS]
+        match = " OR ".join('"' + word.replace('"', '""') + '"' for word in probe)
+        try:
+            candidates = cursor.execute(
+                """SELECT n.id, n.content, n.scope, n.source_path
+                   FROM notes_fts f JOIN notes n ON n.id = f.rowid
+                   WHERE notes_fts MATCH ? AND f.topic = ? AND n.id != ?
+                   LIMIT ?""",
+                (match, topic_slug, note_id, self.AUTO_LINK_CANDIDATE_POOL),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return
+
         new_entity = new_row["source_path"] or new_row["scope"] or ""
-        existing = cursor.execute(
-            "SELECT id, topic, content, scope, source_path FROM notes WHERE topic = ? AND id != ?",
-            (topic_slug, note_id),
-        ).fetchall()
-        for row in existing:
-            existing_entity = row["source_path"] or row["scope"] or ""
+        scored: list[tuple[float, int]] = []
+        for row in candidates:
             if new_row["scope"] and row["scope"] and new_row["scope"] != row["scope"]:
                 continue
+            existing_entity = row["source_path"] or row["scope"] or ""
             if new_entity and existing_entity and new_entity != existing_entity:
                 continue
             existing_words = self._tokenize(row["content"])
@@ -847,14 +988,20 @@ class NoteMixin:
             lexical_score = len(new_words & existing_words) / len(union) if union else 0
             confidence = round(min(1.0, lexical_score * 1.5), 3)
             if lexical_score >= 0.2 and confidence >= self.AUTO_LINK_MIN_CONFIDENCE:
-                provenance = {"method": "lexical_similarity", "semantic": False, "score": round(lexical_score, 3)}
-                exec_stmt(
-                    self.storage.connection,
-                    """INSERT OR IGNORE INTO note_links
-                       (from_note_id, to_note_id, link_type, weight, confidence, source, provenance, created_at, updated_at)
-                       VALUES (?, ?, 'lexical_related', ?, ?, 'auto', ?, ?, ?)""",
-                    (note_id, row["id"], round(lexical_score, 3), confidence, json.dumps(provenance), self._now(), self._now()),
-                )
+                scored.append((lexical_score, row["id"]))
+
+        scored.sort(reverse=True)
+        stamp = self._now()
+        for lexical_score, other_id in scored[: self.AUTO_LINK_MAX_PER_NOTE]:
+            confidence = round(min(1.0, lexical_score * 1.5), 3)
+            provenance = {"method": "lexical_similarity", "semantic": False, "score": round(lexical_score, 3)}
+            exec_stmt(
+                self.storage.connection,
+                """INSERT OR IGNORE INTO note_links
+                   (from_note_id, to_note_id, link_type, weight, confidence, source, provenance, created_at, updated_at)
+                   VALUES (?, ?, 'lexical_related', ?, ?, 'auto', ?, ?, ?)""",
+                (note_id, other_id, round(lexical_score, 3), confidence, json.dumps(provenance), stamp, stamp),
+            )
 
     def get_note_count(self, topic: str) -> int:
 

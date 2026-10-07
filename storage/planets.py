@@ -8,7 +8,7 @@ import sqlite3
 from typing import TYPE_CHECKING, Any
 
 from models import Node, NodeType
-from storage.db import exec_stmt
+from storage.db import exec_stmt, write_transaction
 
 if TYPE_CHECKING:
     from storage.db import StorageManager
@@ -205,66 +205,69 @@ class PlanetMixin:
         handoff: str | None = None,
     ) -> _PlanetProxy:
         topic_slug = self.normalize_topic(topic)
-        row = _get_planet_row(self.storage.connection, topic_slug)
-        if not row:
-            self.get_or_create_planet(topic, topic)
-            row = _get_planet_row(self.storage.connection, topic_slug)
+        # The row is read here and rewritten below; without the write lock held
+        # across both, a second agent unions its own value into a stale copy
+        # and clobbers ours.
+        with write_transaction(self.storage.connection) as conn:
+            row = _get_planet_row(conn, topic_slug)
+            if not row:
+                self.get_or_create_planet(topic, topic)
+                row = _get_planet_row(conn, topic_slug)
 
-        assert row is not None
+            assert row is not None
 
-        updates = []
-        params: list = []
-        if status is not None:
-            updates.append("status = ?")
-            params.append(status)
-        if goal is not None:
-            updates.append("goal = ?")
-            params.append(goal)
-        if current_state is not None:
-            updates.append("current_state = ?")
-            params.append(current_state)
-        if next_step is not None:
-            updates.append("next_step = ?")
-            params.append(next_step)
+            updates = []
+            params: list = []
+            if status is not None:
+                updates.append("status = ?")
+                params.append(status)
+            if goal is not None:
+                updates.append("goal = ?")
+                params.append(goal)
+            if current_state is not None:
+                updates.append("current_state = ?")
+                params.append(current_state)
+            if next_step is not None:
+                updates.append("next_step = ?")
+                params.append(next_step)
 
-            raw = row.get("next_steps")
-            try:
-                steps = json.loads(raw) if raw and raw.strip() else []
-                if not isinstance(steps, list):
+                raw = row.get("next_steps")
+                try:
+                    steps = json.loads(raw) if raw and raw.strip() else []
+                    if not isinstance(steps, list):
+                        steps = []
+                except Exception:
                     steps = []
-            except Exception:
-                steps = []
-            if next_step in steps:
-                steps.remove(next_step)
-            steps.append(next_step)
-            steps = steps[-5:]
-            updates.append("next_steps = ?")
-            params.append(json.dumps(steps))
-        if file_path is not None:
-            raw = row.get("files")
-            files = set(json.loads(raw) if raw and raw.strip() else [])
-            files.add(file_path)
-            updates.append("files = ?")
-            params.append(json.dumps(sorted(files)))
-        if command is not None:
-            raw = row.get("commands")
-            commands = set(json.loads(raw) if raw and raw.strip() else [])
-            commands.add(command)
-            updates.append("commands = ?")
-            params.append(json.dumps(sorted(commands)))
-        if handoff is not None:
-            updates.append("handoff = ?")
-            params.append(handoff)
+                if next_step in steps:
+                    steps.remove(next_step)
+                steps.append(next_step)
+                steps = steps[-5:]
+                updates.append("next_steps = ?")
+                params.append(json.dumps(steps))
+            if file_path is not None:
+                raw = row.get("files")
+                files = set(json.loads(raw) if raw and raw.strip() else [])
+                files.add(file_path)
+                updates.append("files = ?")
+                params.append(json.dumps(sorted(files)))
+            if command is not None:
+                raw = row.get("commands")
+                commands = set(json.loads(raw) if raw and raw.strip() else [])
+                commands.add(command)
+                updates.append("commands = ?")
+                params.append(json.dumps(sorted(commands)))
+            if handoff is not None:
+                updates.append("handoff = ?")
+                params.append(handoff)
 
-        if updates:
-            updates.append("updated_at = ?")
-            params.append(self._now())
-            params.append(topic_slug)
-            exec_stmt(
-                self.storage.connection,
-                f"UPDATE planets SET {', '.join(updates)} WHERE topic = ?",
-                params,
-            )
+            if updates:
+                updates.append("updated_at = ?")
+                params.append(self._now())
+                params.append(topic_slug)
+                conn.execute(
+                    f"UPDATE planets SET {', '.join(updates)} WHERE topic = ?",
+                    params,
+                )
 
         result = _get_planet(self.storage.connection, topic_slug)
         assert result is not None
