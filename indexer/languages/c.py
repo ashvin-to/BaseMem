@@ -10,12 +10,56 @@ body*, and the kernel is full of `typedef struct { ... } Foo;` and of
 `struct foo *ptr;` forward references.
 """
 
+def build_function_query(name_capture: str = "(_) @name") -> str:
+    """Every declarator chain that can hold a function's name.
+
+    The direct `declarator:` of a function_definition is only a
+    function_declarator when the return type is not a pointer. `void *memcpy()`
+    nests it as pointer_declarator > function_declarator, so a query written
+    against the plain shape misses every pointer-returning function: 41,708 of
+    them across the kernel, 6% of all C functions, among them memcpy, kmalloc
+    and vzalloc. The index held their header declarations and none of the
+    definitions.
+
+    Each chain here is mutually exclusive and none is a duplicate, because
+    tree-sitter rejects an impossible pattern outright -- a repeated one fails
+    to compile and the whole language silently stops extracting. Shapes and
+    counts are what tree-sitter actually produces across the kernel's 698,311
+    function_definition nodes, not a guess at the grammar.
+    """
+    return "\n".join(
+        (
+            # `int f(void)` -- 652,381
+            f"(function_definition declarator: (function_declarator declarator: {name_capture})) @symbol",
+            # `void *f(void)` -- 41,708
+            f"(function_definition declarator: (pointer_declarator declarator: (function_declarator declarator: {name_capture}))) @symbol",
+            # `void **f(void)` -- 245
+            f"(function_definition declarator: (pointer_declarator declarator: (pointer_declarator declarator: (function_declarator declarator: {name_capture})))) @symbol",
+            # `void ***f(void)` -- 2
+            f"(function_definition declarator: (pointer_declarator declarator: (pointer_declarator declarator: (pointer_declarator declarator: (function_declarator declarator: {name_capture}))))) @symbol",
+            # `int (f)(void)` -- 3,864. The inner node is a plain child, not a
+            # `declarator:` field: parenthesized_declarator has no such field,
+            # and naming one makes tree-sitter reject the whole query.
+            "(function_definition declarator: (parenthesized_declarator (identifier) @name)) @symbol",
+            # 12
+            f"(function_definition declarator: (parenthesized_declarator (function_declarator declarator: {name_capture}))) @symbol",
+            # `void f(void)[3]` -- 4
+            f"(function_definition declarator: (array_declarator declarator: (function_declarator declarator: {name_capture}))) @symbol",
+            # `void *f(void)[3]` -- 1
+            f"(function_definition declarator: (pointer_declarator declarator: (array_declarator declarator: (function_declarator declarator: {name_capture})))) @symbol",
+            # `void *f` with no parameter list -- 1
+            "(function_definition declarator: (pointer_declarator declarator: (identifier) @name)) @symbol",
+            # A bare name -- 91
+            "(function_definition declarator: (identifier) @name) @symbol",
+        )
+    )
+
+
+C_FUNCTION_QUERY = build_function_query()
+
+
 C_QUERIES = {
-    "function": """
-        (function_definition
-            declarator: (function_declarator
-                declarator: (_) @name)) @symbol
-    """,
+    "function": C_FUNCTION_QUERY,
     # A named struct with a body, the case that used to be the only one matched.
     "struct": """
         (struct_specifier

@@ -7,6 +7,8 @@ A message send `[self helper]` is a `message_expression` with `receiver:` and
 `method:` fields, which is a different node from a plain C-style call.
 """
 
+from .c import build_function_query
+
 OBJC_QUERIES = {
     "class": """
         (class_interface
@@ -23,11 +25,7 @@ OBJC_QUERIES = {
             (method_type) @body
             (identifier) @name) @symbol
     """,
-    "function": """
-        (function_definition
-            declarator: (function_declarator
-                declarator: (identifier) @name)) @symbol
-    """,
+    "function": build_function_query("(identifier) @name"),
     # `[self helper]` -- receiver is the object being messaged.
     "method_call": """
         (message_expression
