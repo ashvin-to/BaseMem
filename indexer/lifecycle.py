@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 import sys
@@ -45,14 +46,20 @@ def _count_indexable_files(root: Path) -> int:
     return n
 
 
-def _index_in_subprocess(root: str, max_workers: int) -> None:
-    """Build the index in a separate process, never in the caller's."""
+def _index_in_subprocess(root: str, max_workers: int) -> dict | None:
+    """Build the index in a separate process, never in the caller's.
+
+    Returns the indexer's own counts, so a caller that reports progress does not
+    have to reopen the database to learn them.
+    """
     script = (
-        "import sys;"
+        "import json;"
         "from indexer.indexer import CodeIndexer;"
         f"ix = CodeIndexer({root!r});"
-        "ix.index_project(_max_workers=%d);"
-        "ix.close()" % max_workers
+        f"r = ix.index_project(_max_workers={max_workers});"
+        "ix.close();"
+        "print(json.dumps({'files': r['files'], 'symbols': r['symbols'],"
+        " 'edges': r['edges'], 'elapsed': r['elapsed']}))"
     )
     try:
         proc = subprocess.run(
@@ -71,6 +78,12 @@ def _index_in_subprocess(root: str, max_workers: int) -> None:
         raise RuntimeError(
             "auto-index failed: " + (tail[-1] if tail else f"exit {proc.returncode}")
         )
+    for line in reversed((proc.stdout or "").strip().splitlines()):
+        try:
+            return json.loads(line)
+        except ValueError:
+            continue
+    return None
 
 
 def open_or_create_index(project_root: str, max_workers: int = 4) -> CodeIndexer:

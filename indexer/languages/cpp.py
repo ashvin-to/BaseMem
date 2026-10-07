@@ -1,9 +1,7 @@
+from .c import build_function_query
+
 CPP_QUERIES = {
-    "function": """
-        (function_definition
-            declarator: (function_declarator
-                declarator: (_) @name)) @symbol
-    """,
+    "function": build_function_query(),
     "class": """
         (class_specifier
             name: (type_identifier) @name
