@@ -95,16 +95,22 @@ def code_init(projectRoot: str) -> str:
     if not os.path.isdir(projectRoot):
         return f"Directory not found: {projectRoot}"
 
-    from indexer import CodeIndexer
-    indexer = CodeIndexer(projectRoot)
+    # Out of process, and without opening the database here first. Opening it
+    # and then calling index_project in-process forked a worker pool out of an
+    # already-database-connected parent; the children inherited the connection
+    # and the whole tree deadlocked on a futex, wedging the server for the rest
+    # of the session. code_find and code_explore had the same shape.
+    from indexer.lifecycle import _index_in_subprocess
     try:
-        result = indexer.index_project(_max_workers=4)
-        return (
-            f"code_init ok files={result['files']} symbols={result['symbols']} "
-            f"edges={result['edges']} elapsed={result['elapsed']:.1f}s"
-        )
-    finally:
-        indexer.close()
+        result = _index_in_subprocess(projectRoot, 4)
+    except Exception as e:
+        return f"code_init failed: {e}"
+    if not result:
+        return f"code_init ok {projectRoot}"
+    return (
+        f"code_init ok files={result['files']} symbols={result['symbols']} "
+        f"edges={result['edges']} elapsed={result['elapsed']:.1f}s"
+    )
 
 
 @server.tool(
@@ -311,13 +317,13 @@ def code_find(
     db_path = os.path.join(projectRoot, CODE_DB_FILENAME)
     if not os.path.exists(db_path):
         try:
-            _ci = CodeIndexer(projectRoot)
+            # Out of process: indexing here would fork a worker pool out of a
+            # parent that already holds this project's sqlite connection, and
+            # the inherited handles deadlock on a futex.
+            from indexer.lifecycle import _index_in_subprocess
+            _index_in_subprocess(projectRoot, 4)
         except ValueError as e:
             return str(e)
-        try:
-            _ci.index_project(_max_workers=4)
-        finally:
-            _ci.close()
     indexer = CodeIndexer(projectRoot)
     try:
         # Dead code mode (import-chain analysis)
@@ -613,16 +619,18 @@ def code_explore(query: str, projectRoot: str = "", limit: int = 10) -> str:
     from indexer import CODE_DB_FILENAME, CodeIndexer
     if not projectRoot:
         projectRoot = _detect_project_root()
+    if not os.path.isdir(projectRoot):
+        return f"Directory not found: {projectRoot}"
     db_path = os.path.join(projectRoot, CODE_DB_FILENAME)
     if not os.path.exists(db_path):
         try:
-            _ci = CodeIndexer(projectRoot)
+            # Out of process: indexing here would fork a worker pool out of a
+            # parent that already holds this project's sqlite connection, and
+            # the inherited handles deadlock on a futex.
+            from indexer.lifecycle import _index_in_subprocess
+            _index_in_subprocess(projectRoot, 4)
         except ValueError as e:
             return str(e)
-        try:
-            _ci.index_project(_max_workers=4)
-        finally:
-            _ci.close()
     indexer = CodeIndexer(projectRoot)
     try:
         # Try exact symbol name or ID first (from code_find)
