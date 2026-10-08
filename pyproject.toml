@@ -10,7 +10,7 @@ py-modules = ["models"]
 
 [project]
 name = "basemem"
-version = "0.2.0"
+version = "0.0.1"
 description = "AI Knowledge Base System - Pure SQLite Zero-RAM Version"
 readme = "README.md"
 requires-python = ">=3.10"
