@@ -39,9 +39,10 @@ def code():
 @click.argument('project_root', required=False, default='.')
 @click.option('--workers', default=4, help='Number of parallel workers')
 @click.option('--watch', is_flag=True, help='Watch for file changes and auto-reindex')
+@click.option('--force', is_flag=True, help='Rebuild from scratch even if the index is current')
 @click.option('--quiet', is_flag=True, help='Suppress the progress bar and log noise')
 @click.option('--verbose', is_flag=True, help='Show the indexer log stream')
-def code_init(project_root, workers, watch, quiet, verbose):
+def code_init(project_root, workers, watch, force, quiet, verbose):
     """Index a project into a per-project .basemem.code.db."""
     import logging
     import signal
@@ -89,6 +90,27 @@ def code_init(project_root, workers, watch, quiet, verbose):
 
     try:
         t0 = _time.time()
+        # An index that is already current should not be rebuilt: on the kernel
+        # that is ten minutes thrown away to arrive at the same answer, so
+        # `init` means "make sure this is indexed" and `--force` means rebuild.
+        report = {} if force else indexer.staleness()
+        if report.get("indexed") and not report.get("stale"):
+            stats = indexer.get_project_stats()
+            indexer.close()
+            if not quiet:
+                click.echo()
+                click.echo(
+                    click.style("  ✔  ", fg="green", bold=True)
+                    + f"{stats.get('file_count', 0):,} files"
+                    + click.style(f" · {stats.get('symbol_count', 0):,} symbols", fg="bright_black")
+                )
+                click.echo(
+                    "  " + click.style("→ ", fg="bright_black")
+                    + click.style(str(indexer.db_path), fg="bright_black")
+                    + click.style("   up to date, nothing to do", fg="bright_black")
+                )
+                click.echo(click.style("    (--force rebuilds from scratch)", fg="bright_black"))
+            return
         if quiet:
             bar = None
             result = indexer.index_project(_max_workers=workers, progress_cb=on_progress)
