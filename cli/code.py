@@ -39,9 +39,10 @@ def code():
 @click.argument('project_root', required=False, default='.')
 @click.option('--workers', default=4, help='Number of parallel workers')
 @click.option('--watch', is_flag=True, help='Watch for file changes and auto-reindex')
+@click.option('--force', is_flag=True, help='Rebuild from scratch even if the index is current')
 @click.option('--quiet', is_flag=True, help='Suppress the progress bar and log noise')
 @click.option('--verbose', is_flag=True, help='Show the indexer log stream')
-def code_init(project_root, workers, watch, quiet, verbose):
+def code_init(project_root, workers, watch, force, quiet, verbose):
     """Index a project into a per-project .basemem.code.db."""
     import logging
     import signal
@@ -89,6 +90,27 @@ def code_init(project_root, workers, watch, quiet, verbose):
 
     try:
         t0 = _time.time()
+        # An index that is already current should not be rebuilt: on the kernel
+        # that is ten minutes thrown away to arrive at the same answer, so
+        # `init` means "make sure this is indexed" and `--force` means rebuild.
+        report = {} if force else indexer.staleness()
+        if report.get("indexed") and not report.get("stale"):
+            stats = indexer.get_project_stats()
+            indexer.close()
+            if not quiet:
+                click.echo()
+                click.echo(
+                    click.style("  ✔  ", fg="green", bold=True)
+                    + f"{stats.get('file_count', 0):,} files"
+                    + click.style(f" · {stats.get('symbol_count', 0):,} symbols", fg="bright_black")
+                )
+                click.echo(
+                    "  " + click.style("→ ", fg="bright_black")
+                    + click.style(str(indexer.db_path), fg="bright_black")
+                    + click.style("   up to date, nothing to do", fg="bright_black")
+                )
+                click.echo(click.style("    (--force rebuilds from scratch)", fg="bright_black"))
+            return
         if quiet:
             bar = None
             result = indexer.index_project(_max_workers=workers, progress_cb=on_progress)
@@ -253,7 +275,9 @@ def code_callers(symbol_name, root):
         if not results:
             click.echo(f"No callers for '{symbol_name}'.")
             return
-        results_str = ", ".join(f"{r['symbol_name']}:{r['line_number']}" for r in results[:20])
+        results_str = ", ".join(
+            f"{r['symbol_name']} ({r['file_path']}:{r['line_number']})" for r in results[:20]
+        )
         click.echo(f"callers of {symbol_name}: {results_str}")
     finally:
         indexer.close()
@@ -273,7 +297,9 @@ def code_callees(symbol_name, root, file_path):
         if not results:
             click.echo(f"No callees for '{symbol_name}'.")
             return
-        results_str = ", ".join(f"{r['to_name']}:{r['line_number']}" for r in results[:20])
+        results_str = ", ".join(
+            f"{r['to_name']} ({r['file_path']}:{r['line_number']})" for r in results[:20]
+        )
         click.echo(f"callees of {symbol_name}: {results_str}")
     finally:
         indexer.close()
@@ -441,6 +467,94 @@ def code_find_cli(query, root, dead, verbose, file_path, limit, regex):
             loc = _fmt_loc(r['file_path'], r['start_line'])
             sig = f" {r['signature'][:60]}" if r.get('signature') else ""
             click.echo(f"  [{r['id']}] {r['symbol_name']} ({loc}){sig}")
+    finally:
+        indexer.close()
+
+
+@code.command("unreferenced")
+@click.option('--root', default='.', help='Project root directory')
+@click.option('--limit', default=200, type=int, help='Scan at most this many candidates')
+@click.option('--include-tests', is_flag=True, help='Keep symbols in test paths')
+@click.option('--include-entry-points', is_flag=True, help='Keep main/init/Test style names')
+@click.option('--json', 'as_json', is_flag=True, help='Output as JSON')
+def code_unreferenced(root, limit, include_tests, include_entry_points, as_json):
+    """List symbols with no caller found in this repository.
+
+    Reports absence of a static caller, not deadness: exported library API and
+    reflection are invisible to this check.
+    """
+    from indexer import CODE_DB_FILENAME
+    from indexer.deadcode import unreferenced
+    from indexer.indexer import CodeIndexer
+
+    db_path = os.path.join(os.path.abspath(root), CODE_DB_FILENAME)
+    if not os.path.exists(db_path):
+        click.echo(f"[!] No code index found at {db_path}. Run `mem code init {os.path.abspath(root)}` first.")
+        return
+    indexer = CodeIndexer(os.path.abspath(root))
+    try:
+        result = unreferenced(
+            indexer, limit=limit, include_tests=include_tests,
+            include_entry_points=include_entry_points,
+        )
+    finally:
+        indexer.close()
+
+    if as_json:
+        import json
+        click.echo(json.dumps(result, indent=2))
+        return
+
+    click.echo(
+        f"unreferenced: {result['kept']} symbol(s) "
+        f"from {result['candidates_scanned']} candidate(s)"
+        f"{' [capped]' if result['capped'] else ''}"
+    )
+    click.echo(
+        f"  skipped: {result['skipped_test_paths']} in test paths, "
+        f"{result['skipped_standalone_paths']} in standalone dirs, "
+        f"{result['skipped_entry_points']} entry points"
+    )
+    for s in result["sample"]:
+        click.echo(f"  {s}")
+    click.echo(f"  confidence: {result['confidence']}")
+
+
+@code.command("gquery")
+@click.argument('search')
+@click.option('--root', default='.', help='Project root directory')
+@click.option('--json', 'as_json', is_flag=True, help='Output as JSON')
+def code_graph_query(search, root, as_json):
+    """Query the code graph. Run `code gquery --help` or code_status_query for syntax."""
+    from indexer import CODE_DB_FILENAME
+    from indexer.indexer import CodeIndexer
+    from indexer.query import QueryError, describe
+    from indexer.query_execute import run as run_query
+
+    db_path = os.path.join(os.path.abspath(root), CODE_DB_FILENAME)
+    if not os.path.exists(db_path):
+        click.echo(f"[!] No code index found at {db_path}. Run `mem code init {os.path.abspath(root)}` first.")
+        return
+    indexer = CodeIndexer(os.path.abspath(root))
+    try:
+        try:
+            rows = run_query(indexer, search)
+        except QueryError as e:
+            click.echo(f"code gquery: {e}\n\n{describe()}")
+            return
+        except Exception as e:
+            click.echo(f"code gquery: {type(e).__name__}: {e}")
+            return
+        if not rows:
+            click.echo("code gquery: no matches")
+            return
+        if as_json:
+            import json
+            click.echo(json.dumps(rows, indent=2, default=str))
+            return
+        click.echo(f"code gquery: {len(rows)} row(s)")
+        for row in rows:
+            click.echo("  " + ", ".join(f"{k}={v}" for k, v in row.items()))
     finally:
         indexer.close()
 

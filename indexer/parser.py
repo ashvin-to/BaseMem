@@ -1130,6 +1130,9 @@ _FUNCTION_NODE_TYPES = frozenset(
         "async_function_definition", "async_method_definition", "arrow_function",
         "function_signature", "fun_decl", "routine", "value_definition",
         "function_declaration_left", "bind",
+        # Haskell: a declaration with a type signature is a `function`, without
+        # one it is a `bind`. Both enclose their body, so both must stop the walk.
+        "function",
         # Go keeps methods in their own node rather than nesting them under a
         # class, so omitting it left every Go caller unattributed.
         "method_declaration",
@@ -1162,7 +1165,12 @@ def _find_enclosing_func(source_bytes, node, language, include_self=False):
     while cur is not None and cur.type not in _ROOT_NODE_TYPES:
         if cur.type in _FUNCTION_NODE_TYPES:
             name_node = _find_named_child(cur, language)
-            return _node_text(name_node, source_bytes) if name_node is not None else None
+            name = _node_text(name_node, source_bytes) if name_node is not None else None
+            # Haskell declares everything with `bind`, including a `let` inside a
+            # do-block. Stopping at the first one attributes the call to the
+            # local binding rather than the function it lives in.
+            if name is not None and not _is_shadowed(cur):
+                return name
         cur = cur.parent
     return None
 
