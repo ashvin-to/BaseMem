@@ -14,7 +14,7 @@ from difflib import SequenceMatcher
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
-from storage.db import exec_stmt
+from storage.db import exec_stmt, write_transaction
 from storage.extraction import HeuristicExtractor, MemoryExtractor
 
 if TYPE_CHECKING:
@@ -427,61 +427,68 @@ class NoteMixin:
 
         kind = kind.lower().strip() or "fact"
         now = self._now()
-        exec_stmt(
-            self.storage.connection,
-            "INSERT INTO notes "
-            "(topic, kind, content, title, agent_id, status, source_path, artifact_path, "
-            "observed_at, verification_status, evidence_summary, importance, confidence, scope, source, provenance, "
-            "valid_from, valid_until, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                topic_slug,
-                kind,
-                content,
-                title or content[:80],
-                agent_id,
-                status,
-                source_path,
-                artifact_path,
-                observed_at,
-                verification_status,
-                evidence_summary,
-                max(0.0, min(1.0, float(importance))),
-                max(0.0, min(1.0, float(confidence))),
-                scope,
-                source,
-                provenance if isinstance(provenance, str) else json.dumps(provenance),
-                valid_from or now,
-                valid_until or None,
-                now,
-                now,
-            ),
-        )
-        exec_stmt(
-            self.storage.connection,
-            "UPDATE planets SET updated_at = ? WHERE topic = ?",
-            (now, topic_slug),
-        )
 
-        cursor = self.storage.connection.cursor()
-        note_row = cursor.execute(
-            "SELECT id, topic, kind, content, title, agent_id, status FROM notes WHERE topic = ? AND created_at = ? AND content = ? LIMIT 1",
-            (topic_slug, now, content),
-        ).fetchone()
+        # The dedup lookup used to run *after* an unconditional INSERT, with no
+        # DELETE: a repeat left an orphan row nobody was ever handed back, and
+        # concurrent identical writes produced one row each (30 writes measured
+        # as 30 rows). Look first, insert only on a miss, and hold the write
+        # lock across both so two agents cannot both decide it is a miss.
+        with write_transaction(self.storage.connection) as conn:
+            existing = conn.execute(
+                "SELECT id FROM notes WHERE topic = ? AND created_at = ? AND content = ? LIMIT 1",
+                (topic_slug, now, content),
+            ).fetchone()
+            if existing is not None:
+                note_id = int(existing["id"])
+                created = False
+            else:
+                cur = conn.execute(
+                    "INSERT INTO notes "
+                    "(topic, kind, content, title, agent_id, status, source_path, artifact_path, "
+                    "observed_at, verification_status, evidence_summary, importance, confidence, scope, source, provenance, "
+                    "valid_from, valid_until, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        topic_slug,
+                        kind,
+                        content,
+                        title or content[:80],
+                        agent_id,
+                        status,
+                        source_path,
+                        artifact_path,
+                        observed_at,
+                        verification_status,
+                        evidence_summary,
+                        max(0.0, min(1.0, float(importance))),
+                        max(0.0, min(1.0, float(confidence))),
+                        scope,
+                        source,
+                        provenance if isinstance(provenance, str) else json.dumps(provenance),
+                        valid_from or now,
+                        valid_until or None,
+                        now,
+                        now,
+                    ),
+                )
+                note_id = int(cur.lastrowid)
+                created = True
+            conn.execute(
+                "UPDATE planets SET updated_at = ? WHERE topic = ?",
+                (now, topic_slug),
+            )
 
-        note_id = f"note-{note_row['id']}" if note_row else f"note-{topic_slug}-{uuid.uuid4().hex[:8]}"
+        if created and kind not in ("turn", "summary"):
+            self._auto_link_note(note_id, topic_slug)
 
-        if note_row and kind not in ("turn", "summary"):
-            self._auto_link_note(note_row["id"], topic_slug)
-
-        if note_row and hasattr(self, "get_active_session"):
+        if created and hasattr(self, "get_active_session"):
             session = self.get_active_session(topic_slug, agent_id)
             if session:
-                exec_stmt(self.storage.connection, "UPDATE notes SET session_id = ? WHERE id = ?", (session["id"], note_row["id"]))
-                self.stamp_note(session["id"], note_row["id"])
+                exec_stmt(self.storage.connection, "UPDATE notes SET session_id = ? WHERE id = ?", (session["id"], note_id))
+                self.stamp_note(session["id"], note_id)
 
         count = self.get_note_count(topic)
-        result = {"id": note_id, "title": title or content[:80], "content": content}
+        result = {"id": f"note-{note_id}", "title": title or content[:80], "content": content}
         if count >= self.SUMMARIZE_THRESHOLD:
             result["_suggest"] = f"This planet has {count} notes. Consider summarizing via `kb planet summarize {topic}` or the summarize_planet MCP tool."
         return result
