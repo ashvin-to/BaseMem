@@ -158,6 +158,17 @@ if (Test-Path $antigravityPlugin) {
     Write-Host "  Removed $antigravityPlugin" -ForegroundColor Gray
 }
 
+# Remove the BaseMem OpenCode plugin only — the plugins dir is shared with other tools.
+$opencodePlugin = "$env:USERPROFILE\.config\opencode\plugins\basemem.js"
+if (Test-Path $opencodePlugin) {
+    Remove-Item -Force $opencodePlugin
+    Write-Host "  Removed $opencodePlugin" -ForegroundColor Gray
+}
+$opencodePluginDir = "$env:USERPROFILE\.config\opencode\plugins"
+if ((Test-Path $opencodePluginDir) -and -not (Get-ChildItem $opencodePluginDir -Force)) {
+    Remove-Item $opencodePluginDir
+}
+
 $antigravityMcp = "$env:USERPROFILE\.gemini\antigravity\mcp\mem"
 if (Test-Path $antigravityMcp) {
     Remove-Item -Recurse -Force $antigravityMcp

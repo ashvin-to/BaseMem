@@ -308,6 +308,24 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             created_at TEXT DEFAULT (datetime('now')),
             updated_at TEXT DEFAULT (datetime('now'))
         );
+        -- Memory <-> code links. A decision can name the symbol it changed, so
+        -- editing that symbol later surfaces the decision. content_hash makes the
+        -- link survive a rename: the same body found at a new path still matches.
+        CREATE TABLE IF NOT EXISTS code_symbol_refs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            note_id INTEGER NOT NULL,
+            topic TEXT NOT NULL,
+            file_path TEXT NOT NULL,
+            symbol_name TEXT DEFAULT '',
+            content_hash TEXT DEFAULT '',
+            project_root TEXT DEFAULT '',
+            created_at TEXT DEFAULT (datetime('now')),
+            UNIQUE(note_id, file_path, symbol_name)
+        );
+        CREATE INDEX IF NOT EXISTS idx_csr_topic ON code_symbol_refs(topic);
+        CREATE INDEX IF NOT EXISTS idx_csr_path ON code_symbol_refs(file_path);
+        CREATE INDEX IF NOT EXISTS idx_csr_symbol ON code_symbol_refs(symbol_name);
+        CREATE INDEX IF NOT EXISTS idx_csr_hash ON code_symbol_refs(content_hash);
         CREATE TABLE IF NOT EXISTS memory_access_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             topic TEXT NOT NULL,
