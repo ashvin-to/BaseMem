@@ -703,6 +703,23 @@ class NoteMixin:
             return "near_duplicate", best_note["id"], best_similarity
         return "independent", None, best_similarity
 
+    @staticmethod
+    def classify_memory_metadata(text: str, agent_id: str = "default") -> dict:
+        import re
+        text = (text or "").strip()
+        modal = bool(re.search(r"\b(might|may|could|perhaps|possibly|likely|unlikely|probably|we think|i think)\b", text, re.I))
+        if modal:
+            kind, confidence, importance = "HYPOTHESIS", 0.45, 0.4
+        elif re.search(r"\b(decided|agreed|chose|selected|opted|adopt|will use|decision)\b", text, re.I):
+            kind, confidence, importance = "DECISION", 0.9, 0.85
+        elif re.search(r"\b(must|never|always|required|constraint|forbidden)\b", text, re.I):
+            kind, confidence, importance = "CONSTRAINT", 0.85, 0.8
+        elif re.search(r"\b(discovered|found|root cause|learned)\b", text, re.I):
+            kind, confidence, importance = "DISCOVERY", 0.75, 0.7
+        else:
+            kind, confidence, importance = "FACT", 0.6, 0.5
+        return {"kind": kind, "confidence": confidence, "importance": importance, "source": "heuristic", "provenance": {"method": "heuristic", "agent_id": agent_id, "signals": ["modal" if modal else "explicit"]}}
+
     def auto_extract_memories(self, topic: str, text: str, agent_id: str = "default") -> list[dict]:
         """Extract memories through the configured extractor and insert new candidates safely."""
         topic_slug = self.normalize_topic(topic)
