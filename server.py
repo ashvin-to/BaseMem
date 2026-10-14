@@ -5,7 +5,7 @@ import logging
 import os
 from pathlib import Path
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 
 from storage.db import StorageManager
@@ -56,9 +56,14 @@ def get_session() -> SessionManager:
     return SessionManager(_storage)
 
 
+_FRONTEND_DIST = Path(__file__).parent / "frontend" / "dist"
+
+
 @app.route("/", methods=["GET"])
 def index():
-    """BaseMem API server."""
+    """Serve the built frontend when present, else describe the API."""
+    if (_FRONTEND_DIST / "index.html").is_file():
+        return send_from_directory(_FRONTEND_DIST, "index.html")
     return jsonify({
         "service": "BaseMem",
         "version": "0.0.1",
@@ -72,6 +77,14 @@ def index():
             "graph": "/api/graph",
         }
     })
+
+
+@app.route("/<path:asset>", methods=["GET"])
+def frontend_assets(asset):
+    """Serve built frontend assets; more specific /api rules still win routing."""
+    if (_FRONTEND_DIST / asset).is_file():
+        return send_from_directory(_FRONTEND_DIST, asset)
+    return jsonify({"error": "not found", "path": asset}), 404
 
 
 def _build_notes_graph(planet_filter: str = ""):
