@@ -34,17 +34,6 @@
           }
         ]
       }
-    ],
-    "PostToolUse": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"${CODEX_PLUGIN_ROOT:-$HOME/.codex}/hooks/capture.js\"",
-            "timeout": 5
-          }
-        ]
-      }
     ]
   }
 }

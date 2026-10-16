@@ -1487,6 +1487,23 @@ def read_planet(topic: str, raw: bool = False, limit: int = 50) -> str:
 
 
 @server.tool(description="Call IMMEDIATELY when you make a decision, apply a fix, or learn a fact — do not defer to session end. Also use for session summaries (summary + activity=\"done\"). topic required.")
+def _clear_loginteraction_flags(manager, topic: str) -> None:
+    """Resolve stale pending/missed flags once a real logInteraction lands."""
+    from storage.sessions import SessionManager
+
+    try:
+        conn = manager.storage.connection
+        slug = SessionManager.normalize_topic(topic)
+        for content in ("pending_logInteraction", "missed_logInteraction"):
+            for row in conn.execute(
+                "SELECT id FROM notes WHERE topic = ? AND kind = 'flag' AND content = ?",
+                (slug, content),
+            ).fetchall():
+                manager.delete_note(int(row["id"]))
+    except Exception:
+        pass
+
+
 def logInteraction(
     topic: str = "",
     decision: str = "",
@@ -1543,6 +1560,10 @@ def logInteraction(
             if result and result.get("id"):
                 note_ids.append(result["id"])
             parts.append(f"note({kind})")
+
+    # A real logInteraction resolves any pending/missed flags left by silent
+    # native capture for this topic.
+    _clear_loginteraction_flags(manager, topic)
 
     if currentState or nextStep:
         manager.update_planet(

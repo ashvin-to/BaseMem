@@ -962,7 +962,10 @@ function install(name) {
   const rulesText = TIER_RULES[effectiveTier];
 
   const rule = { installed: paths.install, written: false, tier: effectiveTier };
-  if (!agent.skipRules) {
+  // Only write rules for agents actually present on this system — skip
+  // agents in the manifest that aren't installed (e.g. hermes when not used),
+  // so we don't create empty config folders for them.
+  if (!agent.skipRules && info.detected) {
     if (name === 'claude') {
       const basememMd = path.join(getClaudeDir(), 'basemem.md');
       writeRuleFile(basememMd, agent.format, rulesText);
@@ -1050,9 +1053,6 @@ function install(name) {
           ],
           stop: [
             { command: `node "${hookDir}/stop.js"`, timeout_ms: 5000 },
-          ],
-          postToolUse: [
-            { command: `node "${hookDir}/capture.js"`, timeout_ms: 5000 },
           ],
         },
       };
@@ -1288,6 +1288,7 @@ function installAll() {
   const pkg = ensureEditableInstall();
   const results = { _pkg: pkg };
   for (const agent of AGENTS) {
+    if (!detect(agent.name).detected) continue;
     results[agent.name] = install(agent.name);
   }
   results._cli = writeCLIWrapper();
@@ -1677,6 +1678,11 @@ if (require.main === module || process.argv[2]) {
     const agentsToRepair = targetName ? [getAgent(targetName)] : AGENTS;
     const results = [];
     for (const agent of agentsToRepair) {
+      const info = detect(agent.name);
+      if (!info.detected) {
+        results.push({ agent: agent.name, status: 'skipped (not installed)', detail: '' });
+        continue;
+      }
       const paths = getAgentPaths()[agent.name];
       const rulesFilePath = agent.name === 'claude' ? path.join(getClaudeDir(), 'basemem.md') : paths.install;
       let missingRules = false;

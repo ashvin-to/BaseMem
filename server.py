@@ -110,6 +110,8 @@ def _build_notes_graph(planet_filter: str = ""):
         note_rows = mgr.get_notes_for_planet(slug, limit=50)
 
         for n in note_rows:
+            if n.get("kind") == "flag":
+                continue
             nid = f"note-{n['id']}"
             label = n.get("title") or n.get("content", "")[:60]
             nodes.append({

@@ -25,7 +25,7 @@ def _get_planet_row(conn: sqlite3.Connection, topic: str) -> dict | None:
 def _get_notes(conn: sqlite3.Connection, topic: str, limit: int = 100) -> list:
     cursor = conn.cursor()
     rows = cursor.execute(
-        "SELECT * FROM notes WHERE topic = ? ORDER BY created_at DESC LIMIT ?",
+        "SELECT * FROM notes WHERE topic = ? AND kind != 'flag' ORDER BY created_at DESC LIMIT ?",
         (topic, limit),
     ).fetchall()
     return [dict(r) for r in rows]

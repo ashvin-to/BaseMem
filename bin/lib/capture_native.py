@@ -50,6 +50,26 @@ def resolve_topic():
     return os.path.basename(os.path.normpath(cwd))
 
 
+def _replace_flag(manager: SessionManager, topic: str, content: str) -> None:
+    """Ensure at most one pending/missed flag note per topic.
+
+    Deletes any existing flag note with the same content for this topic
+    before inserting a fresh one, so repeated edit/write calls cannot
+    stack unbounded rows (previously one per tool call, ~1,255 rows).
+    """
+    try:
+        conn = manager.storage.connection
+        slug = SessionManager.normalize_topic(topic)
+        rows = conn.execute(
+            "SELECT id FROM notes WHERE topic = ? AND kind = 'flag' AND content = ?",
+            (slug, content),
+        ).fetchall()
+        for row in rows:
+            manager.delete_note(int(row["id"]))
+    except Exception:
+        pass
+
+
 def capture(payload: dict):
     tool = (payload.get("tool") or "").strip().lower()
     params = payload.get("params") or {}
@@ -63,6 +83,7 @@ def capture(payload: dict):
             return {"captured": False, "reason": "no db"}
         storage = StorageManager(db_path)
         manager = SessionManager(storage)
+        _replace_flag(manager, topic, "missed_logInteraction")
         manager.add_note(topic, topic, "flag", "missed_logInteraction",
                          agent_id=agent_id, title="missed_logInteraction")
         return {"captured": True, "topic": topic, "content": "missed_logInteraction"}
@@ -90,7 +111,9 @@ def capture(payload: dict):
                      title=f"native:{tool}")
 
     # Mark that an edit/write happened without a logInteraction yet.
+    # One flag per topic max: stale pending flags are replaced, not stacked.
     if tool in ("edit", "write", "update_file"):
+        _replace_flag(manager, topic, "pending_logInteraction")
         manager.add_note(topic, topic, "flag", "pending_logInteraction",
                          agent_id=agent_id, title="pending_logInteraction")
 

@@ -1552,7 +1552,8 @@ class NoteMixin:
                 """SELECT n.id, n.topic, n.kind, n.content, n.title, n.created_at, n.tags, n.pinned
                    FROM notes n
                    JOIN notes_fts f ON n.id = f.rowid
-                   WHERE f.topic = ? AND notes_fts MATCH ?"""
+                   WHERE f.topic = ? AND notes_fts MATCH ?
+                     AND n.kind != 'flag'"""
                 + exclude_clause
                 + """
                    ORDER BY rank LIMIT ?""",
@@ -1571,7 +1572,7 @@ class NoteMixin:
             try:
                 rows = cursor.execute(
                     """SELECT id, topic, kind, content, title, created_at, tags, pinned FROM notes
-                       WHERE topic = ? AND (content LIKE ? OR title LIKE ?)
+                       WHERE topic = ? AND kind != 'flag' AND (content LIKE ? OR title LIKE ?)
                        ORDER BY pinned DESC, created_at DESC LIMIT ?""",
                     (slug, like, like, limit),
                 ).fetchall()
