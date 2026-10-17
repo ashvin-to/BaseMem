@@ -36,17 +36,19 @@ def _env_path() -> "str | None":
 
     home = os.environ.get("HOME", "/tmp")
 
-    # Match CLI/Flask default location
-    legacy = os.path.join(home, ".basemem", "basemem.db")
-    if os.path.isfile(legacy):
-        return legacy
-
+    # Match CLI/Flask default location — XDG data dir takes precedence; legacy
+    # ~/.basemem/ is only a fallback so both CLI and API read the same active DB.
     data_dir = os.environ.get("XDG_DATA_HOME") or os.path.join(
         home, ".local", "share"
     )
     candidate = os.path.join(data_dir, "basemem", "basemem.db")
     if os.path.isfile(candidate):
         return candidate
+
+    legacy = os.path.join(home, ".basemem", "basemem.db")
+    if os.path.isfile(legacy):
+        return legacy
+
     return None
 
 

@@ -11,6 +11,8 @@ from flask_cors import CORS
 from storage.db import StorageManager
 from storage.sessions import SessionManager
 
+from mcp_server.server import get_db_path as _mcp_get_db_path
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -46,7 +48,7 @@ def _confined_project_root(value):
 
 
 def _db_path():
-    return str(Path.home() / ".basemem" / "basemem.db")
+    return _mcp_get_db_path()
 
 
 def get_session() -> SessionManager:
