@@ -86,6 +86,7 @@ Enable them for curation, debugging, or project discovery; omit them for a leane
 | Tool | Parameters | Description |
 |------|-----------|-------------|
 | `compact_planet` | `topic` | Keep summaries + 30 recent notes |
+| `cleanup_memory` | `topic`, `dryRun`, `dropFlags`, `dropActivity`, `pruneLinks`, `pruneAutoLinks`, `linkWeightThreshold` | Safe, previewable cleanup of obsolete flags/activity notes and weak/auto links. Dry-run by default. Preserves decisions, facts, constraints, architecture, conventions, summaries, pinned, high-importance, and provenance-bearing notes. |
 | `edge_maintain` | `planet`, `decayFactor`, `pruneThreshold` | Apply weight decay (multiply all auto-link weights by factor) and/or prune edges below a weight threshold. Decay runs before prune so pruning reflects decayed weights. At least one of `decayFactor` or `pruneThreshold` required. |
 
 ### Session Management
@@ -195,7 +196,7 @@ mem export / mem import
 
 ## Auto-Linking
 
-When `add_note` is called, the new note is automatically linked to existing notes on the same planet using Jaccard similarity on keyword sets (threshold 0.2). Explicit links override auto links. Edge reinforcement increments auto-link weight by 0.05 on each co-access.
+Automatic pairwise linking on `add_note` is **opt-in** (set `BASEMEM_AUTO_LINK=1`). By default, notes are not auto-linked, because dense lexical links (579k rows in the audited DB) dominated the graph without adding retrieval value. Explicit links via `link`/`recompute_links`/`edge_maintain` remain available. When enabled, linking uses Jaccard similarity on keyword sets (threshold 0.2); explicit links override auto links.
 
 ## Memory Tiers
 
