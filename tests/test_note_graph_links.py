@@ -43,6 +43,7 @@ def test_note_links_preserve_direction_and_typed_relations(monkeypatch):
 
 
 def test_retrieval_exposes_link_metadata_and_auto_links_are_lexical(monkeypatch):
+    monkeypatch.setenv("BASEMEM_AUTO_LINK", "1")
     manager, storage, temp_dir = _manager(monkeypatch)
     try:
         first = manager.add_note("", "graph", "fact", "alpha beta gamma delta", scope="same", source_path="entity-a")

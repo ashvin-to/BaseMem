@@ -594,9 +594,10 @@ def code_query(search, root, limit, kind, regex, as_json):
 @code.command("explore")
 @click.argument('query')
 @click.option('--root', default='.', help='Project root directory')
-@click.option('--max-files', default=3, type=int, help='Max files to show source from')
-def code_explore(query, root, max_files):
-    """Explore an area: relevant symbols' source + call paths in one shot. Auto-indexes if needed. Falls back to text search for natural language queries."""
+@click.option('--max-files', default=3, type=int, help='Max files to show source from (only with --source)')
+@click.option('--source', is_flag=True, help='Include bounded source snippets (default: off)')
+def code_explore(query, root, max_files, source):
+    """Explore an area: compact structural overview (symbol + callers/callees). Source is opt-in via --source. Auto-indexes if needed."""
     from indexer import CODE_DB_FILENAME, CodeIndexer
     root_path = os.path.abspath(root)
     db_path = os.path.join(root_path, CODE_DB_FILENAME)
@@ -646,7 +647,7 @@ def code_explore(query, root, max_files):
             if callees:
                 cstr = ", ".join(f"{c['to_name']}:{c['line_number']}" for c in callees[:5])
                 click.echo(f"  calls: {cstr}")
-            if sym['file_path'] not in shown_files and len(shown_files) < max_files:
+            if source and sym['file_path'] not in shown_files and len(shown_files) < max_files:
                 shown_files.add(sym['file_path'])
                 abs_fp = os.path.join(root_path, sym['file_path'])
                 if os.path.isfile(abs_fp):
@@ -658,6 +659,8 @@ def code_explore(query, root, max_files):
                     for i in range(start, end):
                         marker = "→" if i == sym['start_line'] - 1 else " "
                         click.echo(f"    {marker} L{i + 1}: {lines[i]}")
+            if not source:
+                click.echo(f"  (source omitted; use --source or native Read for {sym['file_path']}:{sym['start_line']})")
     finally:
         indexer.close()
 

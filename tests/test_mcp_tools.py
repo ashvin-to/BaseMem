@@ -654,7 +654,7 @@ class TestCodeTools:
     def test_code_explore_caps_source(self, tmp_path):
         from mcp_server.server import code_explore
         (tmp_path / "long.py").write_text("def target():\n" + "\n".join(f"    x = {i}" for i in range(80)) + "\n")
-        r = code_explore("target", projectRoot=str(tmp_path), limit=1)
+        r = code_explore("target", projectRoot=str(tmp_path), limit=1, source=True)
         assert "source:" in r
         assert "more: code_read" in r
 
@@ -662,7 +662,7 @@ class TestCodeTools:
     def test_code_explore_respects_output_budget(self, tmp_path):
         from mcp_server.server import code_explore
         (tmp_path / "long.py").write_text("def target():\n" + "\n".join(f"    x = {i}" for i in range(80)) + "\n")
-        result = code_explore("target", projectRoot=str(tmp_path), limit=10, maxChars=300)
+        result = code_explore("target", projectRoot=str(tmp_path), limit=10, maxChars=300, source=True)
         assert len(result) <= 340
         assert "output budget reached" in result
 

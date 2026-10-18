@@ -10,9 +10,17 @@ CAPTURE_PY = os.path.join(ROOT, 'bin', 'lib', 'capture_native.py')
 PYTHON = 'python3'
 
 
-def run_capture(payload, db_path):
+def run_capture(payload, db_path, capture=True, topic="basemem"):
     env = dict(os.environ)
     env['BASEMEM_DB_PATH'] = db_path
+    env.pop('BASEMEM_CAPTURE_ACTIVITY', None)
+    if capture:
+        env['BASEMEM_CAPTURE_ACTIVITY'] = '1'
+    if topic:
+        env['BASEMEM_TOPIC'] = topic
+    else:
+        env.pop('BASEMEM_TOPIC', None)
+        env.pop('BASEMEM_PLANET', None)
     return subprocess.run(
         [PYTHON, CAPTURE_PY],
         input=json.dumps(payload),
@@ -75,6 +83,41 @@ def test_missed_log_flag():
     ns = notes(db)
     assert any(n['content'] == 'missed_logInteraction' for n in ns), ns
     os.remove(db)
+
+
+def test_activity_capture_disabled_by_default():
+    """Routine file edits must not flood durable memory unless opted in."""
+    db = tempfile.mktemp(suffix='.db')
+    run_capture({"tool": "Edit", "params": {"file_path": "src/bar.js"}}, db, capture=False)
+    assert notes(db) == [], "capture must be off by default"
+    if os.path.exists(db):
+        os.remove(db)
+
+
+def test_ambiguous_topic_skips_capture():
+    """No reliable project identity -> skip, never misattribute."""
+    db = tempfile.mktemp(suffix='.db')
+    # cwd=ROOT has a repo, so force an ambiguous name via an env override only
+    # when explicitly empty and a rejected cwd basename.
+    env = dict(os.environ)
+    env['BASEMEM_DB_PATH'] = db
+    env['BASEMEM_CAPTURE_ACTIVITY'] = '1'
+    env.pop('BASEMEM_TOPIC', None)
+    env.pop('BASEMEM_PLANET', None)
+    cwd = tempfile.mkdtemp()
+    env['PWD'] = cwd
+    subprocess.run(
+        [PYTHON, CAPTURE_PY],
+        input=json.dumps({"tool": "Edit", "params": {"file_path": "x.py"}}),
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=cwd,
+    )
+    # The temp dir has no package.json and no .git; identity is unresolvable.
+    assert notes(db) == [], "ambiguous identity must not capture"
+    if os.path.exists(db):
+        os.remove(db)
 
 
 if __name__ == '__main__':

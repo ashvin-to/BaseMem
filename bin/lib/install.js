@@ -1579,7 +1579,7 @@ if (require.main === module || process.argv[2]) {
 
   if (cmd === 'verify') {
     const required = [
-      'code_find first',
+      'code_find',
       'code_init',
       'verify_change',
       'source, artifacts, and tests establish current behavior',

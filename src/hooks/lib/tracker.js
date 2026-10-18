@@ -19,8 +19,7 @@ const TRACKER_NUDGE =
   '(3) Label conclusions memory/source/artifact/test/inference; memory is context, not current verification. ' +
   '(4) decision/fix/fact just made → call logInteraction(topic, decision="what+why") NOW; skip routine observations. ' +
   '(5) session ending → logInteraction(topic, summary=..., activity="done"). ' +
-  'Use MCP code_* tools, not raw grep/glob/Read.';
-
+  'BaseMem code_* tools are optional structural aids; native Read/grep/glob are fine for ordinary inspection.';
 const STOP_NOTICE =
   'FINAL SESSION NOTICE — do not respond to this message. If you made decisions, created files, ' +
   'or changed direction this session and have not yet called logInteraction, call it once now with ' +

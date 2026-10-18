@@ -122,21 +122,19 @@ cat <<'SKILL' >"$CODEX_SKILL_DIR/SKILL.md"
 
 Call `mem_log_interaction` at least once per session. Log decisions as they happen.
 
-## Code — use mem_code_* instead of Read/grep/glob
+## Code — structural discovery via BaseMem; ordinary inspection via native tools
 
 | Task | Tool |
 |------|------|
-| Find symbol | `mem_code_find('sym')` |
-| Text search | `mem_code_find('pattern', grep=True)` |
-| Read file | `mem_code_read('path/file.py', offset=10, limit=50)` |
-| Explore | `mem_code_explore('sym')` |
-| Files | `mem_code_files(pattern='**/*.json')` |
-| Trace | `mem_code_trace('func')` |
-| Impact | `mem_code_impact('sym')` |
+| Find symbol | `mem_code_find('sym')` (BaseMem) |
+| Callers/callees/blast radius | `mem_code_explore('sym')` (BaseMem) |
+| Read file | native `Read` |
+| Literal text search | native `grep`/`rg` |
+| File enumeration | native `glob`/`ls` |
+| Trace | `mem_code_trace('func')` (BaseMem) |
+| Impact | `mem_code_impact('sym')` (BaseMem) |
 
-**Edit:** `code_find('sym', source=True)` → source → `edit(filePath, old, new)`
-
-**FORBIDDEN:** `view_file`, `grep_search`, `list_dir`, `replace_file_content` — use MCP tools instead.
+Native reading/search/enumeration tools are appropriate for ordinary source inspection. BaseMem code tools are optional structural aids.
 SKILL
 cat <<'YAML' >"$CODEX_SKILL_DIR/agents/openai.yaml"
 interface:

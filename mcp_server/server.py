@@ -64,10 +64,10 @@ from mcp.server.fastmcp import FastMCP
 def _get_initial_instructions() -> "str | None":
     return (
         "BaseMem memory + code intelligence. "
-        "When the user asks about code, a bug, or exploring the repo: call code_find FIRST "
-        "(grep=True for text search; empty result means call code_init(projectRoot) once, then retry). "
-        "Read code with code_read(filePath, offset, limit<=50); trace callers with code_explore; "
-        "list files with code_files; review diffs with get_review_context(files). "
+        "Structural discovery: code_find for symbols; code_explore for callers/callees and blast radius. "
+        "Ordinary source inspection: native Read. Literal text search: native grep/rg. File enumeration: native glob/ls. "
+        "code_read is deprecated for routine source inspection (prefer native Read). "
+        "Review diffs with get_review_context(files). "
         "Use verify_change(projectRoot, files, test_command, artifact_paths) for explicit source/artifact/test evidence; memory is context, not verification. "
         "Context is auto-injected at session start — do NOT call getContext then; call it only to refresh or switch topics. "
         "When you make a decision, fix, or learn a fact: call logInteraction(topic, decision=...) immediately. "
@@ -299,7 +299,7 @@ def _rg_text_search(root: str, query: str, file_path: str, use_regex: bool, cont
     return subprocess.run(cmd, capture_output=True, text=True, timeout=30)
 
 
-@server.tool(description="STEP 1 for any code question or exploration. Returns compact symbol/text locations first; use code_read for source. grep=True searches text; useRegex=True requires grep=True. Results are bounded to 50 entries.")
+@server.tool(description="STEP 1 for structural symbol discovery. Returns compact symbol locations (name/kind/signature/file:line + callers/callees). grep=True is DEPRECATED literal text search (prefer native grep/rg). Results are bounded to 50 entries.")
 def code_find(
     query: str = "",
     projectRoot: str = "",
@@ -650,8 +650,8 @@ def code_files(projectRoot: str = "", prefix: str = "", pattern: str = "", limit
         indexer.close()
 
 
-@server.tool(description="Explore symbols with compact source and call paths. Auto-indexes, bounds source, and falls back to text search.")
-def code_explore(query: str, projectRoot: str = "", limit: int = 10, maxChars: int = 6000) -> str:
+@server.tool(description="Compact structural overview: matched symbol + definition location + callers/callees (file:line) + signature. Source is NOT dumped by default; pass source=True to include bounded snippets. Use native Read for full source.")
+def code_explore(query: str, projectRoot: str = "", limit: int = 10, maxChars: int = 6000, source: bool = False) -> str:
     import os
     import subprocess as _subprocess
 
@@ -730,16 +730,19 @@ def code_explore(query: str, projectRoot: str = "", limit: int = 10, maxChars: i
             if callees:
                 cstr = ", ".join(f"{c['to_name']}:{c['line_number']}" for c in callees[:5])
                 parts.append(f"calls: {cstr}")
-            abs_fp = os.path.join(projectRoot, sym['file_path'])
-            if position < 3 and os.path.isfile(abs_fp):
-                with open(abs_fp) as f:
-                    lines = f.read().splitlines()
-                start = max(0, start_line - 1)
-                end = min(len(lines), end_line, start + _MAX_CODE_LINES)
-                parts.append(f"source: {sym['file_path']}:{start + 1}-{end}")
-                parts.extend(lines[i] for i in range(start, end))
-                if end < end_line:
-                    parts.append(f"more: code_read(filePath={sym['file_path']!r}, offset={end + 1}, limit={_MAX_CODE_LINES})")
+            # Source is not dumped by default to keep responses compact; native
+            # Read can fetch the exact lines using the file:line references above.
+            if source and position < 3:
+                abs_fp = os.path.join(projectRoot, sym['file_path'])
+                if os.path.isfile(abs_fp):
+                    with open(abs_fp) as f:
+                        lines = f.read().splitlines()
+                    start = max(0, start_line - 1)
+                    end = min(len(lines), end_line, start + _MAX_CODE_LINES)
+                    parts.append(f"source: {sym['file_path']}:{start + 1}-{end}")
+                    parts.extend(lines[i] for i in range(start, end))
+                    if end < end_line:
+                        parts.append(f"more: code_read(filePath={sym['file_path']!r}, offset={end + 1}, limit={_MAX_CODE_LINES})")
         return _trim_output(parts, max_chars) if parts else "code_explore: no results"
     finally:
         indexer.close()
@@ -1653,6 +1656,27 @@ def compact_planet(topic: str) -> str:
     return f"Compacted '{topic}': {count_before} notes -> {count_after} notes kept."
 
 
+@server.tool(description="Safe, previewable cleanup of low-value memory (flags/activity notes and weak note_links). dryRun defaults to true; set dryRun=false to apply. Preserves decisions, facts, constraints, architecture, conventions, summaries, pinned, high-importance, and provenance-bearing notes.")
+def cleanup_memory(topic: str = "", dryRun: bool = True, dropFlags: bool = True, dropActivity: bool = True, pruneLinks: bool = True, pruneAutoLinks: bool = False, linkWeightThreshold: float = 0.05) -> str:
+    import json as _json
+
+    from storage.db import StorageManager
+    from storage.sessions import SessionManager
+
+    storage = StorageManager(get_db_path())
+    manager = SessionManager(storage)
+    report = manager.cleanup_memory(
+        topic=topic or None,
+        dry_run=bool(dryRun),
+        drop_flags=bool(dropFlags),
+        drop_activity=bool(dropActivity),
+        prune_links=bool(pruneLinks),
+        prune_auto_links=bool(pruneAutoLinks),
+        link_weight_threshold=float(linkWeightThreshold),
+    )
+    return _json.dumps(report, indent=2, default=str)
+
+
 @server.tool(description="List all planets/topics.")
 def list_planets() -> str:
     from storage.db import StorageManager
@@ -2255,7 +2279,7 @@ def session_list(topic: str = "", status: str = "") -> str:
 
 # ── Code Graph MCP Tools ─────────────────────────────────
 
-@server.tool(description="STEP 2 after code_find: read a compact, bounded source window. filePath is relative to projectRoot; offset is 1-indexed; limit defaults to and is capped at 50. Source is unnumbered by default; set lineNumbers=true when explicit prefixes help.")
+@server.tool(description="DEPRECATED for routine source inspection: prefer native Read. Kept for backward compatibility. Reads a bounded source window (50-line cap) relative to projectRoot; offset is 1-indexed.")
 def code_read(filePath: str = "", projectRoot: str = "", offset: int = 0, limit: int = 50, path: str = "", lineNumbers: bool = False) -> str:
     """Read a bounded source window without requiring a code index."""
     import os

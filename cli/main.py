@@ -21,36 +21,47 @@ from .session import session
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
 
+def _package_name(directory: Path) -> "str | None":
+    pkg = directory / "package.json"
+    if pkg.exists():
+        try:
+            data = json.loads(pkg.read_text())
+            name = (data.get("name") or "").strip()
+            if name:
+                return name
+        except Exception:
+            pass
+    py = directory / "pyproject.toml"
+    if py.exists():
+        import re
+
+        for line in py.read_text().splitlines():
+            m = re.match(r'^\s*name\s*=\s*"([^"]+)"', line)
+            if m:
+                return m.group(1)
+    return None
+
+
 def get_project_root():
-    """Find the nearest project root (folder with AGENTS.md, .git, or fallback to current)"""
+    """Find the nearest project root identity (package name preferred, then git root folder)."""
     curr = Path.cwd().absolute()
     for parent in [curr] + list(curr.parents):
         if (parent / "AGENTS.md").exists() or (parent / ".git").exists():
-            return parent.name
-    return curr.name
+            name = _package_name(parent)
+            return name if name else parent.name
+    name = _package_name(curr)
+    return name if name else curr.name
 
 
 def _topic_from_cwd():
-    """Derive topic from cwd: package.json name → pyproject.toml name → dir name."""
+    """Derive topic from cwd: package.json name → pyproject.toml name → git root folder → None."""
     cwd = Path.cwd()
-    for parent in [cwd] + list(cwd.parents)[:3]:
-        pkg = parent / "package.json"
-        if pkg.exists():
-            try:
-                data = json.loads(pkg.read_text())
-                if data.get("name"):
-                    return data["name"]
-            except Exception:
-                pass
-        pyproj = parent / "pyproject.toml"
-        if pyproj.exists():
-            try:
-                import re
-                match = re.search(r'^name\s*=\s*"([^"]+)"', pyproj.read_text(), re.M)
-                if match:
-                    return match.group(1)
-            except Exception:
-                pass
+    for parent in [cwd] + list(cwd.parents)[:5]:
+        name = _package_name(parent)
+        if name:
+            return name
+        if (parent / ".git").exists():
+            return parent.name
     return None
 
 
@@ -453,6 +464,37 @@ def recompute_links(ctx, topic, threshold, min_weight):
     click.echo(f"  Created: {result['created']} new links")
     click.echo(f"  Removed: {result['removed']} weak links")
     click.echo(f"  Evaluated: {result['total_pairs']} note pairs")
+
+
+@cli.command()
+@click.option('--topic', help='Scope cleanup to a specific planet')
+@click.option('--apply', is_flag=True, help='Apply cleanup (default is dry-run preview)')
+@click.option('--drop-flags/--keep-flags', default=True, help='Drop flag notes')
+@click.option('--drop-activity/--keep-activity', default=True, help='Drop activity notes')
+@click.option('--prune-links/--keep-links', default=True, help='Prune weak note_links')
+@click.option('--prune-auto-links', is_flag=True, help='Also delete all auto-generated (source=auto) note_links')
+@click.option('--threshold', default=0.05, type=float, help='Prune auto-links below this weight')
+@click.option('--vacuum', is_flag=True, help='Run VACUUM after apply to reclaim file space (may take a while)')
+@click.pass_context
+def cleanup(ctx, topic, apply, drop_flags, drop_activity, prune_links, prune_auto_links, threshold, vacuum):
+    """Preview (default) or apply safe cleanup of low-value memory. Dry-run by default."""
+    from storage.sessions import SessionManager
+    manager = SessionManager(ctx.obj['storage'])
+    report = manager.cleanup_memory(
+        topic=topic,
+        dry_run=not apply,
+        drop_flags=drop_flags,
+        drop_activity=drop_activity,
+        prune_links=prune_links,
+        prune_auto_links=prune_auto_links,
+        link_weight_threshold=threshold,
+    )
+    click.echo(json.dumps(report, indent=2, default=str))
+    if apply and vacuum:
+        ctx.obj['storage'].connection.execute("VACUUM")
+        click.echo("VACUUM completed; file space reclaimed.")
+    if not apply:
+        click.echo("\nDry run: re-run with --apply to execute. (Deleting rows frees logical space; run --vacuum to reclaim physical file space.)")
 
 
 @cli.command()

@@ -50,9 +50,11 @@ class TestIndex:
     def test_index(self, client):
         resp = client.get("/")
         assert resp.status_code == 200
-        data = resp.get_json()
-        assert data["service"] == "BaseMem"
-        assert "planets" in data["endpoints"]
+        # Frontend build may be served when present; otherwise API descriptor.
+        data = resp.get_json(silent=True)
+        if data is not None:
+            assert data.get("service") == "BaseMem"
+            assert "planets" in data.get("endpoints", {})
 
 
 class TestPlanets:

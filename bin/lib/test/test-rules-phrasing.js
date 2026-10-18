@@ -13,8 +13,10 @@ console.log('PASS rules/output placeholder pinned');
 // is below"), never as a bare "Memory context injected" with no visible context —
 // otherwise the model treats memory as done and never calls tools.
 assert.ok(BASEMEM_RULES_CORE.includes('live context is below'), 'core must ground the injected claim in visible context');
-assert.ok(BASEMEM_RULES_TIER1.includes('Call code_find FIRST'), 'tier1 must name code_find as the first action');
+assert.ok(BASEMEM_RULES_TIER1.includes('code_find'), 'tier1 must name code_find for structural discovery');
+assert.ok(BASEMEM_RULES_TIER1.includes('native Read'), 'tier1 must direct ordinary inspection to native Read');
 assert.ok(BASEMEM_RULES_TIER1.includes('Call logInteraction'), 'tier1 must command logInteraction, not just mention it');
+assert.ok(!BASEMEM_RULES_TIER1.includes('not raw grep/glob/Read'), 'tier1 must not steer agents away from native tools');
 assert.ok(!BASEMEM_RULES_TIER1.includes('Then answer directly'), 'tier1 must not contain the tier2/3 answer-directly escape hatch');
 console.log('PASS rules phrasing: positive triggers, no escape hatch in tier1');
 

@@ -23,6 +23,16 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _auto_link_enabled() -> bool:
+    """Automatic pairwise note linking is opt-in (default off)."""
+    return (os.environ.get("BASEMEM_AUTO_LINK") or "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
 class NoteRelation(str, Enum):
     RELATED_TO = "related_to"
     SUPERSEDES = "supersedes"
@@ -478,7 +488,11 @@ class NoteMixin:
                 (now, topic_slug),
             )
 
-        if created and kind not in ("turn", "summary"):
+        # Automatic pairwise linking is opt-in (BASEMEM_AUTO_LINK=1). By default
+        # notes are NOT auto-linked: dense lexical links (579k rows in the audited
+        # DB) dominated the graph and added no retrieval value. Explicit links
+        # via link_notes/recompute_links remain available.
+        if created and kind not in ("turn", "summary") and _auto_link_enabled():
             self._auto_link_note(note_id, topic_slug)
 
         if created and hasattr(self, "get_active_session"):
@@ -956,6 +970,167 @@ class NoteMixin:
                     seen.add((note_id, other) if note_id < other else (other, note_id))
         return sorted(seen)
 
+    def cleanup_memory(
+        self,
+        topic: str | None = None,
+        dry_run: bool = True,
+        drop_flags: bool = True,
+        drop_activity: bool = True,
+        prune_links: bool = True,
+        prune_auto_links: bool = False,
+        link_weight_threshold: float = 0.05,
+    ) -> dict:
+        """Preview (dry_run=True) or apply a safe cleanup of low-value memory.
+
+        Protects decision/fact/constraint/architecture/convention/summary notes,
+        pinned notes, high-importance (>=0.7) notes, notes with non-empty
+        provenance, and notes referenced by surviving (weight >= threshold) links.
+        Never runs destructive cleanup during normal startup.
+        """
+        conn = self.storage.connection
+        cursor = conn.cursor()
+
+        topic_slug = self.normalize_topic(topic) if topic else None
+
+        protected_kinds = ("decision", "fact", "constraint", "architecture", "convention", "summary")
+
+        where = ["1=1"]
+        params: list[Any] = []
+        if topic_slug:
+            where.append("topic = ?")
+            params.append(topic_slug)
+        where_sql = " AND ".join(where)
+
+        eligible: list[int] = []
+        rows = cursor.execute(
+            f"SELECT id, kind, pinned, importance, provenance FROM notes WHERE {where_sql}",
+            params,
+        ).fetchall()
+        for r in rows:
+            kind = (r["kind"] or "").lower()
+            if kind in protected_kinds:
+                continue
+            if bool(r["pinned"]):
+                continue
+            if (r["importance"] or 0) >= 0.7:
+                continue
+            prov = (r["provenance"] or "").strip()
+            if prov and prov not in ("", "{}"):
+                continue
+            if kind == "flag" and not drop_flags:
+                continue
+            if kind == "activity" and not drop_activity:
+                continue
+            if kind not in ("flag", "activity"):
+                continue
+            eligible.append(int(r["id"]))
+
+        # Keep notes referenced by surviving (high-weight, non-auto when pruning
+        # auto links) links. When auto links are being removed they must not
+        # shield low-value notes from deletion.
+        protected_by_link: set[int] = set()
+        sql = "SELECT from_note_id, to_note_id FROM note_links WHERE weight >= ?"
+        params_protect: list[Any] = [link_weight_threshold]
+        if prune_auto_links:
+            sql += " AND source != 'auto'"
+        for r in cursor.execute(sql, params_protect):
+            protected_by_link.add(int(r["from_note_id"]))
+            protected_by_link.add(int(r["to_note_id"]))
+        eligible = [nid for nid in eligible if nid not in protected_by_link]
+
+        link_candidates = 0
+        auto_link_candidates = 0
+        if prune_links:
+            if topic_slug:
+                ids = [r[0] for r in cursor.execute(
+                    "SELECT id FROM notes WHERE topic = ?", (topic_slug,)
+                ).fetchall()]
+                if ids:
+                    ph = ",".join("?" for _ in ids)
+                    link_candidates = int(cursor.execute(
+                        "SELECT COUNT(*) FROM note_links WHERE weight < ? "
+                        f"AND (from_note_id IN ({ph}) OR to_note_id IN ({ph}))",
+                        [link_weight_threshold] + ids + ids,
+                    ).fetchone()[0])
+            else:
+                link_candidates = int(cursor.execute(
+                    "SELECT COUNT(*) FROM note_links WHERE weight < ?",
+                    (link_weight_threshold,),
+                ).fetchone()[0])
+        if prune_auto_links:
+            if topic_slug:
+                ids = [r[0] for r in cursor.execute(
+                    "SELECT id FROM notes WHERE topic = ?", (topic_slug,)
+                ).fetchall()]
+                if ids:
+                    ph = ",".join("?" for _ in ids)
+                    auto_link_candidates = int(cursor.execute(
+                        "SELECT COUNT(*) FROM note_links WHERE source = 'auto' "
+                        f"AND (from_note_id IN ({ph}) OR to_note_id IN ({ph}))",
+                        ids + ids,
+                    ).fetchone()[0])
+            else:
+                auto_link_candidates = int(cursor.execute(
+                    "SELECT COUNT(*) FROM note_links WHERE source = 'auto'",
+                ).fetchone()[0])
+            link_candidates += auto_link_candidates
+
+        report = {
+            "dry_run": dry_run,
+            "topic": topic_slug,
+            "notes_candidates": len(eligible),
+            "candidate_note_ids": eligible[:50],
+            "links_candidates": link_candidates,
+            "auto_links_candidates": auto_link_candidates,
+            "protected_kinds": list(protected_kinds),
+        }
+
+        if dry_run:
+            return report
+
+        if eligible:
+            ph = ",".join("?" for _ in eligible)
+            cursor.execute(f"DELETE FROM notes WHERE id IN ({ph})", eligible)
+            cursor.execute(
+                "DELETE FROM note_links WHERE from_note_id NOT IN (SELECT id FROM notes) "
+                "OR to_note_id NOT IN (SELECT id FROM notes)"
+            )
+        if prune_links:
+            if topic_slug:
+                ids = [r[0] for r in cursor.execute(
+                    "SELECT id FROM notes WHERE topic = ?", (topic_slug,)
+                ).fetchall()]
+                if ids:
+                    ph = ",".join("?" for _ in ids)
+                    cursor.execute(
+                        f"DELETE FROM note_links WHERE weight < ? "
+                        f"AND (from_note_id IN ({ph}) OR to_note_id IN ({ph}))",
+                        [link_weight_threshold] + ids + ids,
+                    )
+            else:
+                cursor.execute(
+                    "DELETE FROM note_links WHERE weight < ?", (link_weight_threshold,)
+                )
+        if prune_auto_links:
+            if topic_slug:
+                ids = [r[0] for r in cursor.execute(
+                    "SELECT id FROM notes WHERE topic = ?", (topic_slug,)
+                ).fetchall()]
+                if ids:
+                    ph = ",".join("?" for _ in ids)
+                    cursor.execute(
+                        f"DELETE FROM note_links WHERE source = 'auto' "
+                        f"AND (from_note_id IN ({ph}) OR to_note_id IN ({ph}))",
+                        ids + ids,
+                    )
+            else:
+                cursor.execute("DELETE FROM note_links WHERE source = 'auto'")
+        conn.commit()
+        report["applied"] = True
+        report["notes_deleted"] = len(eligible)
+        report["links_deleted"] = link_candidates
+        return report
+
     def _auto_link_note(self, note_id: int, topic_slug: str) -> None:
         """Link a new note to its nearest neighbours, cheaply and sparsely.
 
@@ -1416,9 +1591,11 @@ class NoteMixin:
             [
                 "",
                 "## Code Intelligence",
-                "Use code_find/code_read/code_explore/code_files (MCP) instead of grep/glob/read. "
-                "Auto-index on first use; for plain text search use code_find(query, grep=True); "
-                "empty results → code_init first. Review blast-radius: get_review_context(files).",
+                "BaseMem code tools are optional structural aids: code_find for symbol discovery, "
+                "code_explore for callers/callees and blast radius. For ordinary source inspection "
+                "use native Read; for literal text search use native grep/rg; for file enumeration "
+                "use native glob/ls. Auto-index on first use; empty results → code_init first. "
+                "Review blast-radius: get_review_context(files).",
             ]
         )
 

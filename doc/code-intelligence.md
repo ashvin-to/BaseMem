@@ -35,10 +35,10 @@ mem code list-projects
 | Tool | Description |
 |------|-------------|
 | `code_init(projectRoot)` | Index a project; stores `.basemem.code.db` in project root |
-| `code_find(query, projectRoot, dead, filePath, limit, source, references, grep)` | Find symbols. `source=True` returns lines. `references=True` finds usages. `grep=True` raw text search across ALL files |
-| `code_read(filePath, projectRoot, offset, limit)` | Read file contents with line numbers |
-| `code_explore(query, projectRoot, limit)` | One-shot: search + source code + call paths |
-| `code_files(projectRoot, prefix, pattern, limit)` | List indexed files, or `pattern='**/*.json'` for glob wildcard search |
+| `code_find(query, projectRoot, dead, filePath, limit, source, references, grep)` | Find symbols. `source=True` returns lines. `references=True` finds usages. `grep=True` is **deprecated** — prefer native `grep`/`rg` for literal text |
+| `code_read(filePath, projectRoot, offset, limit)` | **Deprecated** for routine inspection — prefer native `Read`. Kept for backward compatibility |
+| `code_explore(query, projectRoot, limit)` | Structural overview: matched symbol + definition + callers/callees + tests by location (source on request) |
+| `code_files(projectRoot, prefix, pattern, limit)` | **Demoted** — prefer native `glob`/`ls` for file enumeration; specialized filters retained |
 | `code_impact(symbolName, projectRoot, depth, limit)` | Transitive reverse dependency graph |
 | `code_trace(symbolName, projectRoot, direction, depth, limit)` | Recursive inbound/outbound call chain |
 | `code_list_projects(searchRoot)` | Scan filesystem for all indexed projects *(requires `BASEMEM_ENABLE_ADVANCED_TOOLS=1`)* |
@@ -65,16 +65,13 @@ mem code status                  # Index stats for a project
 
 ## Agent Edit Workflow
 
-The zero-read workflow avoids Read/grep/glob for code exploration:
+**Division of labor:** structural discovery → BaseMem; ordinary source inspection and literal search → native tools.
 
-**Quick path (1 call):**
+**Structural path:**
 ```
-code_find('sym', source=True) → symbol location + source lines → edit(file, old, new)
+code_find('sym') → symbol name/location → code_explore('sym') → callers/callees + location → native Read for source → edit(file, old, new)
 ```
 
-**Full path (2 calls):**
-```
-code_find('sym') → symbol name/location → code_explore('sym') → view source → edit(file, old, new)
-```
+`code_read` and `code_find(grep=True)` are deprecated; prefer native `Read` and native `grep`/`rg`.
 
 Run `mem code init` once per project before searching. Use `mem code list-projects` to discover indexed projects.

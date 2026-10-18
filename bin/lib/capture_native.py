@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
-"""Silent capture of native agent tool use into the BaseMem knowledge base.
+"""Optional capture of native agent tool use into the BaseMem knowledge base.
 
 Called by the cross-agent PostToolUse hook (src/hooks/lib/capture.js) with a
 JSON payload on stdin:
 
     {"tool": "Read", "params": {"file_path": "src/foo.py"}, "agent_id": "opencode"}
 
-It records the action as a low-priority `activity` note on the current planet so
-the memory graph stays aware of what the agent did — at zero token cost to the
-agent (no round-trip, no reminder text). Native tool use is otherwise invisible
-to BaseMem, so this is the safety net that keeps memory complete even when the
-agent skips the MCP surface.
+Automatic activity capture is **opt-in**. By default this is a no-op: every
+file read/edit/search is a routine observation, not durable memory, and
+auto-capturing it floods the knowledge base with low-value `activity` rows.
+
+Enable explicitly with ``BASEMEM_CAPTURE_ACTIVITY=1`` when a project genuinely
+wants an audit trail of native tool use. Even then, capture only proceeds when
+the project identity can be established unambiguously; otherwise the event is
+skipped rather than misattributed to whatever the current directory happens to
+be named.
 """
 import json
 import os
@@ -40,14 +44,114 @@ NATIVE_TOOLS = {
     "update_file": ("edited", "file_path"),
 }
 
+# Generic folder / username names that make poor project identities. Mirrors
+# src/hooks/lib/context.js REJECT_TOPICS so hooks and capture agree.
+REJECT_TOPICS = {
+    "home", "user", "users", "documents", "desktop", "downloads",
+    "projects", "code", "src", "tmp", "temp", "work", "workspace", "dev",
+    "repos", "github", "storage", "data", "config", "bin", "lib", "etc",
+    "var", "opt", "mnt", "media",
+}
 
-def resolve_topic():
-    """Prefer explicit env override, else CWD basename (mirrors plugin logic)."""
-    env = os.environ.get("BASEMEM_TOPIC") or os.environ.get("BASEMEM_PLANET")
+
+def _truthy(value: "str | None") -> bool:
+    return (value or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def capture_enabled() -> bool:
+    """Automatic activity capture is opt-in (default off)."""
+    return _truthy(os.environ.get("BASEMEM_CAPTURE_ACTIVITY"))
+
+
+def _read_project_name(directory: str) -> "str | None":
+    """Read a package.json / pyproject.toml project name from a directory."""
+    pkg = os.path.join(directory, "package.json")
+    try:
+        if os.path.isfile(pkg):
+            with open(pkg, errors="replace") as f:
+                data = json.load(f)
+            name = str(data.get("name") or "").strip()
+            if name:
+                return name
+    except Exception:
+        pass
+    py = os.path.join(directory, "pyproject.toml")
+    try:
+        if os.path.isfile(py):
+            import re
+
+            with open(py, errors="replace") as f:
+                for line in f:
+                    m = re.match(r'^\s*name\s*=\s*"([^"]+)"', line)
+                    if m:
+                        return m.group(1)
+    except Exception:
+        pass
+    return None
+
+
+def _is_rejected(candidate: str) -> bool:
+    lower = (candidate or "").strip().lower()
+    if not lower:
+        return True
+    try:
+        if lower == os.environ.get("USER", "").strip().lower():
+            return True
+    except Exception:
+        pass
+    return lower in REJECT_TOPICS
+
+
+def _find_git_root(cwd: str) -> "str | None":
+    current = os.path.abspath(cwd)
+    while True:
+        if os.path.isdir(os.path.join(current, ".git")) or os.path.isfile(
+            os.path.join(current, ".git")
+        ):
+            return current
+        parent = os.path.dirname(current)
+        if parent == current:
+            return None
+        current = parent
+
+
+def resolve_topic() -> "str | None":
+    """Resolve a reliable project identity, or None when ambiguous.
+
+    Precedence:
+      1. Explicit BASEMEM_TOPIC / BASEMEM_PLANET override.
+      2. Nearest ancestor package.json / pyproject.toml project name.
+      3. Basename of the enclosing verified repository (.git) root.
+    Returns None when a reliable identity cannot be established, so the caller
+    skips capture rather than misattributing the event.
+    """
+    env = (os.environ.get("BASEMEM_TOPIC") or os.environ.get("BASEMEM_PLANET") or "").strip()
     if env:
         return env
+
     cwd = os.environ.get("PWD") or os.getcwd()
-    return os.path.basename(os.path.normpath(cwd))
+    cwd = os.path.abspath(os.path.normpath(cwd))
+
+    # 1. Walk up for a declared project name.
+    current = cwd
+    for _ in range(5):
+        name = _read_project_name(current)
+        if name and not _is_rejected(name):
+            return name
+        parent = os.path.dirname(current)
+        if parent == current:
+            break
+        current = parent
+
+    # 2. Fall back to the verified repository root basename.
+    git_root = _find_git_root(cwd)
+    if git_root:
+        name = os.path.basename(git_root)
+        if name and not _is_rejected(name):
+            return name
+
+    # Ambiguous: no reliable identity.
+    return None
 
 
 def _replace_flag(manager: SessionManager, topic: str, content: str) -> None:
@@ -55,7 +159,7 @@ def _replace_flag(manager: SessionManager, topic: str, content: str) -> None:
 
     Deletes any existing flag note with the same content for this topic
     before inserting a fresh one, so repeated edit/write calls cannot
-    stack unbounded rows (previously one per tool call, ~1,255 rows).
+    stack unbounded rows.
     """
     try:
         conn = manager.storage.connection
@@ -70,14 +174,34 @@ def _replace_flag(manager: SessionManager, topic: str, content: str) -> None:
         pass
 
 
+def _add_activity(manager: SessionManager, topic: str, content: str, agent_id: str, title: str):
+    """Insert an activity note, but never treat it as a durable decision."""
+    manager.add_note(
+        topic,
+        topic,
+        "activity",
+        content,
+        agent_id=agent_id,
+        title=title,
+    )
+
+
 def capture(payload: dict):
     tool = (payload.get("tool") or "").strip().lower()
     params = payload.get("params") or {}
     agent_id = payload.get("agent_id") or "system"
 
-    # Session-boundary signal: agent ended without logging.
+    # Automatic capture is opt-in and disabled by default.
+    if not capture_enabled():
+        return {"captured": False, "reason": "activity capture disabled"}
+
+    # Session-boundary signal: agent ended without logging. The operational
+    # record for this lives in ~/.basemem/missed-session-logs.jsonl; a durable
+    # DB flag is only written when activity capture is explicitly enabled.
     if tool == "__missed_log__":
         topic = resolve_topic()
+        if not topic:
+            return {"captured": False, "reason": "ambiguous project identity"}
         db_path = get_db_path()
         if not os.path.isfile(db_path):
             return {"captured": False, "reason": "no db"}
@@ -99,6 +223,9 @@ def capture(payload: dict):
     target = str(target).strip()
 
     topic = resolve_topic()
+    if not topic:
+        # Never silently associate an event with a different project.
+        return {"captured": False, "reason": "ambiguous project identity"}
     content = f"{verb} {target}" if target else verb
 
     db_path = get_db_path()
@@ -107,8 +234,7 @@ def capture(payload: dict):
 
     storage = StorageManager(db_path)
     manager = SessionManager(storage)
-    manager.add_note(topic, topic, "activity", content, agent_id=agent_id,
-                     title=f"native:{tool}")
+    _add_activity(manager, topic, content, agent_id, f"native:{tool}")
 
     # Mark that an edit/write happened without a logInteraction yet.
     # One flag per topic max: stale pending flags are replaced, not stacked.

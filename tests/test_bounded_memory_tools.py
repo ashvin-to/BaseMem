@@ -72,7 +72,8 @@ def test_resolve_contradictions_respects_limit_and_stays_small(tmp_path):
     assert len(json.dumps(result)) < 4000
 
 
-def test_auto_link_is_sparse_not_one_edge_per_neighbour(tmp_path):
+def test_auto_link_is_sparse_not_one_edge_per_neighbour(tmp_path, monkeypatch):
+    monkeypatch.setenv("BASEMEM_AUTO_LINK", "1")
     manager = _manager(tmp_path)
     for i in range(25):
         manager.add_note("", "t", "FACT", f"shared token alpha beta gamma delta note {i}")
