@@ -15,7 +15,8 @@ import tempfile
 import time
 from pathlib import Path
 
-SRC = "/mnt/Storage/basemem-bench/linux/.basemem.code.db"
+import os
+SRC = os.environ.get("BASEMEM_BENCH_DB", "/mnt/Storage/basemem-bench/linux/.basemem.code.db")
 
 
 def build_slice(dest: Path, limit: int, by_edges: bool) -> sqlite3.Connection:

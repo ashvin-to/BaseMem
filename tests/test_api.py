@@ -46,6 +46,18 @@ class TestSecurity:
         assert "Access-Control-Allow-Origin" not in response.headers
 
 
+class TestHealth:
+    def test_liveness(self, client):
+        resp = client.get("/health")
+        assert resp.status_code == 200
+        assert resp.get_json()["status"] == "ok"
+
+    def test_readiness_healthy(self, client):
+        resp = client.get("/health/ready")
+        assert resp.status_code == 200
+        assert resp.get_json()["status"] == "ready"
+
+
 class TestIndex:
     def test_index(self, client):
         resp = client.get("/")

@@ -81,6 +81,23 @@ def index():
     })
 
 
+@app.route("/health", methods=["GET"])
+def health():
+    """Liveness: the server process is running."""
+    return jsonify({"status": "ok"})
+
+
+@app.route("/health/ready", methods=["GET"])
+def health_ready():
+    """Readiness: database is accessible."""
+    try:
+        storage = get_session()
+        storage.storage.connection.execute("SELECT 1")
+        return jsonify({"status": "ready"})
+    except Exception as exc:
+        return jsonify({"status": "not_ready", "error": str(exc)}), 503
+
+
 @app.route("/<path:asset>", methods=["GET"])
 def frontend_assets(asset):
     """Serve built frontend assets; more specific /api rules still win routing."""
@@ -625,7 +642,7 @@ def _resolve_project_root(project_id: str):
                 return confined
     # Fallback: look for an indexed repo directly under common locations.
     from indexer.indexer import CODE_DB_FILENAME
-    for cand in [f'/mnt/Storage/{topic}', f'./{topic}',
+    for cand in [f'./{topic}',
                  os.path.join(os.path.expanduser('~'), 'Projects', topic),
                  os.path.join(os.getcwd(), topic)]:
         cand = _confined_project_root(cand)

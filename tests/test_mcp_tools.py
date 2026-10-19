@@ -2,10 +2,13 @@
 
 import json
 import os
+import shutil
 import tempfile
 from pathlib import Path
 
 import pytest
+
+_requires_rg = pytest.mark.skipif(shutil.which("rg") is None, reason="ripgrep not installed")
 
 from storage.db import StorageManager
 from storage.sessions import SessionManager
@@ -595,6 +598,7 @@ class TestCodeTools:
         r = code_find(query="test", grep=True, projectRoot="/tmp", context=2)
         assert isinstance(r, str)
 
+    @_requires_rg
     def test_code_find_grep_regex(self, tmp_path):
         from mcp_server.server import code_find
         (tmp_path / "a.txt").write_text("alpha\nbeta\ngamma\n")
@@ -603,6 +607,7 @@ class TestCodeTools:
         assert "gamma" in r
         assert "grep error" not in r
 
+    @_requires_rg
     def test_code_find_grep_groups_terms(self, tmp_path):
         from mcp_server.server import code_find
         (tmp_path / "a.txt").write_text("prompt tracker\nother\n")
@@ -674,6 +679,7 @@ class TestCodeTools:
         assert "verify_token" in result
 
     @pytestmark_code
+    @_requires_rg
     def test_code_find_output_budget(self, tmp_path):
         from mcp_server.server import code_find
         (tmp_path / "data.py").write_text("needle = 1\n" * 20)

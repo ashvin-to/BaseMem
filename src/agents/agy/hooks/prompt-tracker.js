@@ -5,8 +5,8 @@
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
-const { fetchPromptContext } = require("/mnt/Storage/BaseMem/src/hooks/lib/prompt-context.js");
-const { emitTrackerOutput } = require("/mnt/Storage/BaseMem/src/hooks/lib/tracker.js");
+const { fetchPromptContext } = require("../../../hooks/lib/prompt-context.js");
+const { emitTrackerOutput } = require("../../../hooks/lib/tracker.js");
 
 function getLastUserPrompt() {
   try {
