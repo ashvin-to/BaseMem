@@ -4,7 +4,9 @@ flask>=3.0.0
 flask-cors>=4.0.0
 
 # MCP (For direct AI tool access)
-mcp>=1.0.0
+# FastMCP API (tool descriptions, instructions) requires >=1.28; cap at 2.0
+# to avoid breaking changes in the 2.x line.
+mcp>=1.28.0,<2.0.0
 
 # Code Intelligence (code graph)
 tree-sitter>=0.25.0

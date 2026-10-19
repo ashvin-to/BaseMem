@@ -277,3 +277,75 @@ def test_auto_sync_can_be_disabled(temp_project, monkeypatch):
         assert indexer.staleness()["stale"] is True
     finally:
         indexer.close()
+
+
+def _fts_rows(indexer, query):
+    """Normalized FTS search result set for comparison."""
+    rows = indexer.conn.execute(
+        "SELECT file_path, symbol_name, symbol_type FROM code_symbols_fts "
+        "WHERE code_symbols_fts MATCH ? ORDER BY rank",
+        (query,),
+    ).fetchall()
+    return sorted((r[0], r[1], r[2]) for r in rows)
+
+
+def test_fts_incremental_matches_clean_rebuild(temp_project):
+    # Initial state.
+    (temp_project / "a.js").write_text("export function alpha() { return 1 }\nexport function beta() { return 2 }\n")
+    (temp_project / "b.js").write_text("export function gamma() { return 3 }\n")
+
+    indexer = CodeIndexer(str(temp_project))
+    try:
+        indexer.index_project(_max_workers=1)
+
+        # 1. Modify a.js: remove beta, add delta.
+        (temp_project / "a.js").write_text("export function alpha() { return 1 }\nexport function delta() { return 4 }\n")
+        # 2. Add c.js.
+        (temp_project / "c.js").write_text("export function epsilon() { return 5 }\n")
+        # 3. Delete b.js.
+        (temp_project / "b.js").unlink()
+
+        indexer.ensure_fresh()
+        assert indexer.staleness()["stale"] is False
+
+        # Capture incremental result.
+        queries = ["alpha", "delta", "epsilon", "gamma", "beta"]
+        incr = {q: _fts_rows(indexer, q) for q in queries}
+        incr_symbols = indexer.conn.execute(
+            "SELECT COUNT(*) FROM code_symbols"
+        ).fetchone()[0]
+        incr_files = indexer.conn.execute(
+            "SELECT COUNT(*) FROM code_files"
+        ).fetchone()[0]
+
+        # Clean rebuild of the same final state.
+        indexer.close()
+        import shutil
+        db = temp_project / ".basemem.code.db"
+        if db.exists():
+            db.unlink()
+        for suf in ("-wal", "-shm"):
+            p = temp_project / (".basemem.code.db" + suf)
+            if p.exists():
+                p.unlink()
+        indexer2 = CodeIndexer(str(temp_project))
+        try:
+            indexer2.index_project(_max_workers=1)
+            clean = {q: _fts_rows(indexer2, q) for q in queries}
+            clean_symbols = indexer2.conn.execute(
+                "SELECT COUNT(*) FROM code_symbols"
+            ).fetchone()[0]
+            clean_files = indexer2.conn.execute(
+                "SELECT COUNT(*) FROM code_files"
+            ).fetchone()[0]
+        finally:
+            indexer2.close()
+
+        assert incr == clean, f"FTS mismatch:\nincr={incr}\nclean={clean}"
+        assert incr_symbols == clean_symbols
+        assert incr_files == clean_files
+    finally:
+        try:
+            indexer.close()
+        except Exception:
+            pass
